@@ -1,0 +1,162 @@
+/* =========================================================================
+   FANTIS — design tokens
+   Linear-inspired: quiet neutrals, one accent (amber), no dedicated
+   condensed display face, hairline dividers instead of boxed cards.
+   The one deliberate callback to the old scoreboard identity is the trade
+   verdict bar, which keeps its mint-vs-amber duality — see components/Trade.tsx.
+   Canvas is lifted off true-black with a cool blue-grey undertone; pure
+   near-black read as flat next to the rest of the palette.
+   ========================================================================= */
+
+:root{
+  --ink:#10131A; --panel:#141821; --line:#262B34; --line-soft:#1C1F27;
+  --bone:#EEF0F3; --muted:#939AA6; --dim:#5D6470;
+  --amber:#FFB020; --amber-soft:rgba(255,176,32,.14);
+  --mint:#37E0B0; --red:#FF5D5D;
+  --qb:#F0808A; --rb:#5FDA9C; --wr:#59B4E8; --te:#F0B876; --oth:#8A93A3;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+.fantis{
+  font-family:var(--font-inter),-apple-system,"Segoe UI",sans-serif;
+  color:var(--bone); background:var(--ink); min-height:100vh;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+.num{font-variant-numeric:tabular-nums}
+
+/* nav */
+.nav{display:flex;align-items:center;justify-content:space-between;
+  padding:16px 0;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px}
+.mark{width:22px;height:22px;border-radius:6px;display:grid;place-items:center;
+  border:1px solid var(--line);color:var(--muted);font-weight:600;font-size:12px}
+.brand b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.tabs{display:flex;gap:20px}
+.tab{appearance:none;border:0;background:transparent;color:var(--muted);cursor:pointer;
+  font-size:13px;font-weight:500;padding:0 0 4px;border-bottom:1.5px solid transparent}
+.tab.on{color:var(--bone);border-color:var(--amber)}
+.tab:hover:not(.on){color:var(--bone)}
+
+/* hero */
+.hero{padding:56px 0 36px}
+.eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--mint);
+  font-size:12px;text-transform:uppercase;letter-spacing:.14em}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 0 rgba(55,224,176,.6);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(55,224,176,.5)}70%{box-shadow:0 0 0 9px rgba(55,224,176,0)}100%{box-shadow:0 0 0 0 rgba(55,224,176,0)}}
+h1.big{font-weight:700;font-size:clamp(34px,5vw,56px);
+  line-height:1.08;letter-spacing:-.01em;margin:14px 0 0}
+h1.big span{color:var(--amber)}
+.sub{color:var(--muted);font-size:16px;max-width:520px;margin:14px 0 26px;line-height:1.55}
+
+/* sync card */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.sync{padding:20px;max-width:520px}
+.field{display:flex;gap:8px;flex-wrap:wrap}
+.input{flex:1;min-width:170px;background:var(--ink);border:1px solid var(--line);color:var(--bone);
+  border-radius:8px;padding:11px 12px;font-size:14px;outline:none}
+.input:focus{border-color:var(--amber)}
+.select{background:var(--ink);border:1px solid var(--line);color:var(--bone);border-radius:8px;padding:11px 10px;font-size:14px}
+.btn{appearance:none;border:0;cursor:pointer;border-radius:8px;
+  font-weight:600;font-size:14px;padding:11px 18px;
+  background:var(--amber);color:#10131A}
+.btn:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.ghost{background:transparent;color:var(--bone);border:1px solid var(--line)}
+.btn.sm{padding:7px 11px;font-size:13px}
+.plat{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
+.chip{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:4px 10px}
+.chip.live{color:var(--mint);border-color:rgba(55,224,176,.35)}
+.err{color:var(--red);margin-top:10px;font-size:13px}
+.hint{color:var(--dim);font-size:12px;margin-top:9px}
+
+/* filter chips (position filters etc.) */
+.chip-filter{appearance:none;border:0;background:transparent;cursor:pointer;
+  font-size:12.5px;font-weight:500;color:var(--muted);border-radius:7px;padding:6px 11px}
+.chip-filter.on{background:var(--amber-soft);color:var(--amber)}
+.chip-filter:hover:not(.on){color:var(--bone)}
+
+/* section */
+.sec{padding:30px 0}
+.sechead{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap}
+.sechead h2{font-weight:600;font-size:19px;margin:0;letter-spacing:-.005em}
+.sechead .rt{color:var(--muted);font-size:13px}
+
+/* league list */
+.leagues{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
+.lg{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;text-align:left;color:var(--bone)}
+.lg:hover{border-color:var(--amber)}
+.lg.on{border-color:var(--amber)}
+.lg h3{margin:0 0 5px;font-size:14px;font-weight:600}
+.lg small{color:var(--muted);font-size:12px}
+
+/* scoreboard-style table -> quiet hairline table */
+.board{border-top:1px solid var(--line)}
+.row{display:grid;align-items:center;border-bottom:1px solid var(--line-soft)}
+.stand{grid-template-columns:36px 1fr 60px 60px 76px}
+.row.head{border-bottom:1px solid var(--line);color:var(--dim);
+  text-transform:uppercase;letter-spacing:.07em;font-size:10.5px;font-weight:600}
+.cell{padding:10px 10px;font-size:13.5px}
+.cell.r{text-align:right}
+.rank{font-weight:700;font-size:13px;color:var(--dim);text-align:center}
+.rank.top{color:var(--amber)}
+.team{display:flex;align-items:center;gap:9px;min-width:0}
+.ava{width:26px;height:26px;border-radius:6px;background:var(--panel);flex:none;object-fit:cover;border:1px solid var(--line)}
+.tname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;font-size:13.5px}
+.pts{font-weight:600}
+
+/* roster grid */
+.rosters{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.rteam{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.rteam header{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--line)}
+.rteam header b{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rteam header .rec{margin-left:auto;color:var(--muted);font-size:12px}
+.pl{display:flex;align-items:center;gap:9px;padding:8px 13px;border-top:1px solid var(--line-soft);font-size:13px}
+.pos{font-size:10.5px;font-weight:650;letter-spacing:.02em;border-radius:5px;
+  padding:2px 7px;display:inline-block;border:1px solid transparent}
+.plname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.plteam{margin-left:auto;color:var(--dim);font-size:11.5px}
+.divlbl{text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;
+  color:var(--dim);padding:8px 13px 2px;font-weight:600}
+
+/* rankings */
+.filters{display:flex;gap:2px;flex-wrap:wrap;margin-bottom:12px}
+.rk{grid-template-columns:40px 1fr 60px 52px 56px 70px}
+.tier{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px}
+.val{font-weight:650;font-size:14px}
+
+/* sortable column headers */
+.sorth{appearance:none;border:0;background:transparent;cursor:pointer;
+  color:inherit;font:inherit;text-transform:inherit;letter-spacing:inherit;
+  padding:0;display:inline-flex;align-items:center;gap:3px}
+.sorth:hover{color:var(--bone)}
+.sorth.on{color:var(--amber)}
+.sorth .arrow{font-size:9px}
+
+/* trade calculator */
+.trade{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:start}
+@media(max-width:760px){.trade{grid-template-columns:1fr}}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-height:110px}
+.side h4{margin:0 0 10px;font-size:14px;font-weight:600}
+.picked{display:flex;align-items:center;gap:8px;background:var(--ink);border:1px solid var(--line);
+  border-radius:8px;padding:7px 9px;margin-bottom:7px}
+.picked .val{margin-left:auto}
+.x{cursor:pointer;color:var(--dim);border:0;background:0;font-size:15px;padding:0 2px}
+.x:hover{color:var(--red)}
+.search{position:relative}
+.results{position:absolute;z-index:5;left:0;right:0;top:44px;background:var(--panel);
+  border:1px solid var(--line);border-radius:9px;max-height:220px;overflow:auto}
+.res{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;font-size:13px}
+.res:hover{background:var(--ink)}
+.sum{font-weight:700;font-size:26px;margin-top:10px}
+.verdict{margin:8px 0 0}
+.vbar{height:10px;border-radius:999px;background:var(--line-soft);border:1px solid var(--line);overflow:hidden;display:flex}
+.vfill{height:100%;transition:width .5s cubic-bezier(.2,.8,.2,1)}
+.vlabel{text-align:center;margin-top:12px;font-size:16px;font-weight:600}
+
+.footer{border-top:1px solid var(--line);padding:22px 0 36px;color:var(--dim);font-size:12.5px;margin-top:16px}
+.spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.18);border-top-color:var(--amber);
+  border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:7px}
+@keyframes sp{to{transform:rotate(360deg)}}
+a.link{color:var(--amber);text-decoration:none}
+a.link:hover{text-decoration:underline}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
