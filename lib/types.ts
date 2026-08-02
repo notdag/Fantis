@@ -77,6 +77,7 @@ export type PlayerMap = Record<string, PlayerMapEntry>;
 
 export interface Team {
   rid: number;
+  ownerId: string;
   name: string;
   avatar: string | null;
   w: number;

@@ -130,3 +130,7 @@ export async function getProjections(
 
   return map;
 }
+
+// Sleeper treats ~999+ as "outside the ranked player pool" for ADP.
+export const isRankedAdp = (adp: number | undefined): adp is number =>
+  typeof adp === "number" && adp < 999;

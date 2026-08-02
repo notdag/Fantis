@@ -14,8 +14,10 @@ import type { LeagueBundle, PlayerMap, SleeperLeague, Team } from "@/lib/types";
 import LeagueView from "@/components/LeagueView";
 import Rankings from "@/components/Rankings";
 import Trade from "@/components/Trade";
+import StartSit from "@/components/StartSit";
+import WaiverWire from "@/components/WaiverWire";
 
-type Tab = "leagues" | "rankings" | "trade";
+type Tab = "leagues" | "rankings" | "trade" | "startsit" | "waivers";
 
 export default function FantisApp() {
   const [tab, setTab] = useState<Tab>("leagues");
@@ -27,6 +29,7 @@ export default function FantisApp() {
   const [players, setPlayers] = useState<PlayerMap | null>(null);
   const [sel, setSel] = useState<LeagueBundle | null>(null);
   const [selLoading, setSelLoading] = useState(false);
+  const [myUserId, setMyUserId] = useState<string | null>(null);
 
   const sync = useCallback(async () => {
     const u = username.trim();
@@ -41,6 +44,7 @@ export default function FantisApp() {
     try {
       const user = await getUser(u);
       if (!user || !user.user_id) throw new Error("not found");
+      setMyUserId(user.user_id);
       let lgs = await getLeagues(user.user_id, season);
       if ((!lgs || !lgs.length) && season === "2026") {
         lgs = await getLeagues(user.user_id, "2025");
@@ -76,6 +80,7 @@ export default function FantisApp() {
             const s = r.settings || {};
             return {
               rid: r.roster_id,
+              ownerId: r.owner_id,
               name: meta.team_name || owner.display_name || `Team ${r.roster_id}`,
               avatar: avatar(owner.avatar),
               w: s.wins || 0,
@@ -112,6 +117,8 @@ export default function FantisApp() {
                 ["leagues", "Leagues"],
                 ["rankings", "Rankings"],
                 ["trade", "Trade"],
+                ["startsit", "Start/Sit"],
+                ["waivers", "Waivers"],
               ] as [Tab, string][]
             ).map(([k, l]) => (
               <button
@@ -223,6 +230,12 @@ export default function FantisApp() {
 
         {tab === "rankings" && <Rankings />}
         {tab === "trade" && <Trade />}
+        {tab === "startsit" && (
+          <StartSit sel={sel} myUserId={myUserId} onGoToLeagues={() => setTab("leagues")} />
+        )}
+        {tab === "waivers" && (
+          <WaiverWire sel={sel} onGoToLeagues={() => setTab("leagues")} />
+        )}
 
         <footer className="footer">
           Fantis MVP · league data via the Sleeper public API · rankings & values
