@@ -5,6 +5,7 @@ import { PLAYERS, TIER_COLOR, posChipStyle } from "@/lib/players";
 import { getPlayers, getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
+import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
 import SortHeader from "@/components/SortHeader";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
@@ -72,6 +73,7 @@ export default function Rankings() {
   const [seasonError, setSeasonError] = useState("");
 
   const [mvpOdds, setMvpOdds] = useState<Record<string, MvpOddsEntry>>({});
+  const [playerProps, setPlayerProps] = useState<Record<string, PropLine[]>>({});
 
   const {
     projections,
@@ -122,6 +124,24 @@ export default function Rankings() {
       })
       .catch(() => {
         // MVP odds are a bonus panel stat, not core to the page — fail quietly
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Player props — SportsGameOdds via our own /api/player-props proxy, keyed
+  // directly by player name. Only players in the nearest week's games have
+  // lines, so most players simply won't have an entry — that's expected,
+  // not an error.
+  useEffect(() => {
+    let cancelled = false;
+    getPlayerProps()
+      .then((props) => {
+        if (!cancelled) setPlayerProps(props);
+      })
+      .catch(() => {
+        // Same reasoning as MVP odds — bonus panel stat, fail quietly
       });
     return () => {
       cancelled = true;
@@ -246,6 +266,9 @@ export default function Rankings() {
   const selectedSeason = selectedPlayer ? seasonLive[selectedPlayer.name] : undefined;
   const selectedMvp = selectedPlayer
     ? mvpOdds[selectedPlayer.name] || mvpOdds[stripSuffix(selectedPlayer.name)]
+    : undefined;
+  const selectedProps = selectedPlayer
+    ? playerProps[selectedPlayer.name] || playerProps[stripSuffix(selectedPlayer.name)]
     : undefined;
 
   return (
@@ -455,11 +478,29 @@ export default function Rankings() {
                 </div>
               </>
             )}
+            {selectedProps && selectedProps.length > 0 && (
+              <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
+                <span className="plabel">Player Props</span>
+                {selectedProps.map((p) => (
+                  <div
+                    key={p.stat}
+                    style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
+                  >
+                    <span style={{ color: "var(--muted)" }}>{p.stat}</span>
+                    <span className="num" style={{ color: "var(--amber)", fontWeight: 600 }}>
+                      {p.line != null ? `${p.line} ` : ""}
+                      {p.overOdds ?? "—"}
+                      {p.underOdds ? ` / ${p.underOdds}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="foot">
               Tier is Fantis&rsquo; own starter grouping. ADP and projected points are live
-              from Sleeper&rsquo;s public API; MVP odds are live from SharpAPI. Not investment
-              or betting advice.
+              from Sleeper&rsquo;s public API; MVP odds and player props are live from
+              SharpAPI and SportsGameOdds. Not investment or betting advice.
             </div>
           </div>
         )}

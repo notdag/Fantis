@@ -5,6 +5,7 @@ import { TIER_COLOR, computePosRanks, posChipStyle } from "@/lib/players";
 import type { Player } from "@/lib/types";
 
 const TIERS = [1, 2, 3, 4, 5, 6];
+const ADD_POSITIONS = ["QB", "RB", "WR", "TE"];
 
 type Board = Player[][]; // index 0..5 = tier 1..6
 
@@ -33,6 +34,12 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [prodSource, setProdSource] = useState<string | null>(null);
+
+  const [newName, setNewName] = useState("");
+  const [newPos, setNewPos] = useState("WR");
+  const [newTeam, setNewTeam] = useState("");
+  const [newTier, setNewTier] = useState(6);
+  const [addError, setAddError] = useState("");
 
   // posRank derived live from board order, same rule the save route uses —
   // this is what the owner sees while dragging, so it matches what gets saved.
@@ -66,6 +73,45 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
     setBoard(groupByTier(initialPlayers));
     setSaveMsg(null);
     setProdSource(null);
+  };
+
+  const addPlayer = () => {
+    const name = newName.trim();
+    const team = newTeam.trim().toUpperCase();
+    if (!name) {
+      setAddError("Enter a name.");
+      return;
+    }
+    if (!team) {
+      setAddError("Enter a team.");
+      return;
+    }
+    const exists = board.some((col) =>
+      col.some((p) => p.name.toLowerCase() === name.toLowerCase())
+    );
+    if (exists) {
+      setAddError(`${name} is already on the board.`);
+      return;
+    }
+    setAddError("");
+    // posRank is a placeholder here — rankByName (derived from board order)
+    // is what's actually displayed and saved, this field is never read.
+    const player: Player = { name, pos: newPos, team, tier: newTier, posRank: 0 };
+    setBoard((b) => {
+      const next = b.map((c) => [...c]);
+      next[newTier - 1] = [...next[newTier - 1], player];
+      return next;
+    });
+    setNewName("");
+    setNewTeam("");
+  };
+
+  const removePlayer = (tier: number, idx: number) => {
+    setBoard((b) => {
+      const next = b.map((c) => [...c]);
+      next[tier].splice(idx, 1);
+      return next;
+    });
   };
 
   const save = async () => {
@@ -117,6 +163,51 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         column — position rank (QB1, RB4, …) updates live from where a
         player lands. Nothing is saved until you click Save.
       </p>
+
+      <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          className="input"
+          placeholder="Player name"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addPlayer()}
+          style={{ maxWidth: 200 }}
+        />
+        <select className="select" value={newPos} onChange={(e) => setNewPos(e.target.value)}>
+          {ADD_POSITIONS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <input
+          className="input"
+          placeholder="Team (e.g. SF)"
+          value={newTeam}
+          onChange={(e) => setNewTeam(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addPlayer()}
+          style={{ maxWidth: 100 }}
+        />
+        <select
+          className="select"
+          value={newTier}
+          onChange={(e) => setNewTier(Number(e.target.value))}
+        >
+          {TIERS.map((t) => (
+            <option key={t} value={t}>
+              Tier {t}
+            </option>
+          ))}
+        </select>
+        <button className="btn sm" onClick={addPlayer}>
+          Add player
+        </button>
+      </div>
+      {addError && (
+        <p className="hint" style={{ color: "var(--red)", marginBottom: 12 }}>
+          {addError}
+        </p>
+      )}
 
       <div className="field" style={{ marginBottom: 14, alignItems: "center" }}>
         <button className="btn" onClick={save} disabled={saving}>
@@ -199,6 +290,7 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
                     <button className="mini" title="Move down" onClick={() => moveWithinTier(ti, ci, 1)}>▼</button>
                     <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ci, -1)}>«</button>
                     <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ci, 1)}>»</button>
+                    <button className="mini" title="Remove" onClick={() => removePlayer(ti, ci)}>✕</button>
                   </div>
                 </div>
               ))}

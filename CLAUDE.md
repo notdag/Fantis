@@ -84,8 +84,23 @@ not the final architecture.
   Do not call SharpAPI directly from a client component; the key would leak
   into the browser bundle. Any future paid/keyed data source should follow
   this same proxy pattern, not the direct-client-fetch pattern Sleeper uses.
-- Both are read-only informational data. Rankings values are still our own
-  starter data — see "Known limitations" below.
+- **SportsGameOdds** (sportsgameodds.com) — NFL player props (passing/
+  rushing/receiving yards, passing TDs, INTs, anytime/first TD), shown
+  alongside MVP odds in the Rankings detail panel. Free "Amateur" tier, real
+  key (`SPORTSGAMEODDS_API_KEY`), same server-side proxy pattern via
+  `app/api/player-props/route.ts`. Two things worth knowing if this gets
+  touched again: usage is metered **per event returned, not per prop
+  line** (confirmed by testing — a 200+ market event still only cost 1
+  "entity"), which is why the route fetches a small event window (`limit=20`)
+  and caches for 12h rather than minutes — comfortably under the 2.5k/month
+  cap. And each stat comes back in full-game *and* half/quarter variants
+  with the same statID+player — the route filters to `periodID === "game"`
+  only, or you'll get duplicate-looking rows with different odds and no way
+  to tell them apart. Receptions is a defined stat in their taxonomy but
+  wasn't populated as a live market in testing — don't wire it up assuming
+  it's there without checking again.
+- All three are read-only informational data. Rankings values are still our
+  own starter data — see "Known limitations" below.
 
 ## Admin tooling
 
