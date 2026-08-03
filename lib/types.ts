@@ -4,7 +4,6 @@ export interface Player {
   name: string;
   pos: string;
   team: string;
-  value: number;
   tier: number;
   posRank: number;
 }
@@ -66,6 +65,18 @@ export interface SleeperProjectionEntry {
 }
 
 export type ProjectionMap = Record<string, SleeperProjectionEntry>;
+
+// Summed across every week of the regular season (see getSeasonProjectionTotals).
+export interface SeasonProjectionTotal {
+  pts: number;
+  rushYd: number;
+  recYd: number;
+  passYd: number;
+  rushTd: number;
+  recTd: number;
+  passTd: number;
+  weeksCounted: number;
+}
 
 export interface PlayerMapEntry {
   n: string; // name

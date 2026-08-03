@@ -10,6 +10,7 @@ import type { ProjectionMap } from "./types";
 export function useProjections() {
   const [projections, setProjections] = useState<ProjectionMap | null>(null);
   const [week, setWeek] = useState<number | null>(null);
+  const [season, setSeason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -23,6 +24,7 @@ export function useProjections() {
         if (cancelled) return;
         setProjections(proj);
         setWeek(wk);
+        setSeason(state.season);
       } catch {
         if (!cancelled) setError("Couldn't load live projections from Sleeper.");
       } finally {
@@ -34,5 +36,5 @@ export function useProjections() {
     };
   }, []);
 
-  return { projections, week, loading, error };
+  return { projections, week, season, loading, error };
 }

@@ -2,6 +2,7 @@
 import type {
   PlayerMap,
   ProjectionMap,
+  SeasonProjectionTotal,
   SleeperLeague,
   SleeperLeagueUser,
   SleeperPlayerRaw,
@@ -134,3 +135,86 @@ export async function getProjections(
 // Sleeper treats ~999+ as "outside the ranked player pool" for ADP.
 export const isRankedAdp = (adp: number | undefined): adp is number =>
   typeof adp === "number" && adp < 999;
+
+interface RawWeeklyProjection {
+  pts_ppr?: number;
+  rush_yd?: number;
+  rec_yd?: number;
+  pass_yd?: number;
+  rush_td?: number;
+  rec_td?: number;
+  pass_td?: number;
+}
+
+// NFL regular season: 18 weeks, each team gets exactly one bye within them.
+const SEASON_WEEKS = 18;
+const SEASON_TOTALS_CACHE_PREFIX = "fantis_season_totals_v1_";
+
+// Sleeper has no season-total endpoint, so this fetches all 18 weekly
+// projection files (~10MB total) and sums them per player. Deliberately NOT
+// layered on top of getProjections()'s per-week cache — caching every week's
+// full payload individually would be ~15-20MB in localStorage, on top of the
+// player dump. Instead only the final summed result (~1MB) is cached.
+// This is a heavy, explicit operation — callers should treat it as opt-in,
+// not something to fire automatically on page load.
+export async function getSeasonProjectionTotals(
+  season: string,
+  onProgress?: (weeksDone: number, totalWeeks: number) => void
+): Promise<Record<string, SeasonProjectionTotal>> {
+  const cacheKey = `${SEASON_TOTALS_CACHE_PREFIX}${season}`;
+  if (typeof window !== "undefined") {
+    try {
+      const cached = window.localStorage.getItem(cacheKey);
+      if (cached) {
+        const d = JSON.parse(cached) as {
+          day: string;
+          totals: Record<string, SeasonProjectionTotal>;
+        };
+        if (d.day === today()) return d.totals;
+      }
+    } catch {
+      // ignore cache read errors
+    }
+  }
+
+  const totals: Record<string, SeasonProjectionTotal> = {};
+  for (let week = 1; week <= SEASON_WEEKS; week++) {
+    const raw = await jget<Record<string, RawWeeklyProjection | null>>(
+      `${S}/projections/nfl/regular/${season}/${week}`
+    );
+    for (const id in raw) {
+      const p = raw[id];
+      if (!p || p.pts_ppr == null) continue;
+      const t = totals[id] || {
+        pts: 0,
+        rushYd: 0,
+        recYd: 0,
+        passYd: 0,
+        rushTd: 0,
+        recTd: 0,
+        passTd: 0,
+        weeksCounted: 0,
+      };
+      t.pts += p.pts_ppr;
+      t.rushYd += p.rush_yd ?? 0;
+      t.recYd += p.rec_yd ?? 0;
+      t.passYd += p.pass_yd ?? 0;
+      t.rushTd += p.rush_td ?? 0;
+      t.recTd += p.rec_td ?? 0;
+      t.passTd += p.pass_td ?? 0;
+      t.weeksCounted += 1;
+      totals[id] = t;
+    }
+    onProgress?.(week, SEASON_WEEKS);
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(cacheKey, JSON.stringify({ day: today(), totals }));
+    } catch {
+      // ignore cache write errors (e.g. quota exceeded) — will refetch next time
+    }
+  }
+
+  return totals;
+}

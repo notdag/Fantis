@@ -13,7 +13,7 @@
   --bone:#EEF0F3; --muted:#939AA6; --dim:#5D6470;
   --amber:#FFB020; --amber-soft:rgba(255,176,32,.14);
   --mint:#37E0B0; --red:#FF5D5D;
-  --qb:#F0808A; --rb:#5FDA9C; --wr:#59B4E8; --te:#F0B876; --oth:#8A93A3;
+  --qb:#5FDA9C; --rb:#59B4E8; --wr:#F0808A; --te:#F0B876; --oth:#8A93A3;
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -120,10 +120,17 @@ h1.big span{color:var(--amber)}
 
 /* rankings */
 .filters{display:flex;gap:2px;flex-wrap:wrap;margin-bottom:12px}
-.rk{grid-template-columns:36px 1fr 56px 48px 56px 52px 66px}
+.rk{grid-template-columns:36px 1fr 56px 56px 66px}
+.rk.rk-season{grid-template-columns:36px 1fr 56px 58px 58px 58px 44px 66px}
 .ww{grid-template-columns:40px 1fr 64px 64px 76px}
 .tier{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px}
-.val{font-weight:650;font-size:14px}
+.val{font-weight:650;font-size:14px;color:var(--amber)}
+
+/* Rankings rows: tier reads as a left-edge stripe, not a dot next to the
+   name — a dot sitting right beside the position chip made tier and
+   position hues easy to confuse (e.g. mint tier-1 vs. green RB). Different
+   location + shape now, so the two signals don't compete. */
+.row.rk{border-left:3px solid transparent}
 
 /* sortable column headers */
 .sorth{appearance:none;border:0;background:transparent;cursor:pointer;
@@ -169,6 +176,20 @@ h1.big span{color:var(--amber)}
 .panel .pval{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
 .panel .foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);
   color:var(--dim);font-size:11.5px;line-height:1.5}
+
+/* admin tier board (/admin — owner only) */
+.tierboard{display:grid;grid-template-columns:repeat(6,minmax(170px,1fr));gap:10px;overflow-x:auto;align-items:start}
+.tiercol{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-height:140px;display:flex;flex-direction:column}
+.tiercol header{padding:10px 12px;border-bottom:2px solid transparent;font-size:12.5px;font-weight:650;display:flex;align-items:center;gap:7px}
+.tiercol .drop{flex:1;min-height:28px}
+.tiercard{display:flex;flex-direction:column;gap:4px;padding:7px 10px;border-top:1px solid var(--line-soft);font-size:12.5px;cursor:grab}
+.tiercard:first-child{border-top:0}
+.tiercard.dragging{opacity:.4}
+.tiercard .toprow{display:flex;align-items:center;gap:6px;min-width:0}
+.tiercard .toprow .plname{flex:1;min-width:0}
+.tiercard .btnrow{display:flex;gap:2px;justify-content:flex-end}
+.tiercard .mini{border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:11px;padding:1px 4px;line-height:1.5}
+.tiercard .mini:hover{color:var(--bone)}
 
 .footer{border-top:1px solid var(--line);padding:22px 0 36px;color:var(--dim);font-size:12.5px;margin-top:16px}
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.18);border-top-color:var(--amber);
