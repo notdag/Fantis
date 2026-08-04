@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PLAYERS, TIER_COLOR, posChipStyle } from "@/lib/players";
-import { getPlayers, getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
+import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
 import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
+import { sleeperId, stripSuffix, useSleeperIdMaps } from "@/lib/playerIdMap";
 import SortHeader from "@/components/SortHeader";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
@@ -41,16 +42,6 @@ const SEASON_KEYS: SortKey[] = ["pos", "rushYd", "recYd", "passYd", "td", "proj"
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
 
-const stripSuffix = (name: string) =>
-  name.replace(/\s+(Jr\.?|Sr\.?|II|III|IV)$/i, "").trim();
-
-// Position-scoped lookup — see the id-map build effect below for why
-// position has to be part of the key.
-const sleeperId = (
-  maps: { byName: Record<string, string>; byBase: Record<string, string> },
-  p: { name: string; pos: string }
-) => maps.byName[`${p.name}|${p.pos}`] || maps.byBase[`${stripSuffix(p.name)}|${p.pos}`];
-
 export default function Rankings() {
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>("ALL");
   const [query, setQuery] = useState("");
@@ -59,10 +50,7 @@ export default function Rankings() {
   const [selected, setSelected] = useState<string | null>(null);
   const [projMode, setProjMode] = useState<ProjMode>("season");
 
-  const [idMaps, setIdMaps] = useState<{
-    byName: Record<string, string>;
-    byBase: Record<string, string>;
-  } | null>(null);
+  const idMaps = useSleeperIdMaps();
 
   const [seasonTotals, setSeasonTotals] = useState<Record<
     string,
@@ -82,36 +70,6 @@ export default function Rankings() {
     loading: liveLoading,
     error: liveError,
   } = useProjections();
-
-  // Resolve Sleeper player IDs for our curated list once, independent of week.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const pmap = await getPlayers();
-      if (cancelled) return;
-      // Sleeper sometimes omits the suffix we carry in our curated list
-      // (e.g. "Brian Thomas" vs. "Brian Thomas Jr."), so match exact name
-      // first and fall back to a suffix-stripped comparison. Position is
-      // included in both keys: several names collide with an unrelated
-      // player elsewhere in Sleeper's ~11k-player dump (e.g. two "Lamar
-      // Jackson"s — the Ravens QB and an inactive CB; two "Kenneth
-      // Walker"s — the real RB and an unrelated WR). Matching by name alone
-      // silently picked whichever one happened to appear later in the dump,
-      // which was frequently the wrong, data-empty player.
-      const byName: Record<string, string> = {};
-      const byBase: Record<string, string> = {};
-      for (const id in pmap) {
-        const entry = pmap[id];
-        byName[`${entry.n}|${entry.p}`] = id;
-        const baseKey = `${stripSuffix(entry.n)}|${entry.p}`;
-        if (!(baseKey in byBase)) byBase[baseKey] = id;
-      }
-      setIdMaps({ byName, byBase });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // MVP futures — separate provider (SharpAPI via our own /api/mvp-odds
   // proxy), keyed directly by player name. Not every player has a line, so

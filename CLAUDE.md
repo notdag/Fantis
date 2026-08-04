@@ -25,14 +25,11 @@ boxed card panels. Normal case everywhere except tiny uppercase
 letter-spaced column-header labels. Position (QB/RB/WR/TE) gets a soft
 `color-mix()` chip — tinted background + colored text — not a solid fill, so
 it stays scannable without going loud (see `lib/players.ts`'s
-`posChipStyle`). **The trade verdict bar's tilting mechanic is currently
-disabled** (2026-08) — it used to sum a hand-entered "value" score per
-player, which had no real methodology behind it and has been removed
-entirely from the data model. `components/Trade.tsx` still lets you build
-both sides and keeps the mint (Side A) / amber (Side B) heading colors, but
-shows an honest "verdict disabled" message instead of a fake or frozen bar.
-Re-enabling the tilt is gated on a real trade value metric — do not
-resurrect it by re-adding an arbitrary score. Don't drift back toward heavy
+`posChipStyle`). **The trade verdict bar's tilting mechanic is re-enabled**
+(2026-08) — see "Trade value methodology" below for what it sums now. The
+old hand-entered 0-100 "value" score it originally used had no documented
+methodology and was removed entirely; the replacement is a real, documented
+calculation, not a resurrection of that field. Don't drift back toward heavy
 gradients, condensed uppercase type, or solid-color position badges without
 discussion — and don't drift toward a *generic* SaaS look either (no
 unexplained purple/indigo accents, keep the position color system and the
@@ -58,16 +55,14 @@ not the final architecture.
 
 ## Known limitations to fix (this is the real work)
 
-1. **No trade value metric.** The old hand-entered 0-100 "value" score (no
-   documented methodology) has been removed entirely from `lib/players.ts`
-   and the `Player` type — this was intentional, not a bug. This is now the
-   single most important gap to fill: the Trade calculator's verdict bar is
-   disabled until there's a real per-player value (our own model, a
-   projections-derived score, etc.) to sum. `posRank` (WR1, RB4, ...) is
-   derived from a player's position within the owner's manually-curated tier
-   order (see "Admin tooling" below) rather than from the removed value
-   field — still not a computed metric, just a friendlier way to hand-curate
-   one until a real pipeline exists.
+1. **Trade value is a heuristic, not a "real" projections pipeline.** See
+   "Trade value methodology" below — it's built entirely from real inputs
+   (Sleeper's own season projection, live Vegas props) with no invented
+   numbers, but it's still a first-pass formula, not the server-side
+   rankings pipeline described in "Target architecture". `posRank` (WR1,
+   RB4, ...) is a separate thing — derived from a player's position within
+   the owner's manually-curated tier order (see "Admin tooling" below), not
+   from trade value.
 2. **ESPN and Yahoo don't work client-side.** Yahoo needs OAuth; ESPN has no
    official public API. Both require the backend below. Keep them as
    "coming soon" until then.
@@ -101,6 +96,42 @@ not the final architecture.
   it's there without checking again.
 - All three are read-only informational data. Rankings values are still our
   own starter data — see "Known limitations" below.
+
+## Trade value methodology
+
+The Trade calculator's verdict bar (`components/Trade.tsx`) sums a real,
+documented per-player value — see `lib/tradeValue.ts` for the full writeup
+in code. Short version:
+
+1. **Base value = Sleeper's season-long PPR point projection** (the same
+   number shown as "Szn Pts" in Rankings) — a real third-party projection,
+   not something Fantis invented.
+2. **If the player has live props this week** (via SportsGameOdds), convert
+   those prop lines into an expected-points total for that one week using
+   standard full-PPR scoring (0.04 pts/passing yd, 0.1 pts/rush-or-rec yd,
+   4 pts/passing TD, 6 pts/rush-or-rec TD, -2 pts/INT thrown — the same
+   scale Sleeper's own `pts_ppr` implies). Yardage props use the O/U line
+   directly as the expected value; the anytime-TD prop uses de-vigged
+   implied probability × 6. "First TD" is excluded to avoid double-counting
+   with "Anytime TD".
+3. Compare that weekly-expected number to the player's own season pace
+   (season pts ÷ weeks with a projection) to get a delta — is the market
+   expecting more or less than this player's average week?
+4. Add that delta to the season value once (not multiplied), capped at
+   ±20% of weekly pace so one thin/mispriced market can't swing a season
+   value. The cap is a documented safety bound, not a tuned parameter.
+5. No props this week (most players, most weeks) → value is just the season
+   projection, unmodified.
+
+Known gap: SportsGameOdds doesn't currently offer a receptions prop (see
+"Data sources" above), so the weekly market side of the blend is missing
+that point value even though the season baseline (full PPR, via Sleeper)
+includes it — this means the weekly delta slightly understates pass-catchers
+relative to the season baseline. Documented, not silently wrong.
+
+`lib/useTradeValues.ts` computes this for every curated player once per page
+load; `lib/playerIdMap.ts` holds the shared Sleeper-id matching (also used
+by Rankings) that both this and the live projections depend on.
 
 ## Admin tooling
 
@@ -139,8 +170,9 @@ not the final architecture.
 ## Working rules
 
 - Preserve the design system in `app/globals.css` and the verdict bar's mint/amber
-  heading colors. The tilting-bar mechanic itself is disabled pending a real trade
-  value metric — see "Known limitations" — don't re-enable it with a fabricated score.
+  heading colors. The tilting-bar mechanic sums the real trade value described in
+  "Trade value methodology" — if that formula changes, keep it built from real
+  projections/market data, not a fabricated or hand-tuned score.
 - Keep Sleeper calls read-only; never ask a user for a platform password.
 - Isolate each league provider behind one interface (`getLeagues`, `getRosters`,
   `getStandings`) so Sleeper/Yahoo/ESPN are swappable.
@@ -159,7 +191,8 @@ not the final architecture.
 3. Add auth; persist a user's linked leagues.
 4. Add Yahoo OAuth behind the provider interface.
 5. Add Stripe subscription + gate premium features.
-6. Build the real rankings/projections pipeline (replaces placeholder values).
+6. Build the real rankings/projections pipeline (replaces the heuristic in
+   "Trade value methodology" with a proper server-side model).
 
 ## Commands
 
