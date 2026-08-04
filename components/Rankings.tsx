@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS, TIER_COLOR, posChipStyle } from "@/lib/players";
+import { PLAYERS, TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
@@ -329,7 +329,7 @@ export default function Rankings() {
                 key={p.name}
                 onClick={() => setSelected(selected === p.name ? null : p.name)}
                 style={{ borderLeftColor: TIER_COLOR[p.tier - 1] || "var(--oth)" }}
-                title={`Tier ${p.tier}`}
+                title={`Tier ${TIER_LABELS[p.tier - 1] ?? p.tier}`}
               >
                 <div className={`cell rank ${i < 3 ? "top" : ""}`}>{i + 1}</div>
                 <div className="cell team">
@@ -402,7 +402,7 @@ export default function Rankings() {
                   className="tier"
                   style={{ background: TIER_COLOR[selectedPlayer.tier - 1] || "var(--oth)", margin: 0 }}
                 />
-                {selectedPlayer.tier}
+                {TIER_LABELS[selectedPlayer.tier - 1] ?? selectedPlayer.tier}
               </span>
             </div>
             <div className="prow">

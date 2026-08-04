@@ -1,18 +1,19 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { TIER_COLOR, computePosRanks, posChipStyle } from "@/lib/players";
+import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
 import type { Player } from "@/lib/types";
 
-const TIERS = [1, 2, 3, 4, 5, 6];
+const TIER_COUNT = TIER_LABELS.length; // 8: S, A, B, C, D, E, F, G
+const TIERS = Array.from({ length: TIER_COUNT }, (_, i) => i + 1);
 const ADD_POSITIONS = ["QB", "RB", "WR", "TE"];
 
-type Board = Player[][]; // index 0..5 = tier 1..6
+type Board = Player[][]; // index 0..(TIER_COUNT-1) = tier 1..TIER_COUNT
 
 function groupByTier(players: Player[]): Board {
-  const board: Board = [[], [], [], [], [], []];
+  const board: Board = Array.from({ length: TIER_COUNT }, () => []);
   for (const p of players) {
-    const idx = Math.min(Math.max(p.tier - 1, 0), 5);
+    const idx = Math.min(Math.max(p.tier - 1, 0), TIER_COUNT - 1);
     board[idx].push(p);
   }
   return board;
@@ -28,6 +29,35 @@ function movePlayer(board: Board, from: { tier: number; idx: number }, to: { tie
   return next;
 }
 
+// Nearest same-position card in a direction, skipping over other positions —
+// what "up/down" should mean once you've filtered the board to one position.
+function findAdjacentSamePos(col: Player[], idx: number, pos: string, dir: 1 | -1): number | null {
+  let i = idx + dir;
+  while (i >= 0 && i < col.length) {
+    if (col[i].pos === pos) return i;
+    i += dir;
+  }
+  return null;
+}
+
+// Where a card should land when moved into a tier while filtered to one
+// position: right after that position's last card there, not the absolute
+// end (which could be past unrelated positions).
+function appendIndexForPos(col: Player[], pos: string): number {
+  let last = -1;
+  col.forEach((p, i) => {
+    if (p.pos === pos) last = i;
+  });
+  return last === -1 ? col.length : last + 1;
+}
+
+// Same idea, but for dropping onto a tier band header — lands before that
+// position's first card in the tier (or the end, if there isn't one yet).
+function prependIndexForPos(col: Player[], pos: string): number {
+  const idx = col.findIndex((p) => p.pos === pos);
+  return idx === -1 ? col.length : idx;
+}
+
 export default function TierBoard({ initialPlayers }: { initialPlayers: Player[] }) {
   const [board, setBoard] = useState<Board>(() => groupByTier(initialPlayers));
   const dragRef = useRef<{ tier: number; idx: number } | null>(null);
@@ -38,8 +68,18 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const [newName, setNewName] = useState("");
   const [newPos, setNewPos] = useState("WR");
   const [newTeam, setNewTeam] = useState("");
-  const [newTier, setNewTier] = useState(6);
+  const [newTier, setNewTier] = useState(TIER_COUNT);
   const [addError, setAddError] = useState("");
+
+  // "ALL" shows every position mixed per tier (how Rankings displays them);
+  // picking a position scopes ranking (drag, up/down, tier-move) to just
+  // that position, so you're never fighting through unrelated positions to
+  // reorder e.g. WRs against each other.
+  const [posFilter, setPosFilter] = useState("ALL");
+  const setFilter = (p: string) => {
+    setPosFilter(p);
+    if (p !== "ALL") setNewPos(p);
+  };
 
   // posRank derived live from board order, same rule the save route uses —
   // this is what the owner sees while dragging, so it matches what gets saved.
@@ -51,22 +91,28 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
     return map;
   }, [board]);
 
-  const moveWithinTier = (tier: number, idx: number, delta: number) => {
+  const moveWithinTier = (tier: number, idx: number, dir: -1 | 1) => {
     setBoard((b) => {
       const col = b[tier];
-      const target = idx + delta;
-      if (target < 0 || target >= col.length) return b;
+      const p = col[idx];
+      const target = posFilter === "ALL" ? idx + dir : findAdjacentSamePos(col, idx, p.pos, dir);
+      if (target == null || target < 0 || target >= col.length) return b;
       const next = b.map((c) => [...c]);
-      const [item] = next[tier].splice(idx, 1);
-      next[tier].splice(target, 0, item);
+      const arr = next[tier];
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
       return next;
     });
   };
 
   const moveToTier = (tier: number, idx: number, dir: -1 | 1) => {
     const targetTier = tier + dir;
-    if (targetTier < 0 || targetTier > 5) return;
-    setBoard((b) => movePlayer(b, { tier, idx }, { tier: targetTier, idx: b[targetTier].length }));
+    if (targetTier < 0 || targetTier > TIER_COUNT - 1) return;
+    setBoard((b) => {
+      const p = b[tier][idx];
+      const insertIdx =
+        posFilter === "ALL" ? b[targetTier].length : appendIndexForPos(b[targetTier], p.pos);
+      return movePlayer(b, { tier, idx }, { tier: targetTier, idx: insertIdx });
+    });
   };
 
   const reset = () => {
@@ -158,11 +204,24 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         <h2>Tier board</h2>
         <span className="rt">owner only</span>
       </div>
-      <p className="hint" style={{ marginBottom: 14 }}>
-        Drag a player card to reorder within a tier or move it to another tier
-        column — position rank (QB1, RB4, …) updates live from where a
-        player lands. Nothing is saved until you click Save.
+      <p className="hint" style={{ marginBottom: 10 }}>
+        Drag a player up or down to reorder them, or past a tier band to
+        re-tier them — position rank (QB1, RB4, …) updates live from where a
+        player lands. Nothing is saved until you click Save. Rankings
+        displays every position mixed together; filter to one position below
+        to rank within just that position instead of the aggregate pile.
       </p>
+      <div className="filters">
+        {["ALL", ...ADD_POSITIONS].map((p) => (
+          <button
+            key={p}
+            className={`chip-filter ${posFilter === p ? "on" : ""}`}
+            onClick={() => setFilter(p)}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
 
       <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input
@@ -195,7 +254,7 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         >
           {TIERS.map((t) => (
             <option key={t} value={t}>
-              Tier {t}
+              Tier {TIER_LABELS[t - 1]}
             </option>
           ))}
         </select>
@@ -244,27 +303,51 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         />
       )}
 
-      <div className="tierboard">
+      <div className="tierlist">
         {TIERS.map((t) => {
           const ti = t - 1;
           const color = TIER_COLOR[ti];
+          const cards = board[ti]
+            .map((p, ai) => ({ p, ai }))
+            .filter(({ p }) => posFilter === "ALL" || p.pos === posFilter);
+
           return (
-            <div
-              key={t}
-              className="tiercol"
-              onDragOver={(e) => e.preventDefault()}
-            >
-              <header style={{ borderBottomColor: color, color }}>
-                Tier {t}
-                <span style={{ color: "var(--dim)", fontWeight: 500 }}>{board[ti].length}</span>
-              </header>
-              {board[ti].map((p, ci) => (
+            <div key={t}>
+              <div
+                className={`tierband ${cards.length === 0 ? "empty" : ""}`}
+                style={{ background: color }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const from = dragRef.current;
+                  if (!from) return;
+                  setBoard((b) => {
+                    const draggedPos = b[from.tier][from.idx]?.pos;
+                    const insertIdx =
+                      posFilter === "ALL" || !draggedPos
+                        ? 0
+                        : prependIndexForPos(b[ti], draggedPos);
+                    return movePlayer(b, from, { tier: ti, idx: insertIdx });
+                  });
+                  dragRef.current = null;
+                }}
+              >
+                {cards.length === 0 ? (
+                  <>Tier {TIER_LABELS[ti]} — drop here</>
+                ) : (
+                  <>
+                    {TIER_LABELS[ti]}
+                    <span className="count">{cards.length}</span>
+                  </>
+                )}
+              </div>
+              {cards.map(({ p, ai }) => (
                 <div
                   key={p.name}
-                  className="tiercard"
+                  className="tierrow"
                   draggable
                   onDragStart={() => {
-                    dragRef.current = { tier: ti, idx: ci };
+                    dragRef.current = { tier: ti, idx: ai };
                   }}
                   onDragOver={(e) => e.preventDefault()}
                   onDrop={(e) => {
@@ -273,38 +356,25 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
                     if (!from) return;
                     const rect = e.currentTarget.getBoundingClientRect();
                     const before = e.clientY < rect.top + rect.height / 2;
-                    setBoard((b) => movePlayer(b, from, { tier: ti, idx: ci + (before ? 0 : 1) }));
+                    setBoard((b) => movePlayer(b, from, { tier: ti, idx: ai + (before ? 0 : 1) }));
                     dragRef.current = null;
                   }}
                 >
-                  <div className="toprow">
-                    <span className="pos" style={posChipStyle(p.pos)}>
-                      {p.pos}
-                      {rankByName[p.name]}
-                    </span>
-                    <span className="plname">{p.name}</span>
-                    <span className="plteam">{p.team}</span>
-                  </div>
+                  <span className="pos" style={posChipStyle(p.pos)}>
+                    {p.pos}
+                    {rankByName[p.name]}
+                  </span>
+                  <span className="plname">{p.name}</span>
+                  <span className="plteam">{p.team}</span>
                   <div className="btnrow">
-                    <button className="mini" title="Move up" onClick={() => moveWithinTier(ti, ci, -1)}>▲</button>
-                    <button className="mini" title="Move down" onClick={() => moveWithinTier(ti, ci, 1)}>▼</button>
-                    <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ci, -1)}>«</button>
-                    <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ci, 1)}>»</button>
-                    <button className="mini" title="Remove" onClick={() => removePlayer(ti, ci)}>✕</button>
+                    <button className="mini" title="Move up" onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
+                    <button className="mini" title="Move down" onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
+                    <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
+                    <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
+                    <button className="mini" title="Remove" onClick={() => removePlayer(ti, ai)}>✕</button>
                   </div>
                 </div>
               ))}
-              <div
-                className="drop"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const from = dragRef.current;
-                  if (!from) return;
-                  setBoard((b) => movePlayer(b, from, { tier: ti, idx: b[ti].length }));
-                  dragRef.current = null;
-                }}
-              />
             </div>
           );
         })}

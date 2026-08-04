@@ -33,6 +33,12 @@ export function posChipStyle(pos: string) {
   };
 }
 
+// Letter-grade tier labels (S/A/B/.../G) instead of raw numbers — the
+// underlying `tier` field on Player is still just 1-8 (index + 1) so
+// lib/players.data.ts, the save route, and computePosRanks don't need to
+// know about labels at all; this is purely a display mapping.
+export const TIER_LABELS = ["S", "A", "B", "C", "D", "E", "F", "G"];
+
 export const TIER_COLOR = [
   "#37E0B0",
   "#FFB020",
@@ -40,6 +46,8 @@ export const TIER_COLOR = [
   "#F5A742",
   "#B18CFF",
   "#8A9BB5",
+  "#E0737A",
+  "#6B7280",
 ];
 
 // Position rank (QB1, RB4, ...) derived from order alone: the Nth player at
