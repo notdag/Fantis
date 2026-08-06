@@ -60,6 +60,10 @@ export async function getPlayers(): Promise<PlayerMap> {
       n: p.full_name || `${p.first_name || ""} ${p.last_name || ""}`.trim() || id,
       p: p.position || "",
       t: p.team || "",
+      age: p.age,
+      exp: p.years_exp,
+      college: p.college,
+      inj: p.injury_status,
     };
   }
 
@@ -217,4 +221,53 @@ export async function getSeasonProjectionTotals(
   }
 
   return totals;
+}
+
+const WEEKLY_STATS_CACHE_PREFIX = "fantis_weekly_stats_v1_";
+
+// Real per-week PPR points from a completed season — Sleeper's /stats
+// endpoint (actual box scores), not /projections. Only pass a season that's
+// already finished; a season in progress will just have nulls for future
+// weeks. Same heavy-fetch-but-cache-only-the-summary shape as
+// getSeasonProjectionTotals — opt-in, not fired automatically.
+export async function getSeasonWeeklyStats(
+  season: string
+): Promise<Record<string, (number | null)[]>> {
+  const cacheKey = `${WEEKLY_STATS_CACHE_PREFIX}${season}`;
+  if (typeof window !== "undefined") {
+    try {
+      const cached = window.localStorage.getItem(cacheKey);
+      if (cached) {
+        const d = JSON.parse(cached) as {
+          day: string;
+          weekly: Record<string, (number | null)[]>;
+        };
+        if (d.day === today()) return d.weekly;
+      }
+    } catch {
+      // ignore cache read errors
+    }
+  }
+
+  const weekly: Record<string, (number | null)[]> = {};
+  for (let week = 1; week <= SEASON_WEEKS; week++) {
+    const raw = await jget<Record<string, { pts_ppr?: number } | null>>(
+      `${S}/stats/nfl/regular/${season}/${week}`
+    );
+    for (const id in raw) {
+      const p = raw[id];
+      if (!weekly[id]) weekly[id] = new Array(SEASON_WEEKS).fill(null);
+      weekly[id][week - 1] = p?.pts_ppr ?? null;
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(cacheKey, JSON.stringify({ day: today(), weekly }));
+    } catch {
+      // ignore cache write errors (e.g. quota exceeded) — will refetch next time
+    }
+  }
+
+  return weekly;
 }

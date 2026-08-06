@@ -2,23 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { posChipStyle } from "@/lib/players";
-import { isRankedAdp } from "@/lib/sleeper";
-import { useProjections } from "@/lib/useProjections";
+import { useAvailablePlayers } from "@/lib/useAvailablePlayers";
 import SortHeader from "@/components/SortHeader";
 import type { LeagueBundle } from "@/lib/types";
 
 const POSITIONS = ["ALL", "QB", "RB", "WR", "TE"] as const;
 const MAX_ROWS = 150;
-
-interface AvailablePlayer {
-  id: string;
-  name: string;
-  pos: string;
-  team: string;
-  adp: number | null;
-  proj: number | null;
-  wireRank: number;
-}
 
 type SortKey = "adp" | "proj";
 type SortDir = "asc" | "desc";
@@ -31,44 +20,10 @@ export default function WaiverWire({
   sel: LeagueBundle | null;
   onGoToLeagues: () => void;
 }) {
-  const { projections, week, loading, error } = useProjections();
+  const { available, week, loading, error } = useAvailablePlayers(sel);
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>("ALL");
   const [sortBy, setSortBy] = useState<SortKey>("proj");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-
-  const available = useMemo<AvailablePlayer[]>(() => {
-    if (!sel || !projections) return [];
-
-    const rostered = new Set<string>();
-    for (const t of sel.teams) for (const id of t.players) rostered.add(id);
-
-    const pool: AvailablePlayer[] = [];
-    for (const id in sel.pmap) {
-      if (rostered.has(id)) continue;
-      const p = sel.pmap[id];
-      if (!p.t) continue; // not on an active NFL roster — not a real waiver target
-      if (!["QB", "RB", "WR", "TE"].includes(p.p)) continue;
-      const proj = projections[id];
-      if (proj?.pts_ppr == null) continue; // no live signal — not worth listing
-      pool.push({
-        id,
-        name: p.n,
-        pos: p.p,
-        team: p.t,
-        adp: isRankedAdp(proj.adp_dd_ppr) ? Math.round(proj.adp_dd_ppr) : null,
-        proj: proj.pts_ppr,
-        wireRank: 0,
-      });
-    }
-
-    const byPos: Record<string, AvailablePlayer[]> = {};
-    for (const p of pool) (byPos[p.pos] ||= []).push(p);
-    for (const group of Object.values(byPos)) {
-      group.sort((a, b) => (b.proj ?? -1) - (a.proj ?? -1)).forEach((p, i) => (p.wireRank = i + 1));
-    }
-
-    return pool;
-  }, [sel, projections]);
 
   const toggleSort = (key: SortKey) => {
     if (sortBy === key) {

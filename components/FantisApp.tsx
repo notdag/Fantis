@@ -87,6 +87,7 @@ export default function FantisApp() {
               l: s.losses || 0,
               t: s.ties || 0,
               pf: (s.fpts || 0) + (s.fpts_decimal || 0) / 100,
+              pa: (s.fpts_against || 0) + (s.fpts_against_decimal || 0) / 100,
               starters: (r.starters || []).filter(Boolean),
               players: r.players || [],
             };
@@ -218,7 +219,7 @@ export default function FantisApp() {
               </section>
             )}
 
-            {sel && <LeagueView bundle={sel} onBack={() => setSel(null)} />}
+            {sel && <LeagueView bundle={sel} myUserId={myUserId} onBack={() => setSel(null)} />}
             {selLoading && sel && (
               <p className="hint">
                 <span className="spin" />

@@ -28,6 +28,8 @@ export interface SleeperRosterSettings {
   ties?: number;
   fpts?: number;
   fpts_decimal?: number;
+  fpts_against?: number;
+  fpts_against_decimal?: number;
 }
 
 export interface SleeperRoster {
@@ -51,6 +53,10 @@ export interface SleeperPlayerRaw {
   last_name?: string;
   position?: string;
   team?: string;
+  age?: number;
+  years_exp?: number;
+  college?: string;
+  injury_status?: string | null;
 }
 
 export interface SleeperState {
@@ -82,6 +88,10 @@ export interface PlayerMapEntry {
   n: string; // name
   p: string; // position
   t: string; // team
+  age?: number;
+  exp?: number; // years_exp
+  college?: string;
+  inj?: string | null; // injury_status
 }
 
 export type PlayerMap = Record<string, PlayerMapEntry>;
@@ -95,6 +105,7 @@ export interface Team {
   l: number;
   t: number;
   pf: number;
+  pa: number;
   starters: string[];
   players: string[];
 }
