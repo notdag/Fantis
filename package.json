@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "regen-players": "tsx scripts/regenPlayers.ts"
   },
   "dependencies": {
     "next": "16.2.12",
@@ -19,6 +20,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
+    "tsx": "^4.23.9",
     "typescript": "^5"
   }
 }

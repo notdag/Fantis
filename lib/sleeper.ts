@@ -271,3 +271,117 @@ export async function getSeasonWeeklyStats(
 
   return weekly;
 }
+
+// Seasons with a full, real game log available (excludes the current/live
+// season, which won't have 18 completed weeks yet). Verified real data as
+// far back as 2019 via Sleeper's /stats endpoint; capped at 2020 per product
+// decision rather than the data's actual limit.
+export const HISTORICAL_SEASONS = ["2025", "2024", "2023", "2022", "2021", "2020"];
+
+interface RawWeekStat {
+  pts_ppr?: number;
+  pos_rank_ppr?: number;
+  off_snp?: number;
+  tm_off_snp?: number;
+  pass_att?: number;
+  pass_yd?: number;
+  pass_td?: number;
+  pass_int?: number;
+  rush_att?: number;
+  rush_yd?: number;
+  rush_td?: number;
+  rec_tgt?: number;
+  rec?: number;
+  rec_yd?: number;
+  rec_td?: number;
+  rec_ypt?: number;
+}
+
+export interface WeeklyStatLine {
+  week: number;
+  pts: number | null;
+  posRank: number | null;
+  snapPct: number | null;
+  passAtt: number | null;
+  passYd: number | null;
+  passTd: number | null;
+  passInt: number | null;
+  rushAtt: number | null;
+  rushYd: number | null;
+  rushTd: number | null;
+  recTgt: number | null;
+  rec: number | null;
+  recYd: number | null;
+  recTd: number | null;
+  recYpt: number | null;
+  targetSharePct: number | null;
+}
+
+// One real week's full stat payload (~500KB) is too large to keep in
+// localStorage per-player-per-week across every player, so this cache is
+// in-memory only — fast for repeat lookups within a session (switching
+// between players' Logs tabs), gone on reload. Not persisted like the
+// other caches in this file, deliberately.
+const rawWeekCache = new Map<string, Record<string, RawWeekStat>>();
+
+async function getRawWeekStats(season: string, week: number): Promise<Record<string, RawWeekStat>> {
+  const key = `${season}_${week}`;
+  const cached = rawWeekCache.get(key);
+  if (cached) return cached;
+  const raw = await jget<Record<string, RawWeekStat | null>>(
+    `${S}/stats/nfl/regular/${season}/${week}`
+  );
+  const cleaned: Record<string, RawWeekStat> = {};
+  for (const id in raw) if (raw[id]) cleaned[id] = raw[id]!;
+  rawWeekCache.set(key, cleaned);
+  return cleaned;
+}
+
+// A real per-game log for one player across a season — actual box-score
+// stats (not projections), including target share computed by summing every
+// teammate's real targets that same week (not a separate/approximated
+// source). Team composition for that sum comes from the player's *current*
+// roster (Sleeper doesn't expose historical team-by-week), so this is
+// slightly approximate for anyone who's since changed teams — real numbers,
+// just not perfectly time-accurate for a traded player's target share.
+export async function getPlayerGameLog(playerId: string, season: string): Promise<WeeklyStatLine[]> {
+  const pmap = await getPlayers();
+  const team = pmap[playerId]?.t;
+  // Target share only makes sense among pass-catchers — restrict the
+  // denominator to same-position teammates plus RBs (who also see targets),
+  // not the whole 53-man roster.
+  const targetShareIds = team
+    ? Object.keys(pmap).filter(
+        (id) => pmap[id].t === team && ["WR", "TE", "RB"].includes(pmap[id].p)
+      )
+    : [];
+
+  const lines: WeeklyStatLine[] = [];
+  for (let week = 1; week <= SEASON_WEEKS; week++) {
+    const weekStats = await getRawWeekStats(season, week);
+    const s = weekStats[playerId];
+    let teamTargets = 0;
+    for (const tid of targetShareIds) teamTargets += weekStats[tid]?.rec_tgt ?? 0;
+
+    lines.push({
+      week,
+      pts: s?.pts_ppr ?? null,
+      posRank: s?.pos_rank_ppr ?? null,
+      snapPct: s?.off_snp != null && s?.tm_off_snp ? (s.off_snp / s.tm_off_snp) * 100 : null,
+      passAtt: s?.pass_att ?? null,
+      passYd: s?.pass_yd ?? null,
+      passTd: s?.pass_td ?? null,
+      passInt: s?.pass_int ?? null,
+      rushAtt: s?.rush_att ?? null,
+      rushYd: s?.rush_yd ?? null,
+      rushTd: s?.rush_td ?? null,
+      recTgt: s?.rec_tgt ?? null,
+      rec: s?.rec ?? null,
+      recYd: s?.rec_yd ?? null,
+      recTd: s?.rec_td ?? null,
+      recYpt: s?.rec_ypt ?? null,
+      targetSharePct: s?.rec_tgt != null && teamTargets > 0 ? (s.rec_tgt / teamTargets) * 100 : null,
+    });
+  }
+  return lines;
+}

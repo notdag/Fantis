@@ -9,7 +9,7 @@ import { useAvailablePlayers } from "@/lib/useAvailablePlayers";
 import { stripSuffix } from "@/lib/playerIdMap";
 import { adpColor, posRankColor } from "@/lib/rankColor";
 import PlayerCard from "@/components/PlayerCard";
-import type { LeagueBundle, Team } from "@/lib/types";
+import type { LeagueBundle } from "@/lib/types";
 
 const POSITIONS = ["QB", "RB", "WR", "TE"] as const;
 
@@ -43,9 +43,6 @@ export default function LeagueView({
   onBack: () => void;
 }) {
   const { lg, teams, pmap } = bundle;
-  const name = (id: string) => pmap[id]?.n ?? id;
-  const posOf = (id: string) => pmap[id]?.p ?? "";
-  const teamOf = (id: string) => pmap[id]?.t ?? "";
 
   const { projections } = useProjections();
   const values = useTradeValues();
@@ -144,11 +141,20 @@ export default function LeagueView({
     });
   };
 
-  const [openRid, setOpenRid] = useState<number | null>(null);
+  const [openRids, setOpenRids] = useState<Set<number>>(new Set());
+  const toggleTeam = (rid: number) => {
+    setOpenRids((prev) => {
+      const next = new Set(prev);
+      if (next.has(rid)) next.delete(rid);
+      else next.add(rid);
+      return next;
+    });
+  };
   useEffect(() => {
     const id = setTimeout(() => {
       const mine = teams.find((t) => t.ownerId === myUserId);
-      setOpenRid((mine ?? teams[0])?.rid ?? null);
+      const rid = (mine ?? teams[0])?.rid;
+      setOpenRids(rid != null ? new Set([rid]) : new Set());
     }, 0);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -170,16 +176,17 @@ export default function LeagueView({
         )}
         <div className="teamranks">
           {teams.map((t, i) => {
-            const open = openRid === t.rid;
+            const open = openRids.has(t.rid);
             const ranks = posRanksByTeam[t.rid] ?? {};
             const byPos = teamRosters[t.rid] ?? { QB: [], RB: [], WR: [], TE: [] };
             const record = `${t.w}-${t.l}${t.t ? `-${t.t}` : ""}`;
+            const powerScore = POSITIONS.reduce(
+              (sum, pos) => sum + (byPos[pos]?.reduce((s, p) => s + p.value, 0) ?? 0),
+              0
+            );
             return (
               <div className="trrow" key={t.rid}>
-                <button
-                  className="trhead"
-                  onClick={() => setOpenRid(open ? null : t.rid)}
-                >
+                <button className="trtop" onClick={() => toggleTeam(t.rid)}>
                   <span className="rk">{i + 1}.</span>
                   {t.avatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -188,31 +195,42 @@ export default function LeagueView({
                     <div className="ava" />
                   )}
                   <span className="tname">{t.name}</span>
+                  <div className="trbar">
+                    {POSITIONS.map((pos) => (
+                      <div key={pos} style={{ background: POS_COLOR[pos] }}>
+                        {ranks[pos] ?? "—"}
+                      </div>
+                    ))}
+                  </div>
                   <span className={`chev ${open ? "open" : ""}`}>▼</span>
                 </button>
+                <div className="trbottom">
+                  <span className="trscore">{Math.round(powerScore)}</span>
+                  <span className="trranktext">
+                    {POSITIONS.map((pos) => (
+                      <span key={pos} style={{ color: POS_COLOR[pos] }}>
+                        {pos}
+                        {ranks[pos] ?? "—"}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="trmeta">
+                    <span>
+                      <b>Record</b>
+                      {record}
+                    </span>
+                    <span>
+                      <b>Points For</b>
+                      {t.pf > 0 ? t.pf.toFixed(1) : "N/A"}
+                    </span>
+                    <span>
+                      <b>Points Against</b>
+                      {t.pa > 0 ? t.pa.toFixed(1) : "N/A"}
+                    </span>
+                  </span>
+                </div>
                 {open && (
                   <div className="trbody">
-                    <div className="trbar">
-                      {POSITIONS.map((pos) => (
-                        <div key={pos} style={{ background: POS_COLOR[pos] }}>
-                          {ranks[pos] ?? "—"}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="trmeta">
-                      <span>
-                        <b>Record</b>
-                        {record}
-                      </span>
-                      <span>
-                        <b>Points For</b>
-                        {t.pf > 0 ? t.pf.toFixed(1) : "—"}
-                      </span>
-                      <span>
-                        <b>Points Against</b>
-                        {t.pa > 0 ? t.pa.toFixed(1) : "—"}
-                      </span>
-                    </div>
                     <div className="trcols">
                       {POSITIONS.map((pos) => (
                         <div className="trcol" key={pos}>
@@ -225,6 +243,15 @@ export default function LeagueView({
                           )}
                           {byPos[pos].map((p) => (
                             <div className="trplayer" key={p.id}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                className="trphoto"
+                                src={`https://sleepercdn.com/content/nfl/players/${p.id}.jpg`}
+                                alt=""
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                                }}
+                              />
                               <span
                                 className="plname"
                                 style={{ cursor: "pointer" }}
@@ -249,6 +276,15 @@ export default function LeagueView({
                         )}
                         {topWaivers.map((p) => (
                           <div className="trplayer" key={p.id}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              className="trphoto"
+                              src={`https://sleepercdn.com/content/nfl/players/${p.id}.jpg`}
+                              alt=""
+                              onError={(e) => {
+                                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                              }}
+                            />
                             <span className="pos" style={{ ...posChipStyle(p.pos), flex: "none" }}>
                               {p.pos}
                             </span>
@@ -283,57 +319,6 @@ export default function LeagueView({
           aren&rsquo;t counted toward a team&rsquo;s value. Not investment or
           betting advice.
         </p>
-      </section>
-
-      <section className="sec">
-        <div className="sechead">
-          <h2>Rosters</h2>
-          <span className="rt">starters listed first</span>
-        </div>
-        <div className="rosters">
-          {teams.map((t: Team) => {
-            const bench = t.players.filter((p) => !t.starters.includes(p));
-            const Line = ({ id }: { id: string }) => (
-              <div className="pl">
-                <span className="pos" style={posChipStyle(posOf(id))}>
-                  {posOf(id) || "—"}
-                </span>
-                <span
-                  className="plname"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => openPlayerCard(id, name(id), posOf(id))}
-                >
-                  {name(id)}
-                </span>
-                <span className="plteam">{teamOf(id)}</span>
-              </div>
-            );
-            return (
-              <div className="rteam" key={t.rid}>
-                <header>
-                  {t.avatar ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="ava" src={t.avatar} alt="" />
-                  ) : (
-                    <div className="ava" />
-                  )}
-                  <b>{t.name}</b>
-                  <span className="rec">
-                    {t.w}-{t.l}
-                  </span>
-                </header>
-                <div className="divlbl">Starters</div>
-                {t.starters.filter(Boolean).map((id, k) => (
-                  <Line key={"s" + k} id={id} />
-                ))}
-                {bench.length > 0 && <div className="divlbl">Bench</div>}
-                {bench.map((id, k) => (
-                  <Line key={"b" + k} id={id} />
-                ))}
-              </div>
-            );
-          })}
-        </div>
       </section>
 
       {openPlayer && pmap[openPlayer.id] && (

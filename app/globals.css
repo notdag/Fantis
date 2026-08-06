@@ -21,7 +21,7 @@ html,body{margin:0;padding:0}
   font-family:var(--font-inter),-apple-system,"Segoe UI",sans-serif;
   color:var(--bone); background:var(--ink); min-height:100vh;
 }
-.wrap{max-width:1120px;margin:0 auto;padding:0 20px}
+.wrap{max-width:1440px;margin:0 auto;padding:0 24px}
 .num{font-variant-numeric:tabular-nums}
 
 /* nav */
@@ -193,53 +193,81 @@ h1.big span{color:var(--amber)}
 .tierrow .mini{border:0;background:transparent;color:var(--dim);cursor:pointer;font-size:11px;padding:2px 5px;line-height:1.5}
 .tierrow .mini:hover{color:var(--bone)}
 
-/* league view — per-team, per-position strength rankings */
+/* league view — per-team, per-position strength rankings. Every team shows
+   its full summary (bar + score + ranks + record) at all times — the
+   chevron only expands/collapses the heavier per-player column breakdown —
+   so the whole league is scannable at a glance, not one team at a time. */
 .teamranks{border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.trrow{border-top:1px solid var(--line-soft)}
+.trrow{border-top:1px solid var(--line-soft);padding:12px 18px}
 .trrow:first-child{border-top:0}
-.trhead{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;background:var(--panel);border:0;width:100%;text-align:left;color:inherit;font:inherit}
-.trhead:hover{background:var(--line-soft)}
-.trhead .rk{color:var(--dim);font-weight:700;font-size:12.5px;width:16px}
-.trhead .tname{font-weight:600;font-size:13.5px}
-.trhead .chev{margin-left:auto;color:var(--dim);font-size:11px;transition:transform .15s}
-.trhead .chev.open{transform:rotate(180deg)}
-.trbody{padding:2px 14px 16px;background:var(--ink);border-top:1px solid var(--line-soft)}
-.trbar{display:flex;height:24px;border-radius:6px;overflow:hidden;margin:12px 0 10px;gap:2px}
-.trbar div{display:flex;align-items:center;justify-content:center;flex:1;font-size:11px;font-weight:700;color:#10131A}
-.trmeta{display:flex;gap:18px;flex-wrap:wrap;font-size:11.5px;color:var(--dim);padding-bottom:12px;border-bottom:1px solid var(--line-soft)}
-.trmeta b{color:var(--bone);font-weight:600;margin-right:3px}
-.trcols{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;margin-top:14px;overflow-x:auto}
-.trcol{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.trcol header{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;font-size:11.5px;font-weight:700;color:#10131A}
-.trcol header .badge{background:rgba(16,19,26,.25);border-radius:5px;padding:1px 6px;font-size:11px}
-.trplayer{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:12px;border-top:1px solid var(--line-soft)}
+.trtop{display:flex;align-items:center;gap:14px;cursor:pointer;background:transparent;border:0;
+  width:100%;text-align:left;color:inherit;font:inherit;padding:0}
+.trtop .rk{color:var(--dim);font-weight:700;font-size:14px;width:22px;flex:none}
+.trtop .tname{font-weight:600;font-size:16px;flex:none;max-width:180px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.trtop .chev{color:var(--dim);font-size:13px;transition:transform .15s;flex:none}
+.trtop .chev.open{transform:rotate(180deg)}
+.trbar{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;flex:1;min-width:80px}
+.trbar div{display:flex;align-items:center;justify-content:center;flex:1;font-size:7px;font-weight:700;color:#10131A}
+.trbottom{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px;padding-left:20px}
+.trscore{font-weight:800;font-size:16px;color:var(--bone);min-width:48px;font-variant-numeric:tabular-nums}
+.trranktext{display:flex;gap:12px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
+.trmeta{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--dim)}
+.trmeta b{color:var(--bone);font-weight:600;margin-right:4px}
+.trbody{padding:16px 0 4px 14px;margin-top:6px;border-top:1px solid var(--line-soft)}
+.trcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}
+.trcol{background:var(--panel);border:1px solid var(--line);border-radius:9px;overflow:hidden;min-width:0}
+.trphoto{width:20px;height:20px;border-radius:50%;object-fit:cover;background:var(--ink);
+  border:1px solid var(--line);flex:none}
+.trcol header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;font-size:13.5px;font-weight:700;color:#10131A}
+.trcol header .badge{background:rgba(16,19,26,.25);border-radius:5px;padding:2px 7px;font-size:12.5px}
+.trplayer{display:flex;align-items:center;gap:6px;padding:7px 9px;font-size:14px;border-top:1px solid var(--line-soft)}
 .trplayer .plname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.trplayer .nums{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:12px;font-weight:700}
-.trplayer .nums span{min-width:15px;text-align:right}
-.trplayer .nums span:first-child{border-right:1px solid var(--line);padding-right:6px}
+.trplayer .nums{display:flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;font-size:13px;font-weight:700;flex:none}
+.trplayer .nums span{min-width:16px;text-align:right}
+.trplayer .nums span:first-child{border-right:1px solid var(--line);padding-right:5px}
 .trempty{color:var(--dim);font-size:11.5px;padding:8px 10px}
 
-/* player detail modal */
+/* player detail modal — sized to read like a real page, not a mini popup */
 .modalbg{position:fixed;inset:0;background:rgba(8,10,14,.7);display:flex;
-  align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto;z-index:50}
-.modal{background:var(--panel);border:1px solid var(--line);border-radius:14px;
-  padding:20px;max-width:520px;width:100%;position:relative}
-.modalclose{position:absolute;top:14px;right:14px;font-size:16px}
-.pcardhead{display:flex;align-items:center;gap:14px;padding-right:28px}
-.pcardphoto{width:64px;height:64px;border-radius:10px;object-fit:cover;background:var(--ink);
+  align-items:flex-start;justify-content:center;padding:48px 20px;overflow-y:auto;z-index:50}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:36px;max-width:960px;width:100%;position:relative}
+.modalclose{position:absolute;top:22px;right:22px;font-size:22px;width:36px;height:36px;
+  display:grid;place-items:center;border-radius:8px}
+.modalclose:hover{background:var(--line-soft)}
+.pcardhead{display:flex;align-items:center;gap:22px;padding-right:40px}
+.pcardphoto{width:110px;height:110px;border-radius:14px;object-fit:cover;background:var(--ink);
   border:1px solid var(--line);flex:none}
-.pcardhead h3{margin:0 0 6px;font-size:18px;font-weight:650}
-.pcardmeta{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
-.pcardstats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0;
-  padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.pcardstats > div{display:flex;flex-direction:column;gap:3px;align-items:center}
-.pcardstats .plabel{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
-.pcardstats .pval{font-weight:700;font-size:16px}
-.pcardchart .sechead{border:0;padding:0}
-.wchart{display:flex;align-items:flex-end;gap:3px;height:120px;padding-top:6px}
-.wbar{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;gap:4px}
-.wbarfill{width:100%;border-radius:2px 2px 0 0;min-height:2px;transition:height .2s}
-.wbarwk{font-size:8.5px;color:var(--dim)}
+.pcardhead h3{margin:0 0 10px;font-size:32px;font-weight:700;letter-spacing:-.01em}
+.pcardmeta{display:flex;flex-wrap:wrap;align-items:center;gap:14px;font-size:16px;color:var(--muted)}
+.pcardmeta .pos{font-size:14px;padding:4px 10px}
+.modal .tabs{gap:28px}
+.modal .tab{font-size:15.5px;padding-bottom:9px}
+.modal .select.sm{padding:8px 12px;font-size:14.5px}
+.pcardstats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:28px 0;
+  padding:22px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.pcardstats > div{display:flex;flex-direction:column;gap:6px;align-items:center}
+.pcardstats .plabel{color:var(--dim);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
+.pcardstats .pval{font-weight:700;font-size:26px}
+.pcardchart .sechead{border:0;padding:0;margin-bottom:14px}
+.pcardchart .sechead span{font-size:17px!important}
+.wchart{display:flex;align-items:stretch;gap:6px;height:220px;padding-top:26px}
+.wbar{flex:1;display:flex;flex-direction:column;align-items:center;height:100%;min-width:0}
+.wbarchart{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;width:100%}
+.wbarval{font-size:12.5px;color:var(--bone);font-weight:700;margin-bottom:5px;white-space:nowrap}
+.wbarfill{width:100%;border-radius:3px 3px 0 0;min-height:2px;transition:height .2s}
+.wbarwk{flex:none;font-size:11.5px;color:var(--dim);margin-top:8px}
+
+.logtable{overflow-x:auto;max-height:420px;overflow-y:auto;border:1px solid var(--line);border-radius:10px}
+.logtable table{width:100%;border-collapse:collapse;font-size:14.5px;white-space:nowrap}
+.logtable th{position:sticky;top:0;background:var(--panel);text-align:right;color:var(--dim);
+  font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:12px;padding:12px 14px;
+  border-bottom:1px solid var(--line)}
+.logtable th:first-child,.logtable td:first-child{text-align:left}
+.logtable td{padding:11px 14px;text-align:right;border-top:1px solid var(--line-soft);
+  font-variant-numeric:tabular-nums}
+.logtable tbody tr:hover{background:var(--line-soft)}
 
 .footer{border-top:1px solid var(--line);padding:22px 0 36px;color:var(--dim);font-size:12.5px;margin-top:16px}
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.18);border-top-color:var(--amber);

@@ -154,6 +154,19 @@ by Rankings) that both this and the live projections depend on.
   picks up the change immediately. In production (read-only filesystem),
   the route can't write the file, so it returns the generated source for
   the owner to paste in and commit instead.
+- **`npm run regen-players`** (`scripts/regenPlayers.ts`) — rebuilds the
+  whole curated list from real Sleeper data instead of hand-picking
+  players: top 80 RB/WR and top 40 QB/TE by real season PPR point
+  projection (position caps aren't uniform — checked directly against
+  Sleeper's data that QB/TE point projections cliff off much faster than
+  RB/WR's do), tiered by quantile within each position's own pool. This
+  is what the curated list was built from (2026-08); it replaced an
+  earlier hand-typed list that kept missing real rostered players (a
+  recurring problem — see git history). Re-run it when the pool feels
+  stale (new season, a rookie class landing on rosters, a wave of trades)
+  instead of hand-adding players one at a time. It's a full overwrite, not
+  a merge — it discards any manual tier moves made via `/admin` since the
+  last regen, so re-tier from the fresh baseline afterward if needed.
 
 ## Target architecture
 
