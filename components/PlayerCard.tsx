@@ -8,7 +8,7 @@ import {
   type WeeklyStatLine,
 } from "@/lib/sleeper";
 import { posChipStyle, TIER_COLOR, TIER_LABELS } from "@/lib/players";
-import { adpColor, posRankColor } from "@/lib/rankColor";
+import { posRankColor } from "@/lib/rankColor";
 import type { PlayerMapEntry } from "@/lib/types";
 
 const CHART_SEASONS = HISTORICAL_SEASONS;
@@ -233,7 +233,7 @@ export default function PlayerCard({
               </div>
               <div>
                 <span className="plabel">ADP</span>
-                <span className="pval" style={{ color: adpColor(adp) }}>
+                <span className="pval" style={{ color: "var(--dim)" }}>
                   {adp ?? "—"}
                 </span>
               </div>

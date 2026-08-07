@@ -4,6 +4,7 @@ import type {
   ProjectionMap,
   SeasonProjectionTotal,
   SleeperLeague,
+  SleeperLeagueDetail,
   SleeperLeagueUser,
   SleeperPlayerRaw,
   SleeperRoster,
@@ -27,6 +28,12 @@ export const getLeagues = (userId: string, season: string) =>
 
 export const getRosters = (leagueId: string) =>
   jget<SleeperRoster[]>(`${S}/league/${leagueId}/rosters`);
+
+// Real starting-lineup shape (roster_positions) and real reception scoring
+// (scoring_settings.rec) for one league — used by Start/Sit so it reflects
+// this league's actual rules instead of a generic full-PPR default.
+export const getLeagueDetail = (leagueId: string) =>
+  jget<SleeperLeagueDetail>(`${S}/league/${leagueId}`);
 
 export const getLeagueUsers = (leagueId: string) =>
   jget<SleeperLeagueUser[]>(`${S}/league/${leagueId}/users`);
@@ -122,7 +129,12 @@ export async function getProjections(
   for (const id in raw) {
     const p = raw[id];
     if (!p) continue;
-    map[id] = { adp_dd_ppr: p.adp_dd_ppr, pts_ppr: p.pts_ppr };
+    map[id] = {
+      adp_dd_ppr: p.adp_dd_ppr,
+      pts_ppr: p.pts_ppr,
+      pts_half_ppr: p.pts_half_ppr,
+      pts_std: p.pts_std,
+    };
   }
 
   if (typeof window !== "undefined") {

@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import {
   SEASONS,
   avatar,
+  getLeagueDetail,
   getLeagues,
   getLeagueUsers,
   getPlayers,
@@ -65,10 +66,11 @@ export default function FantisApp() {
       setSelLoading(true);
       setError("");
       try {
-        const [rosters, users, pmap] = await Promise.all([
+        const [rosters, users, pmap, detail] = await Promise.all([
           getRosters(lg.league_id),
           getLeagueUsers(lg.league_id),
           players ? Promise.resolve(players) : getPlayers(),
+          getLeagueDetail(lg.league_id),
         ]);
         if (!players) setPlayers(pmap);
         const uById: Record<string, (typeof users)[number]> = {};
@@ -93,8 +95,13 @@ export default function FantisApp() {
             };
           })
           .sort((a, b) => b.w - a.w || b.pf - a.pf);
-        setSel({ lg, teams, pmap: players || pmap });
-        setTab("leagues");
+        setSel({
+          lg,
+          teams,
+          pmap: players || pmap,
+          rosterPositions: detail.roster_positions || [],
+          scoringRec: detail.scoring_settings?.rec ?? 0,
+        });
       } catch {
         setError("Couldn't load that league's rosters. Try again in a moment.");
       } finally {
@@ -232,7 +239,14 @@ export default function FantisApp() {
         {tab === "rankings" && <Rankings />}
         {tab === "trade" && <Trade />}
         {tab === "startsit" && (
-          <StartSit sel={sel} myUserId={myUserId} onGoToLeagues={() => setTab("leagues")} />
+          <StartSit
+            sel={sel}
+            myUserId={myUserId}
+            leagues={leagues}
+            selLoading={selLoading}
+            onSelectLeague={openLeague}
+            onGoToLeagues={() => setTab("leagues")}
+          />
         )}
         {tab === "waivers" && (
           <WaiverWire sel={sel} onGoToLeagues={() => setTab("leagues")} />

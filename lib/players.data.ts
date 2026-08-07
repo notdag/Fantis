@@ -7,7 +7,6 @@
 export type PlayerTuple = [name: string, pos: string, team: string, tier: number, posRank: number];
 
 export const RAW: PlayerTuple[] = [
-  ["Josh Allen","QB","BUF",1,1],
   ["Jahmyr Gibbs","RB","DET",1,1],
   ["Bijan Robinson","RB","ATL",1,2],
   ["Puka Nacua","WR","LAR",1,1],
@@ -20,6 +19,7 @@ export const RAW: PlayerTuple[] = [
   ["George Pickens","WR","DAL",1,8],
   ["Drake London","WR","ATL",1,9],
   ["Tee Higgins","WR","CIN",1,10],
+  ["Josh Allen","QB","BUF",1,1],
   ["Brock Bowers","TE","LV",1,1],
   ["Trey McBride","TE","ARI",1,2],
   ["Colston Loveland","TE","CHI",1,3],

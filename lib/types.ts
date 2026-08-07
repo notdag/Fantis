@@ -68,6 +68,8 @@ export interface SleeperState {
 export interface SleeperProjectionEntry {
   adp_dd_ppr?: number;
   pts_ppr?: number;
+  pts_half_ppr?: number;
+  pts_std?: number;
 }
 
 export type ProjectionMap = Record<string, SleeperProjectionEntry>;
@@ -110,8 +112,18 @@ export interface Team {
   players: string[];
 }
 
+// Just the fields Start/Sit needs from the full league object: the real
+// starting lineup shape and the real reception scoring, so recommendations
+// match this league's actual rules instead of a generic full-PPR guess.
+export interface SleeperLeagueDetail {
+  roster_positions: string[];
+  scoring_settings: Record<string, number>;
+}
+
 export interface LeagueBundle {
   lg: SleeperLeague;
   teams: Team[];
   pmap: PlayerMap;
+  rosterPositions: string[];
+  scoringRec: number; // scoring_settings.rec — 0 standard, 0.5 half, 1 full PPR
 }

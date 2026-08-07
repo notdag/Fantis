@@ -7,7 +7,7 @@ import { useProjections } from "@/lib/useProjections";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useAvailablePlayers } from "@/lib/useAvailablePlayers";
 import { stripSuffix } from "@/lib/playerIdMap";
-import { adpColor, posRankColor } from "@/lib/rankColor";
+import { posRankColor } from "@/lib/rankColor";
 import PlayerCard from "@/components/PlayerCard";
 import type { LeagueBundle } from "@/lib/types";
 
@@ -118,6 +118,28 @@ export default function LeagueView({
     return out;
   }, [teams, teamRosters]);
 
+  // Real roster-strength total per team (sum of trade value across
+  // QB/RB/WR/TE) — what the section actually ranks on, so the displayed
+  // "1./2./..." order matches the power score shown per team instead of
+  // in-season win/loss record (meaningless before/early in the season,
+  // when every team is still 0-0).
+  const teamPowerScore = useMemo(() => {
+    const out: Record<number, number> = {};
+    for (const t of teams) {
+      const byPos = teamRosters[t.rid] ?? { QB: [], RB: [], WR: [], TE: [] };
+      out[t.rid] = POSITIONS.reduce(
+        (sum, pos) => sum + (byPos[pos]?.reduce((s, p) => s + p.value, 0) ?? 0),
+        0
+      );
+    }
+    return out;
+  }, [teams, teamRosters]);
+
+  const rankedTeams = useMemo(
+    () => [...teams].sort((a, b) => (teamPowerScore[b.rid] ?? 0) - (teamPowerScore[a.rid] ?? 0)),
+    [teams, teamPowerScore]
+  );
+
   const topWaivers = useMemo(
     () =>
       [...available]
@@ -175,15 +197,12 @@ export default function LeagueView({
           </p>
         )}
         <div className="teamranks">
-          {teams.map((t, i) => {
+          {rankedTeams.map((t, i) => {
             const open = openRids.has(t.rid);
             const ranks = posRanksByTeam[t.rid] ?? {};
             const byPos = teamRosters[t.rid] ?? { QB: [], RB: [], WR: [], TE: [] };
             const record = `${t.w}-${t.l}${t.t ? `-${t.t}` : ""}`;
-            const powerScore = POSITIONS.reduce(
-              (sum, pos) => sum + (byPos[pos]?.reduce((s, p) => s + p.value, 0) ?? 0),
-              0
-            );
+            const powerScore = teamPowerScore[t.rid] ?? 0;
             return (
               <div className="trrow" key={t.rid}>
                 <button className="trtop" onClick={() => toggleTeam(t.rid)}>
@@ -260,7 +279,7 @@ export default function LeagueView({
                                 {p.name}
                               </span>
                               <span className="nums">
-                                <span style={{ color: adpColor(p.adp) }}>{p.adp ?? "—"}</span>
+                                <span style={{ color: "var(--dim)" }}>{p.adp ?? "—"}</span>
                                 <span style={{ color: posRankColor(p.posRank, curatedPoolSize[pos] ?? 0) }}>
                                   {p.posRank ?? "—"}
                                 </span>
@@ -296,7 +315,7 @@ export default function LeagueView({
                               {p.name}
                             </span>
                             <span className="nums">
-                              <span style={{ color: adpColor(p.adp) }}>{p.adp ?? "—"}</span>
+                              <span style={{ color: "var(--dim)" }}>{p.adp ?? "—"}</span>
                               <span style={{ color: posRankColor(p.wireRank, availablePoolSize[p.pos] ?? 0) }}>
                                 {p.wireRank}
                               </span>
@@ -312,7 +331,9 @@ export default function LeagueView({
           })}
         </div>
         <p className="hint" style={{ marginTop: 10 }}>
-          Position ranks compare each team&rsquo;s roster value (season projection
+          Teams are ordered by total roster power score (top number), not
+          win/loss record — the two can differ, especially before the
+          season&rsquo;s underway. Position ranks compare each team&rsquo;s roster value (season projection
           + this week&rsquo;s market delta) at that position against the rest of
           the league. Two numbers per player are ADP and position rank, both
           live from Sleeper/our own rankings. Players outside the curated list
