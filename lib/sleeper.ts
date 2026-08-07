@@ -38,7 +38,7 @@ export const getLeagueDetail = (leagueId: string) =>
 export const getLeagueUsers = (leagueId: string) =>
   jget<SleeperLeagueUser[]>(`${S}/league/${leagueId}/users`);
 
-const today = () => new Date().toISOString().slice(0, 10);
+export const today = () => new Date().toISOString().slice(0, 10);
 
 const PLAYERS_CACHE_KEY = "fantis_players_nfl_v1";
 
