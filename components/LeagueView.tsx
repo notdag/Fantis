@@ -8,6 +8,7 @@ import { useTradeValues } from "@/lib/useTradeValues";
 import { useAvailablePlayers } from "@/lib/useAvailablePlayers";
 import { stripSuffix } from "@/lib/playerIdMap";
 import { posRankColor } from "@/lib/rankColor";
+import { computeTeamPower } from "@/lib/teamPower";
 import PlayerCard from "@/components/PlayerCard";
 import type { LeagueBundle } from "@/lib/types";
 
@@ -101,43 +102,21 @@ export default function LeagueView({
     return byTeam;
   }, [teams, pmap, playerByName, values, projections]);
 
-  // League-relative strength rank per position (1 = strongest), from the
-  // summed value of each team's roster at that position.
-  const posRanksByTeam = useMemo(() => {
-    const out: Record<number, Record<string, number>> = {};
-    for (const pos of POSITIONS) {
-      const scored = teams.map((t) => ({
-        rid: t.rid,
-        score: teamRosters[t.rid]?.[pos]?.reduce((s, p) => s + p.value, 0) ?? 0,
-      }));
-      scored.sort((a, b) => b.score - a.score);
-      scored.forEach((s, i) => {
-        (out[s.rid] ??= {})[pos] = i + 1;
-      });
-    }
-    return out;
-  }, [teams, teamRosters]);
+  // League-relative strength rank per position (1 = strongest) and each
+  // team's total power score, from the summed trade value of each team's
+  // roster — shared with TeamHub so both agree on what "strong" means.
+  const teamPower = useMemo(() => computeTeamPower(bundle, values), [bundle, values]);
 
-  // Real roster-strength total per team (sum of trade value across
-  // QB/RB/WR/TE) — what the section actually ranks on, so the displayed
-  // "1./2./..." order matches the power score shown per team instead of
-  // in-season win/loss record (meaningless before/early in the season,
-  // when every team is still 0-0).
-  const teamPowerScore = useMemo(() => {
-    const out: Record<number, number> = {};
-    for (const t of teams) {
-      const byPos = teamRosters[t.rid] ?? { QB: [], RB: [], WR: [], TE: [] };
-      out[t.rid] = POSITIONS.reduce(
-        (sum, pos) => sum + (byPos[pos]?.reduce((s, p) => s + p.value, 0) ?? 0),
-        0
-      );
-    }
-    return out;
-  }, [teams, teamRosters]);
-
+  // Real roster-strength total per team — what the section actually ranks
+  // on, so the displayed "1./2./..." order matches the power score shown
+  // per team instead of in-season win/loss record (meaningless before/early
+  // in the season, when every team is still 0-0).
   const rankedTeams = useMemo(
-    () => [...teams].sort((a, b) => (teamPowerScore[b.rid] ?? 0) - (teamPowerScore[a.rid] ?? 0)),
-    [teams, teamPowerScore]
+    () =>
+      [...teams].sort(
+        (a, b) => (teamPower[b.rid]?.total ?? 0) - (teamPower[a.rid]?.total ?? 0)
+      ),
+    [teams, teamPower]
   );
 
   const topWaivers = useMemo(
@@ -199,10 +178,10 @@ export default function LeagueView({
         <div className="teamranks">
           {rankedTeams.map((t, i) => {
             const open = openRids.has(t.rid);
-            const ranks = posRanksByTeam[t.rid] ?? {};
+            const ranks = teamPower[t.rid]?.rankByPos ?? {};
             const byPos = teamRosters[t.rid] ?? { QB: [], RB: [], WR: [], TE: [] };
             const record = `${t.w}-${t.l}${t.t ? `-${t.t}` : ""}`;
-            const powerScore = teamPowerScore[t.rid] ?? 0;
+            const powerScore = teamPower[t.rid]?.total ?? 0;
             return (
               <div className="trrow" key={t.rid}>
                 <button className="trtop" onClick={() => toggleTeam(t.rid)}>

@@ -7,6 +7,8 @@ import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
 import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
 import { sleeperId, stripSuffix, useSleeperIdMaps } from "@/lib/playerIdMap";
+import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
+import { useGameContext } from "@/lib/useGameContext";
 import SortHeader from "@/components/SortHeader";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
@@ -70,6 +72,8 @@ export default function Rankings() {
     loading: liveLoading,
     error: liveError,
   } = useProjections();
+
+  const gameContext = useGameContext(season, week);
 
   // MVP futures — separate provider (SharpAPI via our own /api/mvp-odds
   // proxy), keyed directly by player name. Not every player has a line, so
@@ -219,6 +223,42 @@ export default function Rankings() {
     });
   }, [pos, query, sortBy, sortDir, live, seasonLive, projMode]);
 
+  // Ticker strip: real current standings by proj value (season or week,
+  // matching the active mode) — no fabricated "market delta," since we don't
+  // track a historical baseline to compare against yet.
+  const tickerItems = useMemo(() => {
+    return PLAYERS.map((p) => ({
+      p,
+      val: projMode === "season" ? seasonLive[p.name]?.pts ?? null : live[p.name]?.proj ?? null,
+    }))
+      .filter((x): x is { p: (typeof PLAYERS)[number]; val: number } => x.val != null)
+      .sort((a, b) => b.val - a.val)
+      .slice(0, 10);
+  }, [live, seasonLive, projMode]);
+
+  // "vs ADP": our curated position rank compared to the market's ADP-implied
+  // rank at that same position — a real, computable delta, not an invented
+  // "market score". Deliberately position-scoped, not overall: Fantis's
+  // curated list only orders players within a position (posRank), not
+  // across positions, so comparing a position-blocked "overall" rank
+  // against a true cross-position ADP rank would systematically favor
+  // early position blocks (QB) and penalize late ones (TE) regardless of
+  // any real disagreement with the market. Position rank vs. position rank
+  // is the apples-to-apples version.
+  const vsAdp = useMemo(() => {
+    const out: Record<string, number | null> = {};
+    for (const posKey of ["QB", "RB", "WR", "TE"] as const) {
+      const withAdp = PLAYERS.filter((p) => p.pos === posKey && live[p.name]?.adp != null).sort(
+        (a, b) => (live[a.name]!.adp as number) - (live[b.name]!.adp as number)
+      );
+      withAdp.forEach((p, i) => {
+        const adpPosRank = i + 1;
+        out[p.name] = adpPosRank - p.posRank;
+      });
+    }
+    return out;
+  }, [live]);
+
   const selectedPlayer = selected ? PLAYERS.find((p) => p.name === selected) || null : null;
   const selectedStat = selectedPlayer ? live[selectedPlayer.name] : undefined;
   const selectedSeason = selectedPlayer ? seasonLive[selectedPlayer.name] : undefined;
@@ -230,7 +270,19 @@ export default function Rankings() {
     : undefined;
 
   return (
-    <section className="sec">
+    <section className="sec rankterm">
+      <div className="ticker">
+        <div className="tickertrack">
+          {tickerItems.length === 0
+            ? [0, 1].map((i) => <span key={i}>AWAITING FEED…</span>)
+            : [...tickerItems, ...tickerItems].map((t, i) => (
+                <span key={i}>
+                  {t.p.pos}
+                  {t.p.posRank} {t.p.name.toUpperCase()} · {t.val.toFixed(1)}
+                </span>
+              ))}
+        </div>
+      </div>
       <div className="sechead">
         <h2>Rankings</h2>
         <span className="rt">
@@ -288,11 +340,13 @@ export default function Rankings() {
             <div className="cell r">
               <SortHeader label="Pos" sortKey="pos" active={sortBy} dir={sortDir} onClick={toggleSort} />
             </div>
+            <div className="cell r">Bye</div>
             {projMode === "week" ? (
               <>
                 <div className="cell r">
                   <SortHeader label="ADP" sortKey="adp" active={sortBy} dir={sortDir} onClick={toggleSort} />
                 </div>
+                <div className="cell r">vs ADP</div>
                 <div className="cell r">
                   <SortHeader label="Proj" sortKey="proj" active={sortBy} dir={sortDir} onClick={toggleSort} />
                 </div>
@@ -344,10 +398,24 @@ export default function Rankings() {
                     {p.posRank}
                   </span>
                 </div>
+                <div className="cell r num" style={{ color: "var(--dim)" }}>
+                  {BYE_WEEKS_2026[p.team] ?? "—"}
+                </div>
                 {projMode === "week" ? (
                   <>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
                       {stat?.adp != null ? stat.adp : "—"}
+                    </div>
+                    <div className="cell r num">
+                      {vsAdp[p.name] != null ? (
+                        <span className={vsAdp[p.name]! > 0 ? "up" : vsAdp[p.name]! < 0 ? "down" : undefined}>
+                          {vsAdp[p.name]! === 0
+                            ? "—"
+                            : `${vsAdp[p.name]! > 0 ? "▲" : "▼"}${Math.abs(vsAdp[p.name]!)}`}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
                     </div>
                     <div className="cell r num val">
                       {projValue != null ? projValue.toFixed(1) : "—"}
@@ -413,6 +481,26 @@ export default function Rankings() {
               <span className="plabel">{week != null ? `Week ${week} Proj` : "Proj"}</span>
               <span className="pval">{selectedStat?.proj != null ? selectedStat.proj.toFixed(1) : "—"}</span>
             </div>
+            {gameContext[selectedPlayer.team] && (
+              <div className="prow">
+                <span className="plabel">This Week&rsquo;s Game</span>
+                <span className="pval" style={{ textAlign: "right" }}>
+                  {gameContext[selectedPlayer.team].homeAway === "home" ? "vs" : "@"}{" "}
+                  {gameContext[selectedPlayer.team].opponent}
+                  {gameContext[selectedPlayer.team].spread != null && (
+                    <span style={{ color: "var(--dim)", fontWeight: 500 }}>
+                      {" "}
+                      · {gameContext[selectedPlayer.team].spread! > 0 ? "+" : ""}
+                      {gameContext[selectedPlayer.team].spread}
+                      {gameContext[selectedPlayer.team].overUnder != null &&
+                        ` · O/U ${gameContext[selectedPlayer.team].overUnder}`}
+                      {gameContext[selectedPlayer.team].winProb != null &&
+                        ` · ${Math.round(gameContext[selectedPlayer.team].winProb! * 100)}% to win`}
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
             {selectedMvp && (
               <div className="prow">
                 <span className="plabel">MVP Odds ({selectedMvp.sportsbook})</span>
@@ -439,9 +527,9 @@ export default function Rankings() {
             {selectedProps && selectedProps.length > 0 && (
               <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
                 <span className="plabel">Player Props</span>
-                {selectedProps.map((p) => (
+                {selectedProps.map((p, i) => (
                   <div
-                    key={p.stat}
+                    key={`${p.stat}-${i}`}
                     style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
                   >
                     <span style={{ color: "var(--muted)" }}>{p.stat}</span>
@@ -458,7 +546,10 @@ export default function Rankings() {
             <div className="foot">
               Tier is Fantis&rsquo; own starter grouping. ADP and projected points are live
               from Sleeper&rsquo;s public API; MVP odds and player props are live from
-              SharpAPI and SportsGameOdds. Not investment or betting advice.
+              SharpAPI and SportsGameOdds; this week&rsquo;s game odds and win probability
+              are live from ESPN&rsquo;s public scoreboard (win probability is de-vigged
+              from the real moneyline, the same technique used for the Anytime TD prop).
+              Not investment or betting advice.
             </div>
           </div>
         )}

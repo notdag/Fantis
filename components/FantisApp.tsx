@@ -13,6 +13,8 @@ import {
 } from "@/lib/sleeper";
 import type { LeagueBundle, PlayerMap, SleeperLeague, Team } from "@/lib/types";
 import LeagueView from "@/components/LeagueView";
+import TeamHub from "@/components/TeamHub";
+import SuggestedTrades from "@/components/SuggestedTrades";
 import Rankings from "@/components/Rankings";
 import Trade from "@/components/Trade";
 import StartSit from "@/components/StartSit";
@@ -226,7 +228,13 @@ export default function FantisApp() {
               </section>
             )}
 
-            {sel && <LeagueView bundle={sel} myUserId={myUserId} onBack={() => setSel(null)} />}
+            {sel && (
+              <>
+                <TeamHub bundle={sel} myUserId={myUserId} onNavigate={setTab} />
+                <SuggestedTrades bundle={sel} myUserId={myUserId} onNavigate={setTab} />
+                <LeagueView bundle={sel} myUserId={myUserId} onBack={() => setSel(null)} />
+              </>
+            )}
             {selLoading && sel && (
               <p className="hint">
                 <span className="spin" />

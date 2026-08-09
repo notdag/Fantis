@@ -46,7 +46,7 @@ const TOUCHDOWN_POINTS = 6; // rushing or receiving
 
 const DELTA_CAP_FRACTION = 0.2; // +/- 20% of weekly pace
 
-function parseAmerican(odds: string | null): number | null {
+export function parseAmerican(odds: string | null): number | null {
   if (!odds) return null;
   const n = Number(odds.replace(/^\+/, ""));
   return Number.isFinite(n) ? n : null;
@@ -58,7 +58,7 @@ function impliedProb(odds: number): number {
 
 // Removes the bookmaker's vig by normalizing both sides' implied
 // probabilities so they sum to 1 — standard technique, not a Fantis invention.
-function devig(yesOdds: number, noOdds: number): number {
+export function devig(yesOdds: number, noOdds: number): number {
   const pYes = impliedProb(yesOdds);
   const pNo = impliedProb(noOdds);
   const total = pYes + pNo;
