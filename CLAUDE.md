@@ -133,6 +133,58 @@ relative to the season baseline. Documented, not silently wrong.
 load; `lib/playerIdMap.ts` holds the shared Sleeper-id matching (also used
 by Rankings) that both this and the live projections depend on.
 
+## Advanced stats (2026-08)
+
+Real, derived stats added after reviewing a third-party draft guide for
+ideas — the guide's actual rankings/analysis weren't used (both a
+copyright concern and off-brand: Fantis's pitch is inspectable math, not
+another analyst's opinions), but a few of its stat *concepts* were
+reimplemented from scratch against Fantis's own data:
+
+- **Adjusted PPG** (player card, General tab) — average real PPR points
+  per game, counting only games where the player's snap share was at
+  least half their own season median. This stands in for a human
+  analyst's "in complete games" / "as starter" judgment calls with an
+  objective, reproducible rule instead — self-calibrated per player so a
+  committee RB and a bellcow WR aren't held to the same snap floor.
+  Requires 3+ qualifying games or shows "—". See `lib/seasonProfile.ts`.
+- **Reception-point share** (player card, General tab) — what % of a
+  player's real season points came from receptions (catches + receiving
+  yards + receiving TDs) vs. everything else, using the same full-PPR
+  scale as trade value. Also `lib/seasonProfile.ts`.
+- **Scoring Environment** (Rankings detail panel) — a team's own implied
+  point total for the week (O/U ± spread, split in half), derived from
+  the same real ESPN scoreboard odds `lib/espnGames.ts` already fetches
+  for game context — no new request, no new data source. See
+  `impliedTeamTotal()`.
+- **RZ Opp/Gm** (player card, General tab + Logs table) — real red-zone
+  opportunity per game: pass attempts inside the 20 for QBs, rush
+  attempts + red-zone targets for RBs, red-zone targets for WR/TE.
+  Sourced from fields Sleeper's `/stats` endpoint already returns
+  (`pass_rz_att`, `rush_rz_att`, `rec_rz_tgt`) but the app wasn't parsing
+  yet — turns out that endpoint carries ~235 fields total, far more than
+  `WeeklyStatLine` used before this. `g2g_att`/`g2g_conv` (goal-to-go)
+  looked promising from the same field list but turned out to be a
+  **team**-level stat (keyed `TEAM_BUF` etc.), not per-player — checked
+  directly against the raw payload before shipping and left out, same
+  category of trap as the SportsGameOdds receptions prop above.
+
+All four of these run on real box-score data from `getPlayerGameLog()`
+(`lib/sleeper.ts`), the same source the player card's Logs tab already
+used — no new API calls for any of them.
+
+Deliberately not pursued: target share via routes run, air yards over
+expected, YAC over expected, broken-tackle/elusiveness rate. Sleeper's
+`/stats` payload does carry some raw counting fields in this territory
+(`rec_air_yd`, `rush_yac`, `rush_btkl`) but turning those into the
+guide's efficiency-style *rate* stats needs a routes-run or attempts
+denominator Sleeper doesn't expose — a real future addition, not ruled
+out, just not done yet. OL grades, playcaller history, and the "Luck
+Metric" need PFF-style charting or box-score event data (penalties,
+busted coverage, etc.) no free source provides — that's the one category
+that'd need an actual new data integration, a bigger call than a stat
+tweak.
+
 ## Admin tooling
 
 - **`/admin`** — an owner-only tier board (`components/TierBoard.tsx`) for
@@ -167,6 +219,22 @@ by Rankings) that both this and the live projections depend on.
   instead of hand-adding players one at a time. It's a full overwrite, not
   a merge — it discards any manual tier moves made via `/admin` since the
   last regen, so re-tier from the fresh baseline afterward if needed.
+- **`npm run add-missing-players`** (`scripts/addMissingPlayers.ts`) —
+  the safe alternative to a full regen: finds real players inside a
+  top-300-by-real-ADP pool (roughly a real 12-team mock draft's depth)
+  who aren't in the curated list yet, and appends them at tier G without
+  touching anything already curated — existing tiers/order from manual
+  `/admin` edits are untouched. Deliberately ADP-based rather than
+  points-based like `regen-players`' core selection, since "who actually
+  gets drafted" is what a top-up should mean.
+  Known wrinkle: Sleeper's ADP blends every league format on their
+  platform (deep bench, TE-premium, dynasty), so a naive top-300 skews
+  TE-heavy — the first run pulled in 68 TEs, most with no real
+  single-TE-league relevance (backups like Joe Royer, Marlin Klein).
+  Fixed with a `MAX_TOTAL` cap (TE: 30) on top of the shared 300-player
+  pool; QB/RB/WR didn't show the same skew so they stay uncapped. Run
+  after someone reports a missing real player, or periodically to keep
+  search/trade-calculator coverage broad.
 
 ## Target architecture
 

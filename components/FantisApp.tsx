@@ -245,7 +245,7 @@ export default function FantisApp() {
         )}
 
         {tab === "rankings" && <Rankings />}
-        {tab === "trade" && <Trade />}
+        {tab === "trade" && <Trade sel={sel} myUserId={myUserId} onNavigate={setTab} />}
         {tab === "startsit" && (
           <StartSit
             sel={sel}

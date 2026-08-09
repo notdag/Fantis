@@ -9,6 +9,7 @@ import {
 } from "@/lib/sleeper";
 import { posChipStyle, TIER_COLOR, TIER_LABELS } from "@/lib/players";
 import { posRankColor } from "@/lib/rankColor";
+import { computeAdjustedPpg, computeReceptionPointShare, computeRedZoneUsage } from "@/lib/seasonProfile";
 import type { PlayerMapEntry } from "@/lib/types";
 
 const CHART_SEASONS = HISTORICAL_SEASONS;
@@ -23,6 +24,7 @@ const LOG_COLUMNS: Record<string, { key: keyof WeeklyStatLine; label: string; de
     { key: "passYd", label: "PYD" },
     { key: "passTd", label: "PTD" },
     { key: "passInt", label: "INT" },
+    { key: "passRzAtt", label: "RZ" },
     { key: "rushAtt", label: "RA" },
     { key: "rushYd", label: "RYD" },
     { key: "rushTd", label: "RTD" },
@@ -31,6 +33,7 @@ const LOG_COLUMNS: Record<string, { key: keyof WeeklyStatLine; label: string; de
     { key: "rushAtt", label: "RA" },
     { key: "rushYd", label: "RYD" },
     { key: "rushTd", label: "RTD" },
+    { key: "rushRzAtt", label: "RZ" },
     { key: "recTgt", label: "TGT" },
     { key: "rec", label: "REC" },
     { key: "recYd", label: "RYD" },
@@ -43,6 +46,7 @@ const LOG_COLUMNS: Record<string, { key: keyof WeeklyStatLine; label: string; de
     { key: "recTd", label: "TD" },
     { key: "recYpt", label: "YPT", decimals: 1 },
     { key: "targetSharePct", label: "TS%", decimals: 1 },
+    { key: "recRzTgt", label: "RZ TGT" },
   ],
   TE: [
     { key: "recTgt", label: "TGT" },
@@ -51,6 +55,7 @@ const LOG_COLUMNS: Record<string, { key: keyof WeeklyStatLine; label: string; de
     { key: "recTd", label: "TD" },
     { key: "recYpt", label: "YPT", decimals: 1 },
     { key: "targetSharePct", label: "TS%", decimals: 1 },
+    { key: "recRzTgt", label: "RZ TGT" },
   ],
 };
 
@@ -102,6 +107,34 @@ export default function PlayerCard({
       clearTimeout(t);
     };
   }, [tab, chartSeason, id]);
+
+  // Adjusted PPG + reception-point share — both derived from the same real
+  // per-game log the Logs tab uses (see lib/seasonProfile.ts), fetched here
+  // too so they're ready as soon as General renders instead of only after
+  // a user clicks into Logs.
+  const [profileLines, setProfileLines] = useState<WeeklyStatLine[] | null>(null);
+
+  useEffect(() => {
+    if (tab !== "general") return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      getPlayerGameLog(id, chartSeason)
+        .then((lines) => {
+          if (!cancelled) setProfileLines(lines);
+        })
+        .catch(() => {
+          if (!cancelled) setProfileLines(null);
+        });
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [tab, chartSeason, id]);
+
+  const adjustedPpg = profileLines ? computeAdjustedPpg(profileLines) : null;
+  const receptionShare = profileLines ? computeReceptionPointShare(profileLines) : null;
+  const redZoneUsage = profileLines ? computeRedZoneUsage(profileLines, entry.p) : null;
 
   // Logs tab — real per-game table for one season
   const [logSeason, setLogSeason] = useState(CHART_SEASONS[0]);
@@ -249,6 +282,18 @@ export default function PlayerCard({
                   {value != null ? value.toFixed(1) : "—"}
                 </span>
               </div>
+              <div title={`Avg PPR pts/game in ${chartSeason} games at a normal snap share (excludes injury/bench-share dips) — see the General hint below.`}>
+                <span className="plabel">Adj PPG &rsquo;{chartSeason.slice(2)}</span>
+                <span className="pval">{adjustedPpg ? adjustedPpg.ppg.toFixed(1) : "—"}</span>
+              </div>
+              <div title={`Share of ${chartSeason} PPR points from catches, receiving yards & receiving TDs.`}>
+                <span className="plabel">Rec % Pts</span>
+                <span className="pval">{receptionShare ? `${receptionShare.pct.toFixed(0)}%` : "—"}</span>
+              </div>
+              <div title={`Real ${chartSeason} scoring-range opportunity per game — ${entry.p === "QB" ? "red zone pass attempts" : entry.p === "RB" ? "red zone rush attempts + red zone targets" : "red zone targets"}.`}>
+                <span className="plabel">RZ Opp/Gm</span>
+                <span className="pval">{redZoneUsage ? redZoneUsage.perGame.toFixed(1) : "—"}</span>
+              </div>
             </div>
 
             <div className="pcardchart">
@@ -300,7 +345,14 @@ export default function PlayerCard({
               )}
               <p className="hint" style={{ marginTop: 8 }}>
                 Real per-week PPR results from Sleeper&rsquo;s public stats, not projections.
-                Not investment or betting advice.
+                Adj PPG averages only the {chartSeason} games where this player&rsquo;s snap
+                share was at least half their own season median (real box-score data, not
+                a hand-picked exclusion) &mdash; shown as &ldquo;&mdash;&rdquo; without at least 3 such
+                games. Rec % Pts is the share of {chartSeason} points from catches,
+                receiving yards &amp; receiving TDs. RZ Opp/Gm is real red-zone
+                opportunity per game (scoring-range volume, not yardage) &mdash; pass
+                attempts inside the 20 for QBs, rush attempts + red-zone targets for
+                RBs, red-zone targets for WR/TE. Not investment or betting advice.
               </p>
             </div>
           </>
@@ -368,7 +420,9 @@ export default function PlayerCard({
               Real box-score stats from Sleeper. Target share (TS%) is that
               week&rsquo;s targets divided by the current roster&rsquo;s pass-catchers&rsquo;
               combined targets — real, but based on today&rsquo;s team, not
-              necessarily who they played with that season if since traded.
+              necessarily who they played with that season if since traded. RZ is
+              real red-zone attempts/targets (inside the 20), from Sleeper&rsquo;s box
+              score, not estimated.
             </p>
           </div>
         )}

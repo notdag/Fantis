@@ -176,13 +176,35 @@ h1.big span{color:var(--amber)}
 .sorth .arrow{font-size:9px}
 
 /* trade calculator */
+.tradenudge{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:16px 20px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;
+  gap:16px;flex-wrap:wrap}
+.tradenudge p{margin:0;font-size:13.5px;color:var(--muted);max-width:520px;line-height:1.5}
+.tradenudge p b{color:var(--bone);font-weight:600}
+.methodpanel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:20px 22px;margin-top:28px;max-width:640px;margin-left:auto;margin-right:auto}
+.methodpanel h3{margin:0 0 14px;font-size:14px;font-weight:600}
+.methodpanel ol{margin:0;padding-left:19px;display:flex;flex-direction:column;gap:9px;
+  font-size:13px;color:var(--muted);line-height:1.5}
+.methodpanel ol b{color:var(--bone);font-weight:600}
+.methodpanel .hint{margin:12px 0 0}
+.tradesuggest{margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--line-soft)}
+.tradesuggesthead{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  flex-wrap:wrap;font-size:14px;font-weight:600;margin-bottom:12px}
+.tradesuggesthead .rt{font-size:12px;font-weight:500}
+.tradecardbtn{all:unset;box-sizing:border-box;cursor:pointer;width:100%;display:block}
+.tradecardbtn:hover{border-color:var(--amber);background:var(--line-soft)}
+.tradecardbtn:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .trade{display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:start}
 @media(max-width:760px){.trade{grid-template-columns:1fr}}
 .side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;min-height:110px}
-.side h4{margin:0 0 10px;font-size:14px;font-weight:600}
+.sidehead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
+.sidehead h4{margin:0;font-size:14px;font-weight:600}
+.sidetotal{font-size:13px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.sideempty{margin:0 0 10px;font-size:12.5px;color:var(--dim)}
 .picked{display:flex;align-items:center;gap:8px;background:var(--ink);border:1px solid var(--line);
   border-radius:8px;padding:7px 9px;margin-bottom:7px}
-.picked .val{margin-left:auto}
+.picked .val{margin-left:auto;font-variant-numeric:tabular-nums}
 .x{cursor:pointer;color:var(--dim);border:0;background:0;font-size:15px;padding:0 2px}
 .x:hover{color:var(--red)}
 .search{position:relative}
@@ -191,6 +213,10 @@ h1.big span{color:var(--amber)}
 .res{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;font-size:13px}
 .res:hover{background:var(--ink)}
 .sum{font-weight:700;font-size:26px;margin-top:10px}
+.tradevs{align-self:center;width:34px;height:34px;border-radius:999px;background:var(--panel);
+  border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--dim);justify-self:center}
+@media(max-width:760px){.tradevs{margin:2px auto}}
 .verdict{margin:8px 0 0}
 .vbar{height:10px;border-radius:999px;background:var(--line-soft);border:1px solid var(--line);overflow:hidden;display:flex}
 .vfill{height:100%;transition:width .5s cubic-bezier(.2,.8,.2,1)}
@@ -279,7 +305,7 @@ h1.big span{color:var(--amber)}
 .modal .tabs{gap:28px}
 .modal .tab{font-size:15.5px;padding-bottom:9px}
 .modal .select.sm{padding:8px 12px;font-size:14.5px}
-.pcardstats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:28px 0;
+.pcardstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:16px 12px;margin:28px 0;
   padding:22px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .pcardstats > div{display:flex;flex-direction:column;gap:6px;align-items:center}
 .pcardstats .plabel{color:var(--dim);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
@@ -387,7 +413,6 @@ h1.big span{color:var(--amber)}
   background:var(--ink); color:var(--bone);
   font-family:ui-monospace,"SFMono-Regular","IBM Plex Mono",Menlo,Consolas,monospace;
   padding:16px 16px 22px; border:1px solid var(--line);
-  counter-reset:fnkey;
 }
 .rankterm::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:1;
   background-image:repeating-linear-gradient(to bottom, rgba(255,179,0,.05) 0px, rgba(255,179,0,.05) 1px, transparent 1px, transparent 3px);
@@ -413,11 +438,8 @@ h1.big span{color:var(--amber)}
 .rankterm .input:focus{border-color:var(--amber)}
 .rankterm .chip-filter{position:relative;border:1px solid var(--line);border-radius:3px;
   background:linear-gradient(var(--panel),var(--ink));font-weight:600;letter-spacing:.02em}
-.rankterm .chip-filter::before{counter-increment:fnkey;content:"F" counter(fnkey) " ";
-  color:var(--dim);font-weight:700}
 .rankterm .chip-filter.on{background:var(--ink);border-color:var(--amber);color:var(--amber);
   box-shadow:inset 0 0 8px rgba(255,179,0,.25)}
-.rankterm .chip-filter.on::before{color:var(--amber)}
 .rankterm .hint{color:var(--dim)}
 
 .rankterm .board{position:relative;z-index:2;border-top:1px solid var(--line);overflow-x:auto}

@@ -80,3 +80,13 @@ export async function getWeekGameContext(
   cache = { key, data: out };
   return out;
 }
+
+// A team's own implied point total for the week — the scoring environment
+// its offense is playing in, independent of how good the opponent's
+// defense grades out. Standard sportsbook-math derivation from the same
+// real spread + total already fetched above (no extra request, no
+// invented number): total ± spread, split in half.
+export function impliedTeamTotal(ctx: TeamGameContext): number | null {
+  if (ctx.overUnder == null || ctx.spread == null) return null;
+  return (ctx.overUnder - ctx.spread) / 2;
+}

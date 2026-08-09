@@ -299,14 +299,17 @@ interface RawWeekStat {
   pass_yd?: number;
   pass_td?: number;
   pass_int?: number;
+  pass_rz_att?: number;
   rush_att?: number;
   rush_yd?: number;
   rush_td?: number;
+  rush_rz_att?: number;
   rec_tgt?: number;
   rec?: number;
   rec_yd?: number;
   rec_td?: number;
   rec_ypt?: number;
+  rec_rz_tgt?: number;
 }
 
 export interface WeeklyStatLine {
@@ -318,14 +321,17 @@ export interface WeeklyStatLine {
   passYd: number | null;
   passTd: number | null;
   passInt: number | null;
+  passRzAtt: number | null;
   rushAtt: number | null;
   rushYd: number | null;
   rushTd: number | null;
+  rushRzAtt: number | null;
   recTgt: number | null;
   rec: number | null;
   recYd: number | null;
   recTd: number | null;
   recYpt: number | null;
+  recRzTgt: number | null;
   targetSharePct: number | null;
 }
 
@@ -384,14 +390,17 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
       passYd: s?.pass_yd ?? null,
       passTd: s?.pass_td ?? null,
       passInt: s?.pass_int ?? null,
+      passRzAtt: s?.pass_rz_att ?? null,
       rushAtt: s?.rush_att ?? null,
       rushYd: s?.rush_yd ?? null,
       rushTd: s?.rush_td ?? null,
+      rushRzAtt: s?.rush_rz_att ?? null,
       recTgt: s?.rec_tgt ?? null,
       rec: s?.rec ?? null,
       recYd: s?.rec_yd ?? null,
       recTd: s?.rec_td ?? null,
       recYpt: s?.rec_ypt ?? null,
+      recRzTgt: s?.rec_rz_tgt ?? null,
       targetSharePct: s?.rec_tgt != null && teamTargets > 0 ? (s.rec_tgt / teamTargets) * 100 : null,
     });
   }

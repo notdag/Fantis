@@ -9,6 +9,7 @@ import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
 import { sleeperId, stripSuffix, useSleeperIdMaps } from "@/lib/playerIdMap";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { useGameContext } from "@/lib/useGameContext";
+import { impliedTeamTotal } from "@/lib/espnGames";
 import SortHeader from "@/components/SortHeader";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
@@ -20,13 +21,16 @@ interface LiveStat {
 }
 
 type ProjMode = "week" | "season";
-type SortKey = "pos" | "adp" | "proj" | "rushYd" | "recYd" | "passYd" | "td";
+type SortKey = "rank" | "pos" | "adp" | "proj" | "rushYd" | "recYd" | "passYd" | "td";
 type SortDir = "asc" | "desc";
 
 // Lower ADP is better (drafted earlier), so it defaults ascending; everything
 // else is "bigger is better", so it defaults descending. Pos defaults to
-// roster order (QB, RB, WR, TE).
+// roster order (QB, RB, WR, TE). Rank defaults to the curated master order
+// (see PLAYER_ORDER below) — real redraft consensus, not points sorted
+// within a QB-first position block.
 const DEFAULT_DIR: Record<SortKey, SortDir> = {
+  rank: "asc",
   pos: "asc",
   adp: "asc",
   proj: "desc",
@@ -39,15 +43,24 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 // Which sort columns are visible in each mode — used to reset sortBy to
 // something sensible when switching modes away from a column that's about
 // to disappear.
-const WEEK_KEYS: SortKey[] = ["pos", "adp", "proj"];
-const SEASON_KEYS: SortKey[] = ["pos", "rushYd", "recYd", "passYd", "td", "proj"];
+const WEEK_KEYS: SortKey[] = ["rank", "pos", "adp", "proj"];
+const SEASON_KEYS: SortKey[] = ["rank", "pos", "rushYd", "recYd", "passYd", "td", "proj"];
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
+
+// The curated list's own array order *is* the master redraft rank — set by
+// the owner's tier board (all positions mixed, e.g. Gibbs/Bijan before any
+// QB), not grouped by position. posRank is already derived from a player's
+// position within this same order (see lib/players.ts). Sorting by "pos"
+// groups into position blocks (every QB, then every RB, ...); sorting by
+// "rank" is the real thing — default view should be this, not a QB-first
+// block grouping that happens to fall out of POS_ORDER.
+const PLAYER_ORDER = new Map(PLAYERS.map((p, i) => [p.name, i]));
 
 export default function Rankings() {
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>("ALL");
   const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("pos");
+  const [sortBy, setSortBy] = useState<SortKey>("rank");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<string | null>(null);
   const [projMode, setProjMode] = useState<ProjMode>("season");
@@ -186,6 +199,9 @@ export default function Rankings() {
     );
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
+      if (sortBy === "rank") {
+        return ((PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0)) * dir;
+      }
       if (sortBy === "pos") {
         const ai = POS_ORDER[a.pos] ?? 99;
         const bi = POS_ORDER[b.pos] ?? 99;
@@ -335,7 +351,9 @@ export default function Rankings() {
       <div className={`rankgrid ${selectedPlayer ? "split" : ""}`}>
         <div className="board">
           <div className={`row rk ${projMode === "season" ? "rk-season" : ""} head`}>
-            <div className="cell">#</div>
+            <div className="cell">
+              <SortHeader label="#" sortKey="rank" active={sortBy} dir={sortDir} onClick={toggleSort} />
+            </div>
             <div className="cell">Player</div>
             <div className="cell r">
               <SortHeader label="Pos" sortKey="pos" active={sortBy} dir={sortDir} onClick={toggleSort} />
@@ -501,6 +519,14 @@ export default function Rankings() {
                 </span>
               </div>
             )}
+            {gameContext[selectedPlayer.team] && impliedTeamTotal(gameContext[selectedPlayer.team]) != null && (
+              <div className="prow" title="This team's own implied point total for the week — the offense's scoring environment, independent of the opponent's defense grade. Derived from the real spread + O/U total above.">
+                <span className="plabel">Scoring Environment</span>
+                <span className="pval">
+                  {impliedTeamTotal(gameContext[selectedPlayer.team])!.toFixed(1)} implied pts
+                </span>
+              </div>
+            )}
             {selectedMvp && (
               <div className="prow">
                 <span className="plabel">MVP Odds ({selectedMvp.sportsbook})</span>
@@ -549,7 +575,9 @@ export default function Rankings() {
               SharpAPI and SportsGameOdds; this week&rsquo;s game odds and win probability
               are live from ESPN&rsquo;s public scoreboard (win probability is de-vigged
               from the real moneyline, the same technique used for the Anytime TD prop).
-              Not investment or betting advice.
+              Scoring Environment is the team&rsquo;s own implied total (O/U &plusmn; spread,
+              split in half) &mdash; standard sportsbook math on the same real numbers above,
+              not a new data source. Not investment or betting advice.
             </div>
           </div>
         )}
