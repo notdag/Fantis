@@ -40,7 +40,7 @@ export const getLeagueUsers = (leagueId: string) =>
 
 export const today = () => new Date().toISOString().slice(0, 10);
 
-const PLAYERS_CACHE_KEY = "fantis_players_nfl_v1";
+const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
 
 // Sleeper's full player dump is several MB; cache it in localStorage for the day.
 export async function getPlayers(): Promise<PlayerMap> {
@@ -71,6 +71,11 @@ export async function getPlayers(): Promise<PlayerMap> {
       exp: p.years_exp,
       college: p.college,
       inj: p.injury_status,
+      injBodyPart: p.injury_body_part,
+      injNotes: p.injury_notes,
+      practiceStatus: p.practice_participation,
+      newsUpdated: p.news_updated,
+      espnId: p.espn_id,
     };
   }
 
@@ -333,6 +338,7 @@ export interface WeeklyStatLine {
   recYpt: number | null;
   recRzTgt: number | null;
   targetSharePct: number | null;
+  rushSharePct: number | null;
 }
 
 // One real week's full stat payload (~500KB) is too large to keep in
@@ -373,6 +379,10 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
         (id) => pmap[id].t === team && ["WR", "TE", "RB"].includes(pmap[id].p)
       )
     : [];
+  // Carry share has no position restriction — a QB scramble or WR jet sweep
+  // still counts as a team carry, so the denominator is every player on the
+  // roster, not just RBs. Same current-roster caveat as target share above.
+  const teamIds = team ? Object.keys(pmap).filter((id) => pmap[id].t === team) : [];
 
   const lines: WeeklyStatLine[] = [];
   for (let week = 1; week <= SEASON_WEEKS; week++) {
@@ -380,28 +390,38 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
     const s = weekStats[playerId];
     let teamTargets = 0;
     for (const tid of targetShareIds) teamTargets += weekStats[tid]?.rec_tgt ?? 0;
+    let teamCarries = 0;
+    for (const tid of teamIds) teamCarries += weekStats[tid]?.rush_att ?? 0;
+
+    // Sleeper's raw payload omits a counting stat entirely when it's zero
+    // (confirmed directly: a real 16-carry, 0-TD game has no `rush_td` key
+    // at all) rather than sending 0 — so "field missing" only means "really
+    // didn't happen" when the player has a stat line (`s`) at all. When `s`
+    // itself is missing, that's a genuine DNP and stays null throughout.
+    const count = (v: number | undefined) => (s ? (v ?? 0) : null);
 
     lines.push({
       week,
       pts: s?.pts_ppr ?? null,
       posRank: s?.pos_rank_ppr ?? null,
       snapPct: s?.off_snp != null && s?.tm_off_snp ? (s.off_snp / s.tm_off_snp) * 100 : null,
-      passAtt: s?.pass_att ?? null,
-      passYd: s?.pass_yd ?? null,
-      passTd: s?.pass_td ?? null,
-      passInt: s?.pass_int ?? null,
-      passRzAtt: s?.pass_rz_att ?? null,
-      rushAtt: s?.rush_att ?? null,
-      rushYd: s?.rush_yd ?? null,
-      rushTd: s?.rush_td ?? null,
-      rushRzAtt: s?.rush_rz_att ?? null,
-      recTgt: s?.rec_tgt ?? null,
-      rec: s?.rec ?? null,
-      recYd: s?.rec_yd ?? null,
-      recTd: s?.rec_td ?? null,
+      passAtt: count(s?.pass_att),
+      passYd: count(s?.pass_yd),
+      passTd: count(s?.pass_td),
+      passInt: count(s?.pass_int),
+      passRzAtt: count(s?.pass_rz_att),
+      rushAtt: count(s?.rush_att),
+      rushYd: count(s?.rush_yd),
+      rushTd: count(s?.rush_td),
+      rushRzAtt: count(s?.rush_rz_att),
+      recTgt: count(s?.rec_tgt),
+      rec: count(s?.rec),
+      recYd: count(s?.rec_yd),
+      recTd: count(s?.rec_td),
       recYpt: s?.rec_ypt ?? null,
-      recRzTgt: s?.rec_rz_tgt ?? null,
+      recRzTgt: count(s?.rec_rz_tgt),
       targetSharePct: s?.rec_tgt != null && teamTargets > 0 ? (s.rec_tgt / teamTargets) * 100 : null,
+      rushSharePct: s?.rush_att != null && teamCarries > 0 ? (s.rush_att / teamCarries) * 100 : null,
     });
   }
   return lines;

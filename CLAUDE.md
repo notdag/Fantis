@@ -35,6 +35,21 @@ discussion — and don't drift toward a *generic* SaaS look either (no
 unexplained purple/indigo accents, keep the position color system and the
 verdict bar's mint/amber heading pairing).
 
+**Scoped exception — the player card header** (`components/PlayerCard.tsx`,
+2026-08). After explicit, repeated user direction to visually match a
+competitor reference (not just reorder its data), the player-card modal's
+header (`.pcardhead` in `app/globals.css`) intentionally breaks two of the
+rules above, but only there: a position-tinted gradient banner bleeds to the
+modal's edges, and the top-right at-a-glance stat badges (`.statbadge.solid`)
+use solid position/amber fills instead of tinted chips. This isn't a new
+house style — the inline `.pos` meta chip on the same header stays tinted,
+as does every other position chip in the app (Rankings, rosters, Team Hub).
+The solid-fill treatment itself isn't unprecedented: `.trbar` and `.trcol
+header` in `components/LeagueView.tsx` already use solid position-color
+fills for the same "at a glance colored surface" purpose. Don't extend the
+gradient banner or solid badges to other components without the same kind
+of explicit discussion this one got.
+
 Palette (see `app/globals.css` for the full, authoritative token list):
 ink `#10131A` · panel `#141821` · line `#262B34` · line-soft `#1C1F27` ·
 bone `#EEF0F3` · muted `#939AA6` · dim `#5D6470` ·

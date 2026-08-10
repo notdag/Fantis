@@ -41,6 +41,11 @@ yarn-error.log*
 # its Bash-permission allowlist as you approve commands during a session
 .claude/settings.local.json
 
+# impeccable design-review skill — plugin install + local critique/session
+# cache, not app source
+.claude/skills/
+.impeccable/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

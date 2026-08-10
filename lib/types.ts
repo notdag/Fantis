@@ -57,6 +57,11 @@ export interface SleeperPlayerRaw {
   years_exp?: number;
   college?: string;
   injury_status?: string | null;
+  injury_body_part?: string | null;
+  injury_notes?: string | null;
+  practice_participation?: string | null;
+  news_updated?: number | null;
+  espn_id?: number | null;
 }
 
 export interface SleeperState {
@@ -94,6 +99,11 @@ export interface PlayerMapEntry {
   exp?: number; // years_exp
   college?: string;
   inj?: string | null; // injury_status
+  injBodyPart?: string | null;
+  injNotes?: string | null;
+  practiceStatus?: string | null; // practice_participation — "Full" | "Limited" | "Did Not Participate"
+  newsUpdated?: number | null; // ms epoch — last time Sleeper's own player page updated
+  espnId?: number | null; // ESPN's athlete id — used to match this player's real news articles
 }
 
 export type PlayerMap = Record<string, PlayerMapEntry>;

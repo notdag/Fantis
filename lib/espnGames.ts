@@ -81,6 +81,67 @@ export async function getWeekGameContext(
   return out;
 }
 
+const SEASON_WEEKS = 18;
+const SCHEDULE_CACHE_PREFIX = "fantis_espn_schedule_v1_";
+
+// Real opponent-by-week for every team across a full season — same ESPN
+// scoreboard endpoint as getWeekGameContext, just fetched for every week and
+// reduced to team -> opponent. A team missing from a given week's map means
+// that team had a real bye (confirmed by direct testing: ESPN's scoreboard
+// simply omits bye teams from that week's events, it doesn't return a
+// placeholder), which the Logs tab uses to skip bye rows entirely rather
+// than showing a blank line. Cached per season for the day — past seasons'
+// schedules never change, so this is effectively a one-time fetch per user.
+export async function getSeasonSchedule(season: string): Promise<Record<number, Record<string, string>>> {
+  const cacheKey = `${SCHEDULE_CACHE_PREFIX}${season}`;
+  if (typeof window !== "undefined") {
+    try {
+      const cached = window.localStorage.getItem(cacheKey);
+      if (cached) {
+        const d = JSON.parse(cached) as { day: string; schedule: Record<number, Record<string, string>> };
+        const today = new Date().toISOString().slice(0, 10);
+        if (d.day === today) return d.schedule;
+      }
+    } catch {
+      // ignore cache read errors
+    }
+  }
+
+  const weeks = await Promise.all(
+    Array.from({ length: SEASON_WEEKS }, (_, i) => i + 1).map(async (week) => {
+      const res = await fetch(
+        `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`
+      );
+      if (!res.ok) return { week, matchups: {} as Record<string, string> };
+      const json = await res.json();
+      const matchups: Record<string, string> = {};
+      for (const event of json.events ?? []) {
+        const competitors: ScoreboardCompetitor[] = event.competitions?.[0]?.competitors ?? [];
+        for (const c of competitors) {
+          const abbr = c.team?.abbreviation;
+          const opp = competitors.find((o) => o !== c)?.team?.abbreviation;
+          if (abbr && opp) matchups[abbr] = opp;
+        }
+      }
+      return { week, matchups };
+    })
+  );
+
+  const schedule: Record<number, Record<string, string>> = {};
+  for (const { week, matchups } of weeks) schedule[week] = matchups;
+
+  if (typeof window !== "undefined") {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      window.localStorage.setItem(cacheKey, JSON.stringify({ day: today, schedule }));
+    } catch {
+      // ignore cache write errors (e.g. quota exceeded)
+    }
+  }
+
+  return schedule;
+}
+
 // A team's own implied point total for the week — the scoring environment
 // its offense is playing in, independent of how good the opponent's
 // defense grades out. Standard sportsbook-math derivation from the same
