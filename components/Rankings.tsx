@@ -239,6 +239,25 @@ export default function Rankings() {
     });
   }, [pos, query, sortBy, sortDir, live, seasonLive, projMode]);
 
+  // If the selected player gets filtered out (search/position change), close
+  // the panel instead of leaving it detached from anything on screen.
+  useEffect(() => {
+    if (selected && !list.some((p) => p.name === selected)) {
+      setSelected(null);
+    }
+  }, [list, selected]);
+
+  // The mobile bottom sheet is modal-weight UI (fixed, scrimmed) and should
+  // carry the same Escape-to-close expectation as one.
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
+
   // "vs ADP": our curated position rank compared to the market's ADP-implied
   // rank at that same position — a real, computable delta, not an invented
   // "market score". Deliberately position-scoped, not overall: Fantis's
@@ -277,8 +296,8 @@ export default function Rankings() {
       <div className="sechead">
         <h2>Rankings</h2>
         <span className="rt">
-          starter set · edit in code
-          {week != null && ` · ADP via Sleeper`}
+          {PLAYERS.length} players, real season points via Sleeper
+          {week != null && ` · ADP updated live`}
         </span>
       </div>
       <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
@@ -381,7 +400,10 @@ export default function Rankings() {
                 <div className={`cell rank ${i < 3 ? "top" : ""}`}>{i + 1}</div>
                 <div className="cell team">
                   <span className="tname">{p.name}</span>
-                  <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 8 }}>
+                  {/* --dim fails contrast at this size (3.1:1, need 4.5:1) —
+                      --muted passes (~6.4:1) and is already the documented
+                      secondary-text step. */}
+                  <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: 8 }}>
                     {p.team}
                   </span>
                 </div>
@@ -391,7 +413,7 @@ export default function Rankings() {
                     {p.posRank}
                   </span>
                 </div>
-                <div className="cell r num" style={{ color: "var(--dim)" }}>
+                <div className="cell r num" style={{ color: "var(--muted)" }}>
                   {BYE_WEEKS_2026[p.team] ?? "—"}
                 </div>
                 {projMode === "week" ? (
@@ -420,10 +442,13 @@ export default function Rankings() {
                       {seasonStat ? Math.round(seasonStat.rushYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
-                      {seasonStat ? Math.round(seasonStat.recYd) : "—"}
+                      {/* QBs structurally don't catch passes — "—" (not applicable),
+                          not "0" (which would misread as an earned zero). */}
+                      {seasonStat && p.pos !== "QB" ? Math.round(seasonStat.recYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
-                      {seasonStat ? Math.round(seasonStat.passYd) : "—"}
+                      {/* Same convention for non-QBs and passing yards. */}
+                      {seasonStat && p.pos === "QB" ? Math.round(seasonStat.passYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
                       {tdTotal != null ? Math.round(tdTotal) : "—"}
@@ -439,7 +464,9 @@ export default function Rankings() {
         </div>
 
         {selectedPlayer && (
-          <div className="panel">
+          <>
+            <div className="panelscrim" onClick={() => setSelected(null)} />
+            <div className="panel">
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
               <div>
                 <h3>{selectedPlayer.name}</h3>
@@ -555,6 +582,7 @@ export default function Rankings() {
               not a new data source. Not investment or betting advice.
             </div>
           </div>
+          </>
         )}
       </div>
     </section>

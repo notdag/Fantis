@@ -12,6 +12,7 @@ import {
   getUser,
 } from "@/lib/sleeper";
 import type { LeagueBundle, PlayerMap, SleeperLeague, Team } from "@/lib/types";
+import { PLAYERS, posChipStyle } from "@/lib/players";
 import LeagueView from "@/components/LeagueView";
 import TeamHub from "@/components/TeamHub";
 import SuggestedTrades from "@/components/SuggestedTrades";
@@ -146,9 +147,6 @@ export default function FantisApp() {
           <>
             {!sel && (
               <section className="hero">
-                <span className="eyebrow">
-                  <span className="dot" /> Link your league in 60 seconds
-                </span>
                 <h1 className="big">
                   Win your <span>fantasy</span>
                   <br />
@@ -190,16 +188,32 @@ export default function FantisApp() {
                     </button>
                   </div>
                   <div className="plat">
-                    <span className="chip live">● Sleeper — live</span>
+                    <span className="chip live">
+                      <span className="dot" /> Sleeper — live
+                    </span>
                     <span className="chip">ESPN — coming soon</span>
                     <span className="chip">Yahoo — coming soon</span>
                   </div>
                   {error && <div className="err">{error}</div>}
                   <div className="hint">
-                    Uses Sleeper&rsquo;s public API. No password needed — just your
-                    username.
+                    Uses Sleeper&rsquo;s public API — no password, ~60 seconds.
                   </div>
                 </div>
+                <button className="proof" onClick={() => setTab("rankings")}>
+                  <span className="prooflabel">Real rankings, right now</span>
+                  <span className="proofplayers">
+                    {PLAYERS.slice(0, 4).map((p) => (
+                      <span className="proofpl" key={p.name}>
+                        <span className="pos" style={posChipStyle(p.pos)}>
+                          {p.pos}
+                          {p.posRank}
+                        </span>
+                        {p.name}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="proofgo">See full board →</span>
+                </button>
               </section>
             )}
 
