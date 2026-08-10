@@ -239,19 +239,6 @@ export default function Rankings() {
     });
   }, [pos, query, sortBy, sortDir, live, seasonLive, projMode]);
 
-  // Ticker strip: real current standings by proj value (season or week,
-  // matching the active mode) — no fabricated "market delta," since we don't
-  // track a historical baseline to compare against yet.
-  const tickerItems = useMemo(() => {
-    return PLAYERS.map((p) => ({
-      p,
-      val: projMode === "season" ? seasonLive[p.name]?.pts ?? null : live[p.name]?.proj ?? null,
-    }))
-      .filter((x): x is { p: (typeof PLAYERS)[number]; val: number } => x.val != null)
-      .sort((a, b) => b.val - a.val)
-      .slice(0, 10);
-  }, [live, seasonLive, projMode]);
-
   // "vs ADP": our curated position rank compared to the market's ADP-implied
   // rank at that same position — a real, computable delta, not an invented
   // "market score". Deliberately position-scoped, not overall: Fantis's
@@ -286,19 +273,7 @@ export default function Rankings() {
     : undefined;
 
   return (
-    <section className="sec rankterm">
-      <div className="ticker">
-        <div className="tickertrack">
-          {tickerItems.length === 0
-            ? [0, 1].map((i) => <span key={i}>AWAITING FEED…</span>)
-            : [...tickerItems, ...tickerItems].map((t, i) => (
-                <span key={i}>
-                  {t.p.pos}
-                  {t.p.posRank} {t.p.name.toUpperCase()} · {t.val.toFixed(1)}
-                </span>
-              ))}
-        </div>
-      </div>
+    <section className="sec">
       <div className="sechead">
         <h2>Rankings</h2>
         <span className="rt">
