@@ -188,14 +188,14 @@ h1.big span{color:var(--amber)}
    existing sizes since they weren't part of what was reviewed. */
 .board .pos{font-size:11px}
 .rk{grid-template-columns:36px 1fr 56px 40px 56px 56px 66px}
-.rk.rk-season{grid-template-columns:36px 1fr 56px 40px 58px 58px 58px 44px 66px}
+.rk.rk-season{grid-template-columns:36px 1fr 56px 40px 56px 58px 58px 58px 44px 66px}
 .ww{grid-template-columns:40px 1fr 64px 64px 76px}
 /* Mobile fix: at narrow widths these fixed-column rows leave almost no room
    for the flexible Player column — names truncate to a single letter.
    Scroll the row horizontally at its natural width instead of crushing it. */
 .board{overflow-x:auto}
 .row.rk{min-width:600px}
-.row.rk.rk-season{min-width:740px}
+.row.rk.rk-season{min-width:800px}
 .tier{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px}
 .val{font-weight:650;font-size:14px;color:var(--amber)}
 

@@ -44,7 +44,7 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 // something sensible when switching modes away from a column that's about
 // to disappear.
 const WEEK_KEYS: SortKey[] = ["rank", "pos", "adp", "proj"];
-const SEASON_KEYS: SortKey[] = ["rank", "pos", "rushYd", "recYd", "passYd", "td", "proj"];
+const SEASON_KEYS: SortKey[] = ["rank", "pos", "adp", "rushYd", "recYd", "passYd", "td", "proj"];
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
 
@@ -200,7 +200,20 @@ export default function Rankings() {
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
       if (sortBy === "rank") {
-        return ((PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0)) * dir;
+        // Real live ADP, same source as the ADP column/sort below — not the
+        // curated list's own array order, which groups tier-major then
+        // position-major (QB before RB/WR/TE alphabetically) rather than by
+        // real cross-position value. That grouping put tier-1 QBs ahead of
+        // every other tier-1 player regardless of real ADP, which is why
+        // QBs were showing up top-10 overall. Curated order is now only a
+        // tiebreak for the handful of players with no live ADP (deep
+        // rookies mostly), same convention as every other sort below.
+        const aAdp = live[a.name]?.adp;
+        const bAdp = live[b.name]?.adp;
+        if (aAdp != null && bAdp != null) return (aAdp - bAdp) * dir;
+        if (aAdp != null) return -1;
+        if (bAdp != null) return 1;
+        return (PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0);
       }
       if (sortBy === "pos") {
         const ai = POS_ORDER[a.pos] ?? 99;
@@ -366,6 +379,9 @@ export default function Rankings() {
             ) : (
               <>
                 <div className="cell r">
+                  <SortHeader label="ADP" sortKey="adp" active={sortBy} dir={sortDir} onClick={toggleSort} />
+                </div>
+                <div className="cell r">
                   <SortHeader label="Rush Yd" sortKey="rushYd" active={sortBy} dir={sortDir} onClick={toggleSort} />
                 </div>
                 <div className="cell r">
@@ -438,6 +454,9 @@ export default function Rankings() {
                   </>
                 ) : (
                   <>
+                    <div className="cell r num" style={{ color: "var(--bone)" }}>
+                      {stat?.adp != null ? stat.adp : "—"}
+                    </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
                       {seasonStat ? Math.round(seasonStat.rushYd) : "—"}
                     </div>
