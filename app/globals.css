@@ -491,14 +491,14 @@ h1.big span{color:var(--amber)}
 .hubstartercard{display:flex;flex-direction:column;align-items:center;gap:2px;flex:none;width:76px}
 .hubcardslot{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   color:var(--dim);margin-bottom:4px}
-.hubcardphotowrap{position:relative;width:64px;height:64px}
+.hubcardphotowrap{width:64px;height:64px}
 .hubcardphotowrap.empty{background:var(--ink);border:1px dashed var(--line);border-radius:14px}
 .hubcardphoto{width:64px;height:64px;border-radius:14px;object-fit:cover;background:var(--ink);
   border:1px solid var(--line)}
-.hubcardpos{position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);
-  font-size:9px;padding:2px 6px;white-space:nowrap}
+/* Sits below the photo in normal flow now, not overlapping the image edge. */
+.hubcardpos{font-size:9px;padding:2px 6px;white-space:nowrap;margin-top:6px}
 .hubcardname{font-size:11.5px;font-weight:500;text-align:center;white-space:nowrap;overflow:hidden;
-  text-overflow:ellipsis;max-width:76px;margin-top:10px}
+  text-overflow:ellipsis;max-width:76px;margin-top:2px}
 .hubcardteam{font-size:10px;color:var(--dim)}
 .hubcardbtn{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;
   appearance:none;border:0;background:transparent;padding:0;cursor:pointer;color:inherit;font:inherit}

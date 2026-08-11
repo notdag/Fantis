@@ -143,10 +143,10 @@ export default function TeamHub({
                           (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
                         }}
                       />
-                      <span className="pos hubcardpos" style={posChipStyle(player.p)}>
-                        {player.p}
-                      </span>
                     </div>
+                    <span className="pos hubcardpos" style={posChipStyle(player.p)}>
+                      {player.p}
+                    </span>
                     <span className="hubcardname">{player.n}</span>
                     <span className="hubcardteam">{player.t}</span>
                   </button>
