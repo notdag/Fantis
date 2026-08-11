@@ -13,6 +13,7 @@ import { computeAdjustedPpg, computeReceptionPointShare, computeRedZoneUsage } f
 import { getPlayerNews, type NewsArticle } from "@/lib/espnNews";
 import { getInjuryReports, type InjuryReport } from "@/lib/espnInjuries";
 import { getSeasonSchedule } from "@/lib/espnGames";
+import { getSeasonInjuryReportsByEspnId, type WeeklyInjuryStatus } from "@/lib/nflverseInjuries";
 import { useProjections } from "@/lib/useProjections";
 import type { PlayerMapEntry } from "@/lib/types";
 
@@ -236,6 +237,7 @@ export default function PlayerCard({
   const [logSeason, setLogSeason] = useState(CHART_SEASONS[0]);
   const [logLines, setLogLines] = useState<WeeklyStatLine[] | null>(null);
   const [logSchedule, setLogSchedule] = useState<Record<number, Record<string, string>> | null>(null);
+  const [logInjuryWeeks, setLogInjuryWeeks] = useState<Record<number, WeeklyInjuryStatus> | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
 
   useEffect(() => {
@@ -243,17 +245,25 @@ export default function PlayerCard({
     let cancelled = false;
     const t = setTimeout(() => {
       setLogsLoading(true);
-      Promise.all([getPlayerGameLog(id, logSeason), getSeasonSchedule(logSeason)])
-        .then(([lines, schedule]) => {
-          if (!cancelled) {
-            setLogLines(lines);
-            setLogSchedule(schedule);
-          }
+      Promise.all([
+        getPlayerGameLog(id, logSeason),
+        getSeasonSchedule(logSeason),
+        getSeasonInjuryReportsByEspnId(logSeason).catch(() => ({}) as Record<string, WeeklyInjuryStatus[]>),
+      ])
+        .then(([lines, schedule, injuryReports]) => {
+          if (cancelled) return;
+          setLogLines(lines);
+          setLogSchedule(schedule);
+          const perPlayer = entry.espnId != null ? injuryReports[String(entry.espnId)] : undefined;
+          setLogInjuryWeeks(
+            perPlayer ? Object.fromEntries(perPlayer.map((w) => [w.week, w])) : {}
+          );
         })
         .catch(() => {
           if (!cancelled) {
             setLogLines(null);
             setLogSchedule(null);
+            setLogInjuryWeeks(null);
           }
         })
         .finally(() => {
@@ -264,7 +274,8 @@ export default function PlayerCard({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [tab, logSeason, id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, logSeason, id, entry.espnId]);
 
   // Career tab — real multi-season averages, built from the same per-game log
   interface CareerRow {
@@ -604,9 +615,18 @@ export default function PlayerCard({
                       const ptsTone = pprTone(l.pts);
                       const rankTone = l.posRank != null ? statTone(l.posRank, rankValues, false) : null;
                       const snapTone = l.snapPct != null ? statTone(l.snapPct, snapValues) : null;
+                      const injuryWeek = logInjuryWeeks?.[l.week];
                       return (
                         <tr key={l.week}>
-                          <td>{l.week}</td>
+                          <td>
+                            {l.week}
+                            {injuryWeek && (
+                              <span
+                                className="wkinjdot"
+                                title={`${injuryWeek.status}${injuryWeek.bodyPart ? ` (${injuryWeek.bodyPart})` : ""} — official NFL injury report`}
+                              />
+                            )}
+                          </td>
                           <td>{opp ? `@${opp}` : "—"}</td>
                           <td className="num" style={toneStyle(ptsTone)}>
                             {l.pts != null ? l.pts.toFixed(1) : "—"}
@@ -648,7 +668,9 @@ export default function PlayerCard({
               self-relative, not a league benchmark. Carry% and target-share
               are each stat&rsquo;s share of the current roster&rsquo;s total that
               week — real, but based on today&rsquo;s team, not necessarily who
-              they played with that season if since traded.
+              they played with that season if since traded. A red dot on the
+              week number means this player was on the official NFL injury
+              report that week (nflverse data), even in games he played.
             </p>
           </div>
         )}

@@ -455,6 +455,10 @@ h1.big span{color:var(--amber)}
   border-bottom:1px solid var(--line)}
 .logtable th:first-child,.logtable td:first-child{text-align:left}
 .logtable-games th:nth-child(2),.logtable-games td:nth-child(2){text-align:left}
+/* Marks a week the player was on the official NFL injury report (real
+   nflverse data), even in games he ended up playing — see lib/nflverseInjuries.ts */
+.wkinjdot{display:inline-block;width:6px;height:6px;border-radius:50%;
+  background:var(--red);margin-left:5px;vertical-align:middle}
 .logtable td{padding:11px 14px;text-align:right;border-top:1px solid var(--line-soft);
   font-variant-numeric:tabular-nums}
 .logtable tbody tr:hover{background:var(--line-soft)}
