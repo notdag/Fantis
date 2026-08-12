@@ -68,6 +68,20 @@ export interface SleeperState {
   week: number;
   season: string;
   season_type: string; // "pre" | "regular" | "post"
+  leg: number; // the round/week index transactions are filed under
+}
+
+// Real pending trade offer — see app/api/... none, fetched client-side like
+// rosters. adds/drops map playerId -> the roster_id receiving/losing them.
+export interface SleeperTransaction {
+  transaction_id: string;
+  type: string; // "trade" | "waiver" | "free_agent"
+  status: string; // "pending" | "complete" | "failed"
+  created: number; // ms epoch
+  roster_ids: number[] | null;
+  consenter_ids: number[] | null;
+  adds: Record<string, number> | null;
+  drops: Record<string, number> | null;
 }
 
 export interface SleeperProjectionEntry {

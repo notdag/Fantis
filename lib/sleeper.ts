@@ -9,6 +9,7 @@ import type {
   SleeperPlayerRaw,
   SleeperRoster,
   SleeperState,
+  SleeperTransaction,
   SleeperUser,
 } from "./types";
 
@@ -37,6 +38,13 @@ export const getLeagueDetail = (leagueId: string) =>
 
 export const getLeagueUsers = (leagueId: string) =>
   jget<SleeperLeagueUser[]>(`${S}/league/${leagueId}/users`);
+
+// Real trade/waiver/free-agent activity for one league, filed under the
+// week ("round"/"leg") it was created — see Portfolio's trade inbox
+// (lib/usePortfolio.ts), which scans a small window of recent legs rather
+// than every week of the season for performance.
+export const getTransactions = (leagueId: string, round: number) =>
+  jget<SleeperTransaction[]>(`${S}/league/${leagueId}/transactions/${round}`);
 
 export const today = () => new Date().toISOString().slice(0, 10);
 

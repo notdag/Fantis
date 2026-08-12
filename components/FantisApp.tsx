@@ -19,8 +19,9 @@ import Rankings from "@/components/Rankings";
 import Trade from "@/components/Trade";
 import StartSit from "@/components/StartSit";
 import WaiverWire from "@/components/WaiverWire";
+import Portfolio from "@/components/Portfolio";
 
-type Tab = "leagues" | "rankings" | "trade" | "startsit";
+type Tab = "leagues" | "rankings" | "trade" | "startsit" | "portfolio";
 
 export default function FantisApp() {
   const [tab, setTab] = useState<Tab>("leagues");
@@ -128,6 +129,7 @@ export default function FantisApp() {
                 ["rankings", "Rankings"],
                 ["trade", "Trade"],
                 ["startsit", "Start/Sit"],
+                ["portfolio", "Portfolio"],
               ] as [Tab, string][]
             ).map(([k, l]) => (
               <button
@@ -267,6 +269,17 @@ export default function FantisApp() {
             selLoading={selLoading}
             onSelectLeague={openLeague}
             onGoToLeagues={() => setTab("leagues")}
+          />
+        )}
+        {tab === "portfolio" && (
+          <Portfolio
+            leagues={leagues}
+            myUserId={myUserId}
+            onGoToLeagues={() => setTab("leagues")}
+            onOpenLeague={(lg) => {
+              setTab("leagues");
+              openLeague(lg);
+            }}
           />
         )}
         <footer className="footer">
