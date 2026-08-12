@@ -137,6 +137,31 @@ export default function Rankings() {
     return merged;
   }, [projections, idMaps]);
 
+  // Each player's real ADP-based overall rank, fixed regardless of which
+  // column the table is currently sorted by. Shown in the "#" cell so that
+  // sorting by e.g. Szn Pts (where QBs naturally lead on raw points) still
+  // reads as "Josh Allen, real rank ~29" instead of relabeling him "#1"
+  // just because points-sorting put him first in the row list — the row
+  // order can change with the active sort, but the real-rank number
+  // shouldn't. Same real-ADP-first, curated-order-fallback logic as the
+  // "rank" sort branch below.
+  const adpRank = useMemo(() => {
+    const withAdp: { name: string; adp: number }[] = [];
+    const withoutAdp: string[] = [];
+    for (const p of PLAYERS) {
+      const adp = live[p.name]?.adp;
+      if (adp != null) withAdp.push({ name: p.name, adp });
+      else withoutAdp.push(p.name);
+    }
+    withAdp.sort((a, b) => a.adp - b.adp);
+    withoutAdp.sort((a, b) => (PLAYER_ORDER.get(a) ?? 0) - (PLAYER_ORDER.get(b) ?? 0));
+    const map = new Map<string, number>();
+    let i = 1;
+    for (const { name } of withAdp) map.set(name, i++);
+    for (const name of withoutAdp) map.set(name, i++);
+    return map;
+  }, [live]);
+
   const seasonLive = useMemo(() => {
     const merged: Record<string, SeasonProjectionTotal | undefined> = {};
     if (!seasonTotals || !idMaps) return merged;
@@ -413,7 +438,7 @@ export default function Rankings() {
                 style={{ borderLeftColor: TIER_COLOR[p.tier - 1] || "var(--oth)" }}
                 title={`Tier ${TIER_LABELS[p.tier - 1] ?? p.tier}`}
               >
-                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{i + 1}</div>
+                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{adpRank.get(p.name) ?? i + 1}</div>
                 <div className="cell team">
                   <span className="tname">{p.name}</span>
                   {/* --dim fails contrast at this size (3.1:1, need 4.5:1) —
