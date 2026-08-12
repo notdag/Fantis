@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { PLAYERS, posChipStyle } from "@/lib/players";
 import { useTradeValues } from "@/lib/useTradeValues";
+import { useFantasyCalcValues, fantasyCalcValue, type FantasyCalcMaps } from "@/lib/fantasyCalc";
 import { findTradeSuggestions, type TradeSuggestion, type RosterPlayerLite } from "@/lib/tradeSuggestions";
 import { stripSuffix } from "@/lib/playerIdMap";
 import type { TradeValueResult } from "@/lib/tradeValue";
@@ -33,6 +34,7 @@ export default function Trade({
   const [a, setA] = useState<Player[]>([]);
   const [b, setB] = useState<Player[]>([]);
   const values = useTradeValues();
+  const fcValues = useFantasyCalcValues();
   const loading = Object.keys(values).length === 0;
 
   const myTeam = sel?.teams.find((t) => t.ownerId === myUserId) ?? null;
@@ -55,6 +57,15 @@ export default function Trade({
   const total = sumA + sumB;
   const missingCount = missing(a) + missing(b);
   const hasPicks = a.length > 0 || b.length > 0;
+
+  // FantasyCalc's real values, purely informational — a second opinion
+  // shown alongside Fantis's own methodology, never blended into the
+  // tilting verdict bar above (see CLAUDE.md: that bar sums Fantis's own
+  // documented calculation, not a resurrected or borrowed score).
+  const fcSum = (picks: Player[]) =>
+    fcValues ? picks.reduce((t, p) => t + fantasyCalcValue(fcValues, p), 0) : 0;
+  const fcSumA = fcSum(a);
+  const fcSumB = fcSum(b);
 
   return (
     <section className="sec">
@@ -121,11 +132,27 @@ export default function Trade({
       )}
 
       <div className="trade">
-        <TradeSide title="Side A" picks={a} setPicks={setA} accent="var(--mint)" other={b} values={values} />
+        <TradeSide
+          title="Side A"
+          picks={a}
+          setPicks={setA}
+          accent="var(--mint)"
+          other={b}
+          values={values}
+          fcValues={fcValues}
+        />
         <div className="tradevs" aria-hidden="true">
           VS
         </div>
-        <TradeSide title="Side B" picks={b} setPicks={setB} accent="var(--amber)" other={a} values={values} />
+        <TradeSide
+          title="Side B"
+          picks={b}
+          setPicks={setB}
+          accent="var(--amber)"
+          other={a}
+          values={values}
+          fcValues={fcValues}
+        />
       </div>
 
       {hasPicks && (
@@ -158,6 +185,20 @@ export default function Trade({
                     ? `Side A favored by ${(sumA - sumB).toFixed(1)} pts`
                     : `Side B favored by ${(sumB - sumA).toFixed(1)} pts`}
               </div>
+              {fcValues && fcSumA + fcSumB > 0 && (
+                <div className="vlabel-fc">
+                  <a href="https://www.fantasycalc.com" target="_blank" rel="noreferrer">
+                    FantasyCalc
+                  </a>
+                  :{" "}
+                  {Math.abs(fcSumA - fcSumB) < (fcSumA + fcSumB) * 0.02
+                    ? "roughly even"
+                    : fcSumA > fcSumB
+                      ? `Side A favored by ${Math.round(fcSumA - fcSumB).toLocaleString()}`
+                      : `Side B favored by ${Math.round(fcSumB - fcSumA).toLocaleString()}`}
+                  {" "}— a second, independently-sourced opinion, not part of the verdict above
+                </div>
+              )}
             </>
           )}
           {missingCount > 0 && (
@@ -191,6 +232,7 @@ function TradeSide({
   accent,
   other,
   values,
+  fcValues,
 }: {
   title: string;
   picks: Player[];
@@ -198,6 +240,7 @@ function TradeSide({
   accent: string;
   other: Player[];
   values: Record<string, TradeValueResult>;
+  fcValues: FantasyCalcMaps | null;
 }) {
   const [q, setQ] = useState("");
   const chosen = new Set([...picks, ...other].map((p) => p.name));
@@ -215,6 +258,9 @@ function TradeSide({
   };
   const remove = (n: string) => setPicks(picks.filter((p) => p.name !== n));
   const sideTotal = picks.reduce((s, p) => s + (values[p.name]?.value ?? 0), 0);
+  const fcSideTotal = fcValues
+    ? picks.reduce((s, p) => s + fantasyCalcValue(fcValues, p), 0)
+    : 0;
 
   return (
     <div className="side">
@@ -222,6 +268,9 @@ function TradeSide({
         <h4 style={{ color: accent }}>{title}</h4>
         {picks.length > 0 && <span className="sidetotal">{sideTotal.toFixed(1)} pts</span>}
       </div>
+      {picks.length > 0 && fcValues && fcSideTotal > 0 && (
+        <div className="sidetotal-fc">FantasyCalc: {Math.round(fcSideTotal).toLocaleString()}</div>
+      )}
       {picks.length === 0 && <p className="sideempty">No players added yet</p>}
       {picks.map((p) => {
         const v = values[p.name];
@@ -233,6 +282,11 @@ function TradeSide({
             </span>
             <span className="plname">{p.name}</span>
             <span className="val">{v ? v.value.toFixed(1) : "—"}</span>
+            {fcValues && (
+              <span className="val-fc" title="FantasyCalc's own value, via fantasycalc.com">
+                FC {Math.round(fantasyCalcValue(fcValues, p)) || "—"}
+              </span>
+            )}
             <button className="x" onClick={() => remove(p.name)} aria-label={`Remove ${p.name}`}>
               ✕
             </button>

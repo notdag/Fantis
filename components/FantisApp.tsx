@@ -20,6 +20,7 @@ import Trade from "@/components/Trade";
 import StartSit from "@/components/StartSit";
 import WaiverWire from "@/components/WaiverWire";
 import Portfolio from "@/components/Portfolio";
+import PixelLoader from "@/components/PixelLoader";
 
 type Tab = "leagues" | "rankings" | "trade" | "startsit" | "portfolio";
 
@@ -178,14 +179,7 @@ export default function FantisApp() {
                         ))}
                       </select>
                       <button className="btn" onClick={sync} disabled={loading}>
-                        {loading ? (
-                          <>
-                            <span className="spin" />
-                            Syncing
-                          </>
-                        ) : (
-                          "Sync league"
-                        )}
+                        {loading ? <PixelLoader label="Syncing" tone="onAccent" /> : "Sync league"}
                       </button>
                     </div>
                     <div className="plat">

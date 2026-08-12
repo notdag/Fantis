@@ -60,17 +60,19 @@ export interface ExposureRow {
   leagueNames: string[];
 }
 
-// A real pending trade offer, filtered from Sleeper's own transaction log —
-// see the fetch effect below for the "which weeks do we check" tradeoff.
-// Informational only: Fantis has no write access to Sleeper (read-only
-// public API, no OAuth — see CLAUDE.md), so there's no in-app accept/
-// decline, just a real "here's what's waiting on you" surface.
-export interface PendingTradeRow {
+// A real trade offer someone else sent you, pulled from Sleeper's own
+// transaction log — see the fetch effect below for the "which weeks do we
+// check" tradeoff. Informational only: Fantis has no write access to
+// Sleeper (read-only public API, no OAuth — see CLAUDE.md), so there's no
+// in-app accept/decline, just a real, clickable "here's what you've been
+// sent" surface.
+export interface TradeRow {
   leagueId: string;
   leagueName: string;
   transactionId: string;
   createdAt: number;
-  waitingOnMe: boolean; // my roster hasn't consented yet
+  status: string; // "pending" | "complete" | "failed" — Sleeper's own status
+  waitingOnMe: boolean; // only meaningful while status is "pending"
   otherTeamName: string;
   myGets: string[];
   myGives: string[];
@@ -139,7 +141,12 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
     let cancelled = false;
     getState()
       .then((s) => {
-        if (!cancelled) setCurrentLeg(s.leg);
+        // Sleeper's "leg" lags behind "week" during preseason (leg stays 0
+        // while week already reads 1, confirmed against real transaction
+        // data — trades made before week 1 kicks off are still filed under
+        // round 1, not round 0). Use whichever is higher so early-season
+        // trades aren't missed.
+        if (!cancelled) setCurrentLeg(Math.max(s.week, s.leg));
       })
       .catch(() => {});
     return () => {
@@ -147,19 +154,21 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
     };
   }, []);
 
-  // Pending trades: only checked once rosters (for myRoster's real
-  // roster_id per league) and the current leg are both known. Scans just
-  // the current leg and the one before it — a real, bounded window rather
-  // than every week of the season, since a trade sitting unresolved for
-  // more than a week or two is rare and this keeps request count sane
-  // across 60+ leagues. A trade proposed further back that's still
-  // unresolved would be missed; documented tradeoff, not silently wrong.
+  // Trades received: only checked once rosters (for myRoster's real
+  // roster_id per league) and the current leg are both known. Scans every
+  // round from week 0 through the current leg for each league — real, full
+  // season-to-date coverage rather than a narrow recent-only window. Right
+  // now (preseason/early season) that's 1-2 rounds per league; it grows as
+  // the season goes, up to a real ceiling of 18 rounds x however many
+  // leagues you're in by season's end. Kept as one Promise.all rather than
+  // batching, since the browser's own per-origin connection limit already
+  // throttles this — documented cost, not silently unbounded.
   useEffect(() => {
     if (currentLeg == null || myUserId == null) return;
     const leagueEntries = Object.entries(rostersByLeague);
     if (leagueEntries.length === 0) return;
     let cancelled = false;
-    const rounds = [...new Set([Math.max(0, currentLeg - 1), currentLeg])];
+    const rounds = Array.from({ length: currentLeg + 1 }, (_, i) => i);
 
     Promise.all(
       leagueEntries.map(async ([leagueId, rosters]) => {
@@ -168,15 +177,16 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
         const perRound = await Promise.all(
           rounds.map((r) => getTransactions(leagueId, r).catch((): SleeperTransaction[] => []))
         );
-        const pending = perRound
+        // "Received" = someone else proposed it, not trades I sent myself.
+        const received = perRound
           .flat()
           .filter(
             (t) =>
               t.type === "trade" &&
-              t.status === "pending" &&
+              t.creator !== myUserId &&
               (t.roster_ids ?? []).includes(myRoster.roster_id)
           );
-        return [leagueId, pending] as const;
+        return [leagueId, received] as const;
       })
     ).then((results) => {
       if (cancelled) return;
@@ -190,7 +200,7 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
     };
   }, [currentLeg, myUserId, rostersByLeague]);
 
-  // Team names for the leagues that actually have a pending trade, not
+  // Team names for the leagues that actually have a received trade, not
   // every league — the vast majority won't, so this avoids a wasted
   // getLeagueUsers call per league on every load.
   useEffect(() => {
@@ -379,8 +389,8 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
     return { overview, exposure, recordSnapshot, positionalDepth };
   }, [pmap, myUserId, leagues, rostersByLeague, playerByName, values, fcValues]);
 
-  const pendingTrades = useMemo(() => {
-    const rows: PendingTradeRow[] = [];
+  const receivedTrades = useMemo(() => {
+    const rows: TradeRow[] = [];
     if (!pmap || !myUserId) return rows;
 
     const playerName = (id: string) => pmap[id]?.n ?? id;
@@ -413,6 +423,7 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
           leagueName: lg.name,
           transactionId: t.transaction_id,
           createdAt: t.created,
+          status: t.status,
           waitingOnMe,
           otherTeamName,
           myGets,
@@ -426,7 +437,7 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
 
   return {
     ...data,
-    pendingTrades,
+    receivedTrades,
     loading,
     error,
     leaguesLoaded: Object.keys(rostersByLeague).length,

@@ -78,6 +78,7 @@ export interface SleeperTransaction {
   type: string; // "trade" | "waiver" | "free_agent"
   status: string; // "pending" | "complete" | "failed"
   created: number; // ms epoch
+  creator: string | null; // user_id who proposed it
   roster_ids: number[] | null;
   consenter_ids: number[] | null;
   adds: Record<string, number> | null;

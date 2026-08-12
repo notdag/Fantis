@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { posChipStyle } from "@/lib/players";
 import { usePortfolio } from "@/lib/usePortfolio";
 import SortHeader from "@/components/SortHeader";
+import PixelLoader from "@/components/PixelLoader";
 import type { SleeperLeague } from "@/lib/types";
 
 type ExposureSortKey = "name" | "pos" | "value" | "portfolioValue" | "exposure" | "injured";
@@ -54,7 +55,7 @@ export default function Portfolio({
     exposure,
     recordSnapshot,
     positionalDepth,
-    pendingTrades,
+    receivedTrades,
     loading,
     error,
     leaguesLoaded,
@@ -62,6 +63,9 @@ export default function Portfolio({
   } = usePortfolio(leagues, myUserId);
   const [showAllLeagues, setShowAllLeagues] = useState(false);
   const [exposureView, setExposureView] = useState<"map" | "table">("map");
+  const [posFilter, setPosFilter] = useState<"ALL" | (typeof POSITIONS)[number]>("ALL");
+  const [injuredOnly, setInjuredOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [expSortBy, setExpSortBy] = useState<ExposureSortKey>("exposure");
   const [expSortDir, setExpSortDir] = useState<SortDir>("desc");
 
@@ -74,9 +78,19 @@ export default function Portfolio({
     }
   };
 
+  const filteredExposure = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return exposure.filter(
+      (r) =>
+        (posFilter === "ALL" || r.pos === posFilter) &&
+        (!injuredOnly || !!r.inj) &&
+        (!q || r.name.toLowerCase().includes(q))
+    );
+  }, [exposure, posFilter, injuredOnly, searchQuery]);
+
   const sortedExposure = useMemo(() => {
     const dir = expSortDir === "asc" ? 1 : -1;
-    const rows = [...exposure];
+    const rows = [...filteredExposure];
     rows.sort((a, b) => {
       switch (expSortBy) {
         case "name":
@@ -105,7 +119,7 @@ export default function Portfolio({
       }
     });
     return rows;
-  }, [exposure, expSortBy, expSortDir]);
+  }, [filteredExposure, expSortBy, expSortDir]);
 
   if (leagues.length === 0) {
     return (
@@ -130,7 +144,10 @@ export default function Portfolio({
         </div>
         {loading && (
           <p className="hint">
-            <span className="spin" /> Loading rosters across your leagues… ({leaguesLoaded}/{leaguesTotal})
+            <PixelLoader
+              label={`Loading rosters across your leagues… (${leaguesLoaded}/${leaguesTotal})`}
+              showElapsed
+            />
           </p>
         )}
         {error && <p className="hint">{error}</p>}
@@ -183,41 +200,48 @@ export default function Portfolio({
         <div className="sechead">
           <h2 style={{ fontSize: 18 }}>Trade inbox</h2>
           <span className="rt">
-            {pendingTrades.length > 0
-              ? `${pendingTrades.length} pending across your leagues`
-              : "Checks the current week"}
+            {receivedTrades.length > 0
+              ? `${receivedTrades.length} received this season`
+              : "Real offers you've received"}
           </span>
         </div>
-        {pendingTrades.length > 0 ? (
+        {receivedTrades.length > 0 ? (
           <div className="tradeinbox">
-            {pendingTrades.map((t) => (
+            {receivedTrades.map((t) => (
               <button
                 key={t.transactionId}
                 className="tradeinboxrow"
                 onClick={() => onOpenLeague(leagues.find((l) => l.league_id === t.leagueId)!)}
               >
                 <span className="tname">{t.leagueName}</span>
-                <span className={`tradeinboxstatus ${t.waitingOnMe ? "on-you" : ""}`}>
-                  {t.waitingOnMe ? "Waiting on you" : "Waiting on them"}
+                <span className={`tradeinboxstatus ${t.status === "pending" && t.waitingOnMe ? "on-you" : ""}`}>
+                  {t.status === "pending"
+                    ? t.waitingOnMe
+                      ? "Waiting on you"
+                      : "Waiting on them"
+                    : t.status === "complete"
+                      ? "Accepted"
+                      : "Declined"}
                 </span>
                 <span className="tradeinboxswap">
                   <span className="get">+{t.myGets.join(", ") || "—"}</span>
                   <span className="give">−{t.myGives.join(", ") || "—"}</span>
                 </span>
-                <span className="portmeta">vs {t.otherTeamName}</span>
+                <span className="portmeta">from {t.otherTeamName}</span>
               </button>
             ))}
           </div>
         ) : (
           <p className="hint">
-            No pending trade offers right now — checks the current and prior week across every
-            synced league.
+            No trade offers from other teams found yet this season, across any synced league.
           </p>
         )}
         <p className="hint" style={{ marginTop: 10 }}>
-          Real pending offers from Sleeper&rsquo;s own transaction log. Informational only — Fantis
-          can&rsquo;t accept or decline on your behalf (read-only, no account access); open the
-          league to respond in Sleeper.
+          Every real trade another manager has sent you this season, from Sleeper&rsquo;s own
+          transaction log — accepted, declined, and still-pending offers alike. Doesn&rsquo;t
+          include trades you proposed yourself. Informational only — Fantis can&rsquo;t accept or
+          decline on your behalf (read-only, no account access); open the league to respond in
+          Sleeper.
         </p>
       </section>
 
@@ -304,10 +328,43 @@ export default function Portfolio({
           </div>
         </div>
 
+        <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
+          <input
+            className="input"
+            placeholder="Search players…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ maxWidth: 220 }}
+          />
+          <button
+            className={`chip-filter ${posFilter === "ALL" ? "on" : ""}`}
+            onClick={() => setPosFilter("ALL")}
+          >
+            All
+          </button>
+          {POSITIONS.map((p) => (
+            <button
+              key={p}
+              className={`chip-filter ${posFilter === p ? "on" : ""}`}
+              onClick={() => setPosFilter(p)}
+            >
+              {p}
+            </button>
+          ))}
+          <button
+            className={`chip-filter ${injuredOnly ? "on" : ""}`}
+            onClick={() => setInjuredOnly((v) => !v)}
+            style={{ marginLeft: 8 }}
+          >
+            Injured only
+          </button>
+        </div>
+
         {exposureView === "map" ? (
           <div className="exposuregroups">
             {POSITIONS.map((pos) => {
-              const rows = exposure.filter((r) => r.pos === pos);
+              if (posFilter !== "ALL" && posFilter !== pos) return null;
+              const rows = filteredExposure.filter((r) => r.pos === pos);
               if (rows.length === 0) return null;
               // Bubble diameter scales with real exposure count, relative to
               // this position's own max — real magnitude, not a fixed grid.
@@ -360,7 +417,11 @@ export default function Portfolio({
                 </div>
               );
             })}
-            {exposure.length === 0 && !loading && <p className="hint">No rostered players found yet.</p>}
+            {filteredExposure.length === 0 && !loading && (
+              <p className="hint">
+                {exposure.length === 0 ? "No rostered players found yet." : "No players match these filters."}
+              </p>
+            )}
           </div>
         ) : (
           <div className="logtable">
@@ -416,10 +477,12 @@ export default function Portfolio({
                     </td>
                   </tr>
                 ))}
-                {exposure.length === 0 && !loading && (
+                {sortedExposure.length === 0 && !loading && (
                   <tr>
                     <td colSpan={7} className="trempty">
-                      No rostered players found yet.
+                      {exposure.length === 0
+                        ? "No rostered players found yet."
+                        : "No players match these filters."}
                     </td>
                   </tr>
                 )}

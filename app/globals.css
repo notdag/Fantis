@@ -63,8 +63,8 @@ h1.big span{color:var(--amber)}
 .select{background:var(--ink);border:1px solid var(--line);color:var(--bone);border-radius:8px;padding:11px 10px;font-size:14px}
 .select.sm{padding:5px 8px;font-size:12.5px}
 .btn{appearance:none;border:0;cursor:pointer;border-radius:8px;
-  font-weight:600;font-size:14px;padding:11px 18px;
-  background:var(--amber);color:#10131A}
+  font-weight:600;font-size:14px;padding:11px 18px;display:inline-flex;align-items:center;
+  justify-content:center;background:var(--amber);color:#10131A}
 .btn:hover{filter:brightness(1.08)}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.ghost{background:transparent;color:var(--bone);border:1px solid var(--line)}
@@ -239,9 +239,12 @@ h1.big span{color:var(--amber)}
 .sidehead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
 .sidehead h4{margin:0;font-size:14px;font-weight:600}
 .sidetotal{font-size:13px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}
+.sidetotal-fc{font-size:11.5px;color:var(--dim);text-align:right;margin:-6px 0 8px;
+  font-variant-numeric:tabular-nums}
 .sideempty{margin:0 0 10px;font-size:12.5px;color:var(--dim)}
 .picked{display:flex;align-items:center;gap:8px;background:var(--ink);border:1px solid var(--line);
   border-radius:8px;padding:7px 9px;margin-bottom:7px}
+.val-fc{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
 .picked .val{margin-left:auto;font-variant-numeric:tabular-nums}
 .x{cursor:pointer;color:var(--dim);border:0;background:0;font-size:15px;padding:0 2px}
 .x:hover{color:var(--red)}
@@ -259,6 +262,8 @@ h1.big span{color:var(--amber)}
 .vbar{height:10px;border-radius:999px;background:var(--line-soft);border:1px solid var(--line);overflow:hidden;display:flex}
 .vfill{height:100%;transition:width .5s cubic-bezier(.2,.8,.2,1)}
 .vlabel{text-align:center;margin-top:12px;font-size:16px;font-weight:600}
+.vlabel-fc{text-align:center;margin-top:8px;font-size:12px;color:var(--dim)}
+.vlabel-fc a{color:var(--dim);text-decoration:underline}
 
 /* rankings: click-to-expand player panel */
 .rankgrid{display:grid;grid-template-columns:1fr;gap:20px;align-items:start}
@@ -653,6 +658,21 @@ h1.big span{color:var(--amber)}
 .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.18);border-top-color:var(--amber);
   border-radius:50%;display:inline-block;animation:sp .7s linear infinite;vertical-align:-3px;margin-right:7px}
 @keyframes sp{to{transform:rotate(360deg)}}
+
+/* Pixel-grid loader — components/PixelLoader.tsx. "on-accent" swaps to the
+   button's dark ink tone so it reads on an amber background instead of ink. */
+.pixelloader{display:inline-flex;align-items:center;gap:8px;vertical-align:-3px}
+.pixelloadergrid{display:inline-grid;grid-template-columns:repeat(3,4px);gap:1.5px}
+.pixelloadercell{width:4px;height:4px;border-radius:1px;background:var(--amber);opacity:.15;
+  animation:pixel-on 650ms ease-in-out infinite}
+.pixelloader.on-accent .pixelloadercell{background:#10131A}
+.pixelloaderlabel{font-size:13px;font-weight:500;color:var(--muted);
+  animation:label-pulse 1.4s ease-in-out infinite}
+.pixelloader.on-accent .pixelloaderlabel{color:rgba(16,19,26,.7)}
+.pixelloaderelapsed{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.pixelloader.on-accent .pixelloaderelapsed{color:rgba(16,19,26,.7)}
+@keyframes pixel-on{0%,100%{opacity:.15}50%{opacity:1}}
+@keyframes label-pulse{0%,100%{opacity:.6}50%{opacity:1}}
 a.link{color:var(--amber);text-decoration:none}
 a.link:hover{text-decoration:underline}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
