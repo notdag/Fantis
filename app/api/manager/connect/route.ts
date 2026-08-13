@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
-import { getUser, getState } from "@/lib/sleeper";
+import { getUser, getState, currentProjectionWeek } from "@/lib/sleeper";
 import { syncAccount } from "@/lib/managerSync";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
@@ -29,6 +29,7 @@ export async function POST(req: Request) {
 
   const state = await getState().catch(() => null);
   const season = state?.season ?? new Date().getFullYear().toString();
+  const week = state ? currentProjectionWeek(state) : 1;
 
   await db.sleeperAccount.upsert({
     where: { id: user.user_id },
@@ -40,7 +41,7 @@ export async function POST(req: Request) {
     data: { accountId: user.user_id, status: "running" },
   });
 
-  const result = await syncAccount(user.user_id, season);
+  const result = await syncAccount(user.user_id, season, week);
 
   const status = result.fatal ? "failed" : result.leaguesFailed > 0 ? "partial_failure" : "success";
   await db.syncRun.update({

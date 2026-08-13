@@ -146,6 +146,10 @@ model League {
   lastSyncedAt DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
+  roster       Roster?
+  matchups     Matchup[]
+  drafts       Draft[]
+  alerts       Alert[]
 
   @@index([accountId])
 }
@@ -168,5 +172,74 @@ model SyncRun {
   @@index([startedAt])
 }
 
-// Phase 2 forward note only (not designed here): Roster, Matchup,
-// Transaction, Draft, and Alert models will hang off League.id later.
+// My own roster only, per league — this is the input to lineup alerts,
+// not a league-standings mirror (every other team's roster is out of
+// scope). leagueId is the primary key (1:1); Sleeper's own roster_id is
+// only unique *within* a league, so it can't be the PK on its own.
+model Roster {
+  leagueId     String    @id
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId     Int // Sleeper's roster_id within this league
+  starters     String[] // "0" = Sleeper's real empty-slot placeholder
+  players      String[]
+  wins         Int       @default(0)
+  losses       Int       @default(0)
+  ties         Int       @default(0)
+  fpts         Float?
+  fptsAgainst  Float?
+  lastSyncedAt DateTime?
+}
+
+// One row per league per week — my side + resolved opponent. Only synced
+// for status "in_season" (pre_draft/drafting leagues have no real matchup
+// yet).
+model Matchup {
+  id               String    @id @default(cuid())
+  leagueId         String
+  league           League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week             Int
+  myRosterId       Int
+  myMatchupId      Int
+  myPoints         Float
+  opponentRosterId Int?
+  opponentTeamName String?
+  opponentPoints   Float?
+  lastSyncedAt     DateTime?
+
+  @@unique([leagueId, week])
+  @@index([leagueId])
+}
+
+// Lightweight — real fields only, enough for "upcoming drafts"/"draft status".
+model Draft {
+  id           String    @id // Sleeper draft_id
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  status       String // Sleeper's own value: pre_draft | drafting | complete
+  type         String?
+  startTime    DateTime?
+  lastSyncedAt DateTime?
+
+  @@index([leagueId])
+}
+
+// Regenerated wholesale every sync (delete this league's rows, reinsert
+// the freshly computed set) — simplest correct approach, no incremental
+// dedup/read-state tracking.
+model Alert {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  type      String // injured_starter | empty_slot | bye_starter | draft_upcoming | trade_deadline_upcoming | unclaimed_team
+  severity  String // action_required | review
+  message   String // full human-readable text, built at compute time
+  playerId  String?
+  week      Int
+  createdAt DateTime @default(now())
+
+  @@index([leagueId])
+}
+
+// Phase 2b forward note only (not designed here): Transaction sync is
+// deferred — the main Fantis app already has a working real trade-inbox
+// feature client-side (lib/usePortfolio.ts).

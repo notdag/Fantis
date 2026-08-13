@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
-import { getState } from "@/lib/sleeper";
+import { getState, currentProjectionWeek } from "@/lib/sleeper";
 import { syncAccount, type SyncError } from "@/lib/managerSync";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
@@ -33,6 +33,7 @@ export async function POST(req: Request) {
 
   const state = await getState().catch(() => null);
   const season = state?.season ?? new Date().getFullYear().toString();
+  const week = state ? currentProjectionWeek(state) : 1;
 
   const run = await db.syncRun.create({
     data: { accountId: scopedAccountId, status: "running" },
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
   const errors: (SyncError | { message: string })[] = [];
 
   for (const account of accounts) {
-    const result = await syncAccount(account.id, season);
+    const result = await syncAccount(account.id, season, week);
     if (result.fatal) {
       errors.push({ message: `${account.username}: ${result.fatal}` });
       continue;

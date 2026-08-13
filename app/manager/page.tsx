@@ -4,7 +4,7 @@ import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import AdminLogin from "@/components/AdminLogin";
 import ManagerDashboard from "@/components/manager/ManagerDashboard";
 import { db } from "@/lib/db";
-import type { ManagedAccount, ManagedLeague, ManagedSyncRun } from "@/lib/manager";
+import type { ManagedAccount, ManagedAlert, ManagedDraft, ManagedLeague, ManagedSyncRun } from "@/lib/manager";
 
 // Not linked from the main nav and not indexable — same spirit as /admin.
 export const metadata: Metadata = {
@@ -52,10 +52,12 @@ async function ManagerContent() {
     );
   }
 
-  const [accountRows, leagueRows, lastRunRow] = await Promise.all([
+  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows] = await Promise.all([
     db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
     db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
     db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
+    db.alert.findMany({ orderBy: { createdAt: "asc" } }),
+    db.draft.findMany(),
   ]);
 
   const accounts: ManagedAccount[] = accountRows.map((a) => ({
@@ -91,5 +93,37 @@ async function ManagerContent() {
       }
     : null;
 
-  return <ManagerDashboard accounts={accounts} leagues={leagues} lastRun={lastRun} />;
+  const alertsByLeague: Record<string, ManagedAlert[]> = {};
+  for (const a of alertRows) {
+    const alert: ManagedAlert = {
+      id: a.id,
+      type: a.type,
+      severity: a.severity as "action_required" | "review",
+      message: a.message,
+      playerId: a.playerId,
+      week: a.week,
+      createdAt: a.createdAt.toISOString(),
+    };
+    (alertsByLeague[a.leagueId] ??= []).push(alert);
+  }
+
+  const draftsByLeague: Record<string, ManagedDraft> = {};
+  for (const d of draftRows) {
+    draftsByLeague[d.leagueId] = {
+      id: d.id,
+      status: d.status,
+      type: d.type,
+      startTime: d.startTime?.toISOString() ?? null,
+    };
+  }
+
+  return (
+    <ManagerDashboard
+      accounts={accounts}
+      leagues={leagues}
+      lastRun={lastRun}
+      alertsByLeague={alertsByLeague}
+      draftsByLeague={draftsByLeague}
+    />
+  );
 }

@@ -85,6 +85,24 @@ export interface SleeperTransaction {
   drops: Record<string, number> | null;
 }
 
+// Narrow shapes for Sleeper Manager's Phase 2 sync (lib/managerSync.ts) —
+// cast from getMatchups/getDraft's loosely-typed real payloads at the call
+// site, rather than typing those fetches themselves (full shapes aren't
+// pinned down, same reasoning as getLeagueRaw).
+export interface SleeperMatchupRow {
+  roster_id: number;
+  matchup_id: number | null;
+  starters: string[] | null;
+  points: number;
+}
+
+export interface SleeperDraftRaw {
+  status: string; // pre_draft | drafting | complete
+  type?: string;
+  start_time?: number; // ms epoch
+  league_id: string;
+}
+
 export interface SleeperProjectionEntry {
   adp_dd_ppr?: number;
   pts_ppr?: number;

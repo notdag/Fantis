@@ -35,6 +35,43 @@ export interface ManagedSyncRun {
   leaguesFailed: number;
 }
 
+export interface ManagedRoster {
+  leagueId: string;
+  rosterId: number;
+  starters: string[];
+  players: string[];
+  wins: number;
+  losses: number;
+  ties: number;
+  fpts: number | null;
+  fptsAgainst: number | null;
+  lastSyncedAt: string | null;
+}
+
+export interface ManagedMatchup {
+  week: number;
+  myPoints: number;
+  opponentTeamName: string | null;
+  opponentPoints: number | null;
+}
+
+export interface ManagedDraft {
+  id: string;
+  status: string;
+  type: string | null;
+  startTime: string | null;
+}
+
+export interface ManagedAlert {
+  id: string;
+  type: string;
+  severity: "action_required" | "review";
+  message: string;
+  playerId: string | null;
+  week: number;
+  createdAt: string;
+}
+
 // Sleeper's own league status values, verbatim. Not re-validated against an
 // enum in the DB (see prisma/schema.prisma) so an unrecognized future value
 // from Sleeper just falls through to the default color below instead of
@@ -84,4 +121,39 @@ export function formatRelative(iso: string | null | undefined): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+// A real "all clear" state is UI-only (absence of any Alert row for a
+// league) — not a stored severity value, so it isn't in AlertSeverity.
+const SEVERITY_COLOR: Record<string, string> = {
+  action_required: "var(--red)",
+  review: "var(--amber)",
+  clear: "var(--mint)",
+};
+
+export function alertSeverityChipStyle(severity: string) {
+  const c = SEVERITY_COLOR[severity] ?? "var(--muted)";
+  return {
+    color: c,
+    background: `color-mix(in srgb, ${c} 20%, transparent)`,
+    borderColor: `color-mix(in srgb, ${c} 52%, transparent)`,
+  };
+}
+
+// A future date, formatted the way the dashboard's "Upcoming Drafts"
+// section needs it ("Today 7:00 PM" / "Tomorrow 7:00 PM" / "Thu 7:00 PM").
+export function formatUpcoming(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(date) - startOfDay(now)) / dayMs);
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  if (diffDays === 0) return `Today ${time}`;
+  if (diffDays === 1) return `Tomorrow ${time}`;
+  if (diffDays > 1 && diffDays < 7) {
+    return `${date.toLocaleDateString("en-US", { weekday: "short" })} ${time}`;
+  }
+  return `${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${time}`;
 }

@@ -47,6 +47,16 @@ export const getLeagueUsers = (leagueId: string) =>
 export const getLeagueRaw = (leagueId: string) =>
   jget<Record<string, unknown>>(`${S}/league/${leagueId}`);
 
+// Real, populated even before games start — a team's real starters/points
+// for one week (see Sleeper Manager's alert engine, lib/managerAlerts.ts).
+// Loosely typed like getLeagueRaw; managerSync.ts casts to the narrow
+// SleeperMatchupRow shape it actually reads.
+export const getMatchups = (leagueId: string, week: number) =>
+  jget<Record<string, unknown>[]>(`${S}/league/${leagueId}/matchups/${week}`);
+
+export const getDraft = (draftId: string) =>
+  jget<Record<string, unknown>>(`${S}/draft/${draftId}`);
+
 // Real trade/waiver/free-agent activity for one league, filed under the
 // week ("round"/"leg") it was created — see Portfolio's trade inbox
 // (lib/usePortfolio.ts), which scans a small window of recent legs rather

@@ -5,7 +5,7 @@ import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import AdminLogin from "@/components/AdminLogin";
 import LeagueDetail from "@/components/manager/LeagueDetail";
 import { db } from "@/lib/db";
-import type { ManagedLeague } from "@/lib/manager";
+import type { ManagedAlert, ManagedDraft, ManagedLeague, ManagedMatchup, ManagedRoster } from "@/lib/manager";
 
 export const metadata: Metadata = {
   title: "Fantis — Sleeper Manager",
@@ -74,5 +74,55 @@ async function LeagueContent({ leagueId }: { leagueId: string }) {
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
   };
 
-  return <LeagueDetail league={league} />;
+  const [rosterRow, matchupRow, alertRows, draftRow] = await Promise.all([
+    db.roster.findUnique({ where: { leagueId } }),
+    db.matchup.findFirst({ where: { leagueId }, orderBy: { week: "desc" } }),
+    db.alert.findMany({ where: { leagueId }, orderBy: { createdAt: "asc" } }),
+    db.draft.findFirst({ where: { leagueId } }),
+  ]);
+
+  const roster: ManagedRoster | null = rosterRow
+    ? {
+        leagueId: rosterRow.leagueId,
+        rosterId: rosterRow.rosterId,
+        starters: rosterRow.starters,
+        players: rosterRow.players,
+        wins: rosterRow.wins,
+        losses: rosterRow.losses,
+        ties: rosterRow.ties,
+        fpts: rosterRow.fpts,
+        fptsAgainst: rosterRow.fptsAgainst,
+        lastSyncedAt: rosterRow.lastSyncedAt?.toISOString() ?? null,
+      }
+    : null;
+
+  const matchup: ManagedMatchup | null = matchupRow
+    ? {
+        week: matchupRow.week,
+        myPoints: matchupRow.myPoints,
+        opponentTeamName: matchupRow.opponentTeamName,
+        opponentPoints: matchupRow.opponentPoints,
+      }
+    : null;
+
+  const alerts: ManagedAlert[] = alertRows.map((a) => ({
+    id: a.id,
+    type: a.type,
+    severity: a.severity as "action_required" | "review",
+    message: a.message,
+    playerId: a.playerId,
+    week: a.week,
+    createdAt: a.createdAt.toISOString(),
+  }));
+
+  const draft: ManagedDraft | null = draftRow
+    ? {
+        id: draftRow.id,
+        status: draftRow.status,
+        type: draftRow.type,
+        startTime: draftRow.startTime?.toISOString() ?? null,
+      }
+    : null;
+
+  return <LeagueDetail league={league} roster={roster} matchup={matchup} alerts={alerts} draft={draft} />;
 }
