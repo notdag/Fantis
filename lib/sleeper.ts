@@ -39,6 +39,14 @@ export const getLeagueDetail = (leagueId: string) =>
 export const getLeagueUsers = (leagueId: string) =>
   jget<SleeperLeagueUser[]>(`${S}/league/${leagueId}/users`);
 
+// Full, unshaped GET /league/{id} response — same real endpoint as
+// getLeagueDetail above, but kept loosely typed and used by Sleeper
+// Manager's sync (lib/managerSync.ts), which stores the whole payload
+// verbatim rather than picking out specific fields ahead of time. Doesn't
+// touch getLeagueDetail's existing typed call site in Start/Sit.
+export const getLeagueRaw = (leagueId: string) =>
+  jget<Record<string, unknown>>(`${S}/league/${leagueId}`);
+
 // Real trade/waiver/free-agent activity for one league, filed under the
 // week ("round"/"leg") it was created — see Portfolio's trade inbox
 // (lib/usePortfolio.ts), which scans a small window of recent legs rather

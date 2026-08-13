@@ -3,12 +3,12 @@
 // Claude Code will run migrations from it. You don't need to edit it by hand.
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ---------------------------------------------------------------------------
@@ -105,3 +105,68 @@ model RankingPlayer {
 
   @@unique([name, season])
 }
+
+// ---------------------------------------------------------------------------
+// Sleeper Manager (owner-only, gated by ADMIN_PASSPHRASE — see
+// lib/adminAuth.ts). No relation to User above: single-owner tool, not
+// multi-user. Do not FK to User without a real auth decision first.
+// ---------------------------------------------------------------------------
+
+// A Sleeper username the owner has connected. id IS the Sleeper user_id
+// (Sleeper serializes its own numeric ids as strings specifically to avoid
+// JS float-precision loss, so this uses that value directly rather than a
+// surrogate key). More than one account is supported (alts, dynasty vs
+// redraft logins, etc).
+model SleeperAccount {
+  id           String    @id // Sleeper user_id
+  username     String // last-known username used to resolve this account (Sleeper usernames are mutable; id is the stable identifier)
+  displayName  String?
+  connectedAt  DateTime  @default(now())
+  lastSyncedAt DateTime?
+  leagues      League[]
+  syncRuns     SyncRun[]
+}
+
+// One Sleeper league, keyed by Sleeper's own league_id directly.
+model League {
+  id           String         @id // Sleeper league_id
+  accountId    String
+  account      SleeperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name         String
+  season       String // current season only in Phase 1
+  totalRosters Int
+  status       String // Sleeper's own value verbatim: pre_draft | drafting | in_season | complete
+  sport        String         @default("nfl")
+  // Full raw GET /league/{id} response (Sleeper's settings sub-object,
+  // scoring_settings, roster_positions, draft_id, avatar, etc). Not
+  // normalized into columns — large and variable; every reader accesses a
+  // sub-field defensively. Null only transiently between the initial
+  // "connect" summary upsert and that league's first detail-sync pass.
+  settings     Json?
+  lastSyncedAt DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([accountId])
+}
+
+// One sync attempt (today: the manual "Sync now" button; same code path a
+// future cron would call). accountId null = ran across every account.
+model SyncRun {
+  id            String          @id @default(cuid())
+  accountId     String?
+  account       SleeperAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  startedAt     DateTime        @default(now())
+  finishedAt    DateTime?
+  status        String          @default("running") // running | success | partial_failure | failed
+  leaguesSeen   Int             @default(0)
+  leaguesOk     Int             @default(0)
+  leaguesFailed Int             @default(0)
+  errors        Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
+
+  @@index([accountId])
+  @@index([startedAt])
+}
+
+// Phase 2 forward note only (not designed here): Roster, Matchup,
+// Transaction, Draft, and Alert models will hang off League.id later.
