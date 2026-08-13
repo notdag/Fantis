@@ -9,6 +9,7 @@ import {
   formatRelative,
   formatUpcoming,
   alertSeverityChipStyle,
+  automationConnected,
   type ManagedAccount,
   type ManagedAlert,
   type ManagedDraft,
@@ -27,13 +28,16 @@ export default function ManagerDashboard({
   lastRun,
   alertsByLeague,
   draftsByLeague,
+  automationLastPingAt,
 }: {
   accounts: ManagedAccount[];
   leagues: ManagedLeague[];
   lastRun: ManagedSyncRun | null;
   alertsByLeague: Record<string, ManagedAlert[]>;
   draftsByLeague: Record<string, ManagedDraft>;
+  automationLastPingAt: string | null;
 }) {
+  const connected = automationConnected(automationLastPingAt);
   const router = useRouter();
 
   const [username, setUsername] = useState("");
@@ -216,6 +220,24 @@ export default function ManagerDashboard({
                 {" "}
                 · last run: {lastRun.status} ({lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues ok
                 {lastRun.leaguesFailed > 0 ? `, ${lastRun.leaguesFailed} failed` : ""})
+              </>
+            )}
+          </div>
+          <div className="hint" style={{ marginTop: 4 }}>
+            {connected ? (
+              <span style={{ color: "var(--mint)" }}>● Browser automation connected</span>
+            ) : (
+              <>
+                <span style={{ color: "var(--dim)" }}>○ Browser automation not connected</span> —{" "}
+                <a
+                  className="link"
+                  href="/automation/fantis-sleeper-manager.user.js"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  install the userscript
+                </a>{" "}
+                (requires Tampermonkey) to open leagues from an alert automatically.
               </>
             )}
           </div>

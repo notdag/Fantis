@@ -55,6 +55,49 @@ export default function LeagueDetail({
     };
   }, []);
 
+  // "Open via automation": queues a real Action row, then polls its status
+  // for up to ~15s. The plain "Open in Sleeper" link below never depends
+  // on this — automation is additive, never the only path to a league.
+  const [automationState, setAutomationState] = useState<
+    "idle" | "waiting" | "opened" | "failed" | "timeout"
+  >("idle");
+
+  const openViaAutomation = async () => {
+    setAutomationState("waiting");
+    try {
+      const res = await fetch("/api/manager/automation/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leagueId: league.id }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.actionId) {
+        setAutomationState("failed");
+        return;
+      }
+      const actionId = body.actionId as string;
+      const deadline = Date.now() + 15000;
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          setAutomationState("timeout");
+          return;
+        }
+        const r = await fetch(`/api/manager/automation/actions/${actionId}`).catch(() => null);
+        const b = r ? await r.json().catch(() => null) : null;
+        if (b?.action?.status === "completed") {
+          setAutomationState("opened");
+        } else if (b?.action?.status === "failed") {
+          setAutomationState("failed");
+        } else {
+          setTimeout(poll, 2000);
+        }
+      };
+      poll();
+    } catch {
+      setAutomationState("failed");
+    }
+  };
+
   const draftId = settingsField(league.settings, "draft_id");
   const avatar = settingsField(league.settings, "avatar");
   const previousLeagueId = settingsField(league.settings, "previous_league_id");
@@ -134,15 +177,32 @@ export default function LeagueDetail({
           </div>
         </div>
 
-        <a
-          className="btn"
-          style={{ marginTop: 16, display: "inline-block" }}
-          href={`https://sleeper.com/leagues/${league.id}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Open in Sleeper →
-        </a>
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <a
+            className="btn"
+            href={`https://sleeper.com/leagues/${league.id}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open in Sleeper →
+          </a>
+          <button
+            className="btn ghost"
+            onClick={openViaAutomation}
+            disabled={automationState === "waiting"}
+          >
+            {automationState === "waiting" ? "Waiting for automation…" : "Open via automation"}
+          </button>
+          {automationState === "opened" && <span style={{ color: "var(--mint)" }}>Opened ✓</span>}
+          {automationState === "failed" && (
+            <span className="hint" style={{ color: "var(--red)" }}>
+              Automation failed — use the link instead.
+            </span>
+          )}
+          {automationState === "timeout" && (
+            <span className="hint">No automation detected — install the userscript, or use the link.</span>
+          )}
+        </div>
       </section>
 
       {alerts.length > 0 && (

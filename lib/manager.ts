@@ -72,6 +72,26 @@ export interface ManagedAlert {
   createdAt: string;
 }
 
+export interface ManagedAction {
+  id: string;
+  leagueId: string;
+  status: "pending" | "approved" | "running" | "completed" | "failed" | "cancelled";
+  targetUrl: string;
+  createdAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
+// A ping older than this reads as "not connected" — the userscript pings
+// every ~5s while /manager is open, so anything past a couple of missed
+// beats means the script isn't actually running right now.
+const AUTOMATION_STALE_MS = 15000;
+
+export function automationConnected(lastPingAt: string | null | undefined): boolean {
+  if (!lastPingAt) return false;
+  return Date.now() - new Date(lastPingAt).getTime() < AUTOMATION_STALE_MS;
+}
+
 // Sleeper's own league status values, verbatim. Not re-validated against an
 // enum in the DB (see prisma/schema.prisma) so an unrecognized future value
 // from Sleeper just falls through to the default color below instead of

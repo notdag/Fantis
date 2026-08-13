@@ -52,12 +52,13 @@ async function ManagerContent() {
     );
   }
 
-  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows] = await Promise.all([
+  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow] = await Promise.all([
     db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
     db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
     db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
     db.alert.findMany({ orderBy: { createdAt: "asc" } }),
     db.draft.findMany(),
+    db.automationPing.findUnique({ where: { id: "singleton" } }),
   ]);
 
   const accounts: ManagedAccount[] = accountRows.map((a) => ({
@@ -124,6 +125,7 @@ async function ManagerContent() {
       lastRun={lastRun}
       alertsByLeague={alertsByLeague}
       draftsByLeague={draftsByLeague}
+      automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
     />
   );
 }

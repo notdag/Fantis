@@ -150,6 +150,7 @@ model League {
   matchups     Matchup[]
   drafts       Draft[]
   alerts       Alert[]
+  actions      Action[]
 
   @@index([accountId])
 }
@@ -243,3 +244,40 @@ model Alert {
 // Phase 2b forward note only (not designed here): Transaction sync is
 // deferred — the main Fantis app already has a working real trade-inbox
 // feature client-side (lib/usePortfolio.ts).
+
+// ---------------------------------------------------------------------------
+// Phase 3: browser automation (Tampermonkey userscript, see
+// automation/fantis-sleeper-manager.user.js). No consequential actions yet —
+// open_league is the only real type. Auth is a separate secret
+// (AUTOMATION_TOKEN, lib/automationAuth.ts) from the dashboard's
+// ADMIN_PASSPHRASE cookie, since the userscript's token lives in a real
+// browser session rather than behind the httpOnly-cookie boundary.
+// ---------------------------------------------------------------------------
+
+// One queued browser-automation action. Status names match the product
+// spec verbatim: pending | approved | running | completed | failed |
+// cancelled — this phase only ever uses pending -> completed/failed, since
+// opening a tab isn't consequential enough to need approval.
+model Action {
+  id          String    @id @default(cuid())
+  leagueId    String
+  league      League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  type        String    @default("open_league")
+  status      String    @default("pending")
+  targetUrl   String // the real Sleeper URL to open
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+
+  @@index([leagueId])
+  @@index([status])
+}
+
+// Singleton row (id always "singleton") — lets the dashboard show a real
+// "automation connected, last seen Ns ago" status instead of guessing.
+model AutomationPing {
+  id         String   @id @default("singleton")
+  lastPingAt DateTime @default(now())
+  userAgent  String?
+}
