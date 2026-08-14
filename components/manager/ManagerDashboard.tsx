@@ -37,14 +37,16 @@ export default function ManagerDashboard({
   draftsByLeague: Record<string, ManagedDraft>;
   automationLastPingAt: string | null;
 }) {
-  // automationConnected() depends on Date.now(), which differs between the
-  // server render and the client hydration pass a moment later — and since
-  // it drives which whole block of JSX renders (not just text), letting it
-  // differ between those two passes is a real hydration mismatch (React
-  // error #418), not just a cosmetic one. Rendering "not connected" (the
-  // same as the initial mounted=false state) on both the server pass and
-  // the client's first hydration pass keeps them identical; the real value
-  // only takes effect after hydration finishes, via this effect.
+  // Shared guard for every Date.now()-dependent render below
+  // (automationConnected, formatRelative, formatUpcoming, draftsThisWeek) —
+  // each of those differs between the server render and the client
+  // hydration pass a moment later, which is a real hydration mismatch
+  // (React error #418), not just cosmetic, when it changes DOM structure
+  // (the connected/not-connected branch) and still worth avoiding even for
+  // plain text (a relative-time string silently "jumping" on load reads as
+  // a bug). Rendering the same stable placeholder on both the server pass
+  // and the client's first hydration pass keeps them identical; real values
+  // only take effect after hydration finishes, via this effect.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
@@ -156,6 +158,11 @@ export default function ManagerDashboard({
   // do the triage, no filter click needed. Real Alert rows only — a league
   // with zero rows genuinely means "synced, nothing found," not "not
   // checked yet."
+  //
+  // draftsThisWeek below depends on Date.now(), same hydration hazard as
+  // `connected` above — gated on `mounted` (in the dependency array) so it
+  // stays 0 (matching the server render) until after hydration, then
+  // recomputes for real.
   const groups = useMemo(() => {
     const actionRequired: { league: ManagedLeague; alerts: ManagedAlert[] }[] = [];
     const commissioner: { league: ManagedLeague; alerts: ManagedAlert[] }[] = [];
@@ -178,7 +185,7 @@ export default function ManagerDashboard({
       if (draftAlert) {
         const draft = draftsByLeague[lg.id];
         upcomingDrafts.push({ league: lg, draft });
-        if (draft?.startTime) {
+        if (mounted && draft?.startTime) {
           const days = (new Date(draft.startTime).getTime() - Date.now()) / 86400000;
           if (days >= 0 && days <= 7) draftsThisWeek += 1;
         }
@@ -188,7 +195,7 @@ export default function ManagerDashboard({
     }
 
     return { actionRequired, commissioner, upcomingDrafts, review, allClear, draftsThisWeek };
-  }, [leagues, alertsByLeague, draftsByLeague]);
+  }, [leagues, alertsByLeague, draftsByLeague, mounted]);
 
   const mostRecentSync = leagues.reduce<string | null>((latest, lg) => {
     if (!lg.lastSyncedAt) return latest;
@@ -226,7 +233,7 @@ export default function ManagerDashboard({
           {connectError && <div className="err">{connectError}</div>}
           {syncError && <div className="err">{syncError}</div>}
           <div className="hint" style={{ marginTop: 8 }}>
-            Last synced {formatRelative(mostRecentSync)}
+            Last synced {mounted ? formatRelative(mostRecentSync) : "—"}
             {lastRun && (
               <>
                 {" "}
@@ -331,7 +338,7 @@ export default function ManagerDashboard({
             {groups.upcomingDrafts.map(({ league, draft }) => (
               <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
                 <span className="tname">{league.name}</span>
-                <span className="portvalue">{formatUpcoming(draft?.startTime)}</span>
+                <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
               </Link>
             ))}
           </div>
@@ -444,7 +451,7 @@ export default function ManagerDashboard({
                 <span className="pos" style={statusChipStyle(lg.status)}>
                   {statusLabel(lg.status)}
                 </span>
-                <span className="portmeta">synced {formatRelative(lg.lastSyncedAt)}</span>
+                <span className="portmeta">synced {mounted ? formatRelative(lg.lastSyncedAt) : "—"}</span>
               </Link>
             ))}
             {sorted.length === 0 && <p className="hint" style={{ padding: 16 }}>No leagues match these filters.</p>}

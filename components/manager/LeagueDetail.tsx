@@ -39,6 +39,16 @@ export default function LeagueDetail({
   alerts: ManagedAlert[];
   draft: ManagedDraft | null;
 }) {
+  // formatRelative() depends on Date.now(), which differs between the
+  // server render and the client hydration pass a moment later — rendering
+  // "—" on both the server pass and the client's first hydration pass (same
+  // reasoning as ManagerDashboard.tsx) avoids a real hydration mismatch
+  // (React error #418), then the real relative text appears right after.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // Player id -> name/position/team/injury resolved client-side, same
   // day-cached pattern as TeamHub.tsx/Portfolio.tsx — keeps live Sleeper
   // calls out of Server Components.
@@ -158,7 +168,7 @@ export default function LeagueDetail({
             <div className="portcardrows">
               <div className="portcardrow">
                 <span>Last synced</span>
-                <b>{formatRelative(league.lastSyncedAt)}</b>
+                <b>{mounted ? formatRelative(league.lastSyncedAt) : "—"}</b>
               </div>
               {typeof draftId === "string" && (
                 <div className="portcardrow">
@@ -255,7 +265,8 @@ export default function LeagueDetail({
             <h2 style={{ fontSize: 18 }}>My roster</h2>
             <span className="rt">
               {roster.wins}-{roster.losses}
-              {roster.ties > 0 ? `-${roster.ties}` : ""} · synced {formatRelative(roster.lastSyncedAt)}
+              {roster.ties > 0 ? `-${roster.ties}` : ""} · synced{" "}
+              {mounted ? formatRelative(roster.lastSyncedAt) : "—"}
             </span>
           </div>
           <RosterSection roster={roster} pmap={pmap} rosterPositions={rosterPositionsArr} />
