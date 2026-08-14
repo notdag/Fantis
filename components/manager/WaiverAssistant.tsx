@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getPlayers } from "@/lib/sleeper";
+import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
+import { IconArrowUp, IconArrowDown } from "./MgrIcons";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
@@ -15,6 +16,35 @@ export interface WaiverLeague {
 }
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
+
+function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
+  const ring = pos ? posChipStyle(pos).color : "var(--line)";
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="mgravatar"
+      src={playerPhotoUrl(playerId)}
+      alt=""
+      style={{ width: size, height: size, borderColor: ring }}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
+
+function Diff({ value }: { value: number | null }) {
+  if (value == null) return <span className="portmeta">—</span>;
+  const rounded = Math.round(value);
+  const color = rounded > 0 ? "var(--mint)" : rounded < 0 ? "var(--red)" : "var(--muted)";
+  return (
+    <span className="mgrdiff" style={{ color }}>
+      {rounded !== 0 && (rounded > 0 ? <IconArrowUp /> : <IconArrowDown />)}
+      {rounded > 0 ? "+" : ""}
+      {rounded}
+    </span>
+  );
+}
 
 export default function WaiverAssistant({
   leagues,
@@ -64,6 +94,8 @@ export default function WaiverAssistant({
     matches.sort((a, b) => a[1].n.localeCompare(b[1].n));
     return matches.slice(0, 20);
   }, [pmap, query]);
+
+  const selectedSeasonPts = selectedId ? seasonTotals?.[selectedId]?.pts ?? null : null;
 
   const candidateLeagues = useMemo(() => {
     if (!selectedId) return [];
@@ -128,18 +160,16 @@ export default function WaiverAssistant({
 
   return (
     <>
-      <section className="sec">
-        <div className="sechead">
-          <h2>Waiver Assistant</h2>
-          <a href="/manager" className="link">
-            ← Sleeper Manager
-          </a>
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="mgrhead">
+          <div className="mgraccentbar" />
+          <h1>Waiver Assistant</h1>
+          <p>
+            Search a free-agent target, see which of your leagues don&rsquo;t already have him, and
+            get a real season-points drop suggestion per league. This only opens Sleeper&rsquo;s real
+            page for you to review — it never submits a claim on its own.
+          </p>
         </div>
-        <p className="hint">
-          Search a free-agent target, see which of your leagues don&rsquo;t already have him, and
-          get a real season-points drop suggestion per league. This only opens Sleeper&rsquo;s real
-          page for you to review — it never submits a claim on its own.
-        </p>
 
         <div className="field" style={{ maxWidth: 360 }}>
           <input
@@ -154,18 +184,19 @@ export default function WaiverAssistant({
         </div>
 
         {!selectedId && searchResults.length > 0 && (
-          <div className="portoverview" style={{ marginTop: 8, maxWidth: 360 }}>
+          <div className="mgrtable" style={{ marginTop: 8, maxWidth: 400 }}>
             {searchResults.map(([id, p]) => (
               <button
                 key={id}
-                className="portoverviewrow"
-                style={{ width: "100%", textAlign: "left", border: "none", background: "none", cursor: "pointer" }}
+                className="mgrrow"
+                style={{ border: "none" }}
                 onClick={() => {
                   setSelectedId(id);
                   setQuery(p.n);
                 }}
               >
-                <span className="tname">{p.n}</span>
+                <Avatar playerId={id} pos={p.p} size={28} />
+                <span className="tname" style={{ flex: 1 }}>{p.n}</span>
                 <span className="pos" style={posChipStyle(p.p)}>
                   {p.p}
                 </span>
@@ -179,7 +210,15 @@ export default function WaiverAssistant({
       {selectedId && (
         <section className="sec">
           <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>{pmap?.[selectedId]?.n ?? selectedId}</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Avatar playerId={selectedId} pos={pmap?.[selectedId]?.p} size={40} />
+              <div>
+                <h2 style={{ fontSize: 18, margin: 0 }}>{pmap?.[selectedId]?.n ?? selectedId}</h2>
+                <span className="portmeta">
+                  {selectedSeasonPts != null ? `${Math.round(selectedSeasonPts)} proj season pts` : "no season projection"}
+                </span>
+              </div>
+            </div>
             <span className="rt">
               {candidateLeagues.length} league{candidateLeagues.length === 1 ? "" : "s"} without him
             </span>
@@ -196,35 +235,42 @@ export default function WaiverAssistant({
             <p className="hint">Every league already has this player on your roster.</p>
           ) : (
             <>
-              <div className="portoverview">
+              <div className="mgrtable">
                 {candidateLeagues.map(({ leagueId, leagueName, drop }) => {
                   const label = drop ? pmap?.[drop.playerId] : null;
+                  const diff =
+                    selectedSeasonPts != null && drop ? selectedSeasonPts - drop.value : null;
                   return (
-                    <label key={leagueId} className="portoverviewrow" style={{ cursor: "pointer" }}>
+                    <label key={leagueId} className="mgrrow" style={{ cursor: "pointer" }}>
                       <input
                         type="checkbox"
                         checked={checkedIds.has(leagueId)}
                         onChange={() => toggle(leagueId)}
-                        style={{ marginRight: 4 }}
                       />
                       <span className="tname" style={{ flex: 1 }}>
                         {leagueName}
                       </span>
                       {drop ? (
-                        <>
-                          <span className="portmeta">
-                            suggest drop: {label?.n ?? drop.playerId}
-                            {!drop.fromBench ? " (no bench — lowest starter)" : ""}
-                          </span>
-                          {label?.p && (
-                            <span className="pos" style={posChipStyle(label.p)}>
-                              {label.p}
-                            </span>
-                          )}
-                        </>
+                        <div className="mgrplayer">
+                          <Avatar playerId={drop.playerId} pos={label?.p} size={26} />
+                          <div>
+                            <div className="mgrplayername">
+                              {label?.n ?? drop.playerId}
+                              {!drop.fromBench && (
+                                <span className="portmeta" style={{ marginLeft: 6 }}>no bench</span>
+                              )}
+                            </div>
+                            {label?.p && (
+                              <span className="pos" style={posChipStyle(label.p)}>
+                                {label.p}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       ) : (
                         <span className="portmeta">suggest drop: —</span>
                       )}
+                      <Diff value={diff} />
                     </label>
                   );
                 })}
@@ -232,9 +278,10 @@ export default function WaiverAssistant({
 
               <p className="hint" style={{ marginTop: 10 }}>
                 This shows leagues where you don&rsquo;t already have this player — it doesn&rsquo;t
-                confirm he&rsquo;s actually available league-wide, and the drop suggestion is ranked
-                purely by real season projected points (no position-scarcity or roster-rule
-                awareness). Confirm both on Sleeper&rsquo;s real page before submitting.
+                confirm he&rsquo;s actually available league-wide. The drop suggestion and the Diff
+                column (both real season-projected points, the same numbers Rankings and Trade
+                Calculator use) rank purely on projected points, with no position-scarcity or
+                roster-rule awareness. Confirm both on Sleeper&rsquo;s real page before submitting.
               </p>
 
               <button

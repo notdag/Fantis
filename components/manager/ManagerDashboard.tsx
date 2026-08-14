@@ -16,6 +16,7 @@ import {
   type ManagedLeague,
   type ManagedSyncRun,
 } from "@/lib/manager";
+import { IconUsers, IconFlag, IconCalendar, IconCheck } from "./MgrIcons";
 
 type SortKey = "name" | "season" | "teams" | "status" | "synced";
 type SortDir = "asc" | "desc";
@@ -205,25 +206,14 @@ export default function ManagerDashboard({
 
   return (
     <>
-      <section className="sec">
-        <div className="sechead">
-          <h2>Sleeper Manager</h2>
-          <span className="rt" style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {leagues.length} league{leagues.length === 1 ? "" : "s"} across {accounts.length}{" "}
-            connected account{accounts.length === 1 ? "" : "s"}
-            <Link href="/manager/waiver" className="link">
-              Waiver Assistant →
-            </Link>
-            <Link href="/manager/player" className="link">
-              Player search →
-            </Link>
-            <Link href="/manager/drafts" className="link">
-              Drafts →
-            </Link>
-            <Link href="/manager/commissioner" className="link">
-              Commissioner →
-            </Link>
-          </span>
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="mgrhead">
+          <div className="mgraccentbar" />
+          <h1>Sleeper Manager</h1>
+          <p>
+            {leagues.length} league{leagues.length === 1 ? "" : "s"} across {accounts.length} connected
+            account{accounts.length === 1 ? "" : "s"}.
+          </p>
         </div>
 
         <div className="card sync">
@@ -289,10 +279,10 @@ export default function ManagerDashboard({
                 {lastRun.leaguesFailed} league{lastRun.leaguesFailed === 1 ? "" : "s"} failed to sync
               </p>
               {lastRun.errors && lastRun.errors.length > 0 && (
-                <div className="portoverview">
+                <div className="mgrtable">
                   {lastRun.errors.map((e, i) => (
-                    <div className="portoverviewrow" style={{ cursor: "default" }} key={`${e.leagueId}-${i}`}>
-                      <span className="tname">{e.leagueName ?? e.leagueId}</span>
+                    <div className="mgrrow static" key={`${e.leagueId}-${i}`}>
+                      <span className="tname" style={{ flex: 1 }}>{e.leagueName ?? e.leagueId}</span>
                       <span className="portmeta">{e.message}</span>
                     </div>
                   ))}
@@ -319,26 +309,54 @@ export default function ManagerDashboard({
             <h2 style={{ fontSize: 18 }}>Today</h2>
             <span className="rt">what needs you right now</span>
           </div>
-          <div className="portsummary">
-            <div className="portcard">
-              <div className="portcardhead">Total leagues</div>
-              <p className="portcardtitle" style={{ fontSize: 22, margin: 0 }}>{leagues.length}</p>
+          <div className="mgrstats">
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+              >
+                <IconUsers width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Total leagues</p>
+                <p className="mgrstatvalue">{leagues.length}</p>
+              </div>
             </div>
-            <div className="portcard">
-              <div className="portcardhead">Need attention</div>
-              <p className="portcardtitle" style={{ fontSize: 22, margin: 0, color: "var(--red)" }}>
-                {groups.actionRequired.length}
-              </p>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
+              >
+                <IconFlag width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Need attention</p>
+                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{groups.actionRequired.length}</p>
+              </div>
             </div>
-            <div className="portcard">
-              <div className="portcardhead">Drafts this week</div>
-              <p className="portcardtitle" style={{ fontSize: 22, margin: 0 }}>{groups.draftsThisWeek}</p>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
+              >
+                <IconCalendar width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Drafts this week</p>
+                <p className="mgrstatvalue">{groups.draftsThisWeek}</p>
+              </div>
             </div>
-            <div className="portcard">
-              <div className="portcardhead">All clear</div>
-              <p className="portcardtitle" style={{ fontSize: 22, margin: 0, color: "var(--mint)" }}>
-                {groups.allClear.length}
-              </p>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
+              >
+                <IconCheck width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">All clear</p>
+                <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{groups.allClear.length}</p>
+              </div>
             </div>
           </div>
 
@@ -348,10 +366,10 @@ export default function ManagerDashboard({
                 <h3 style={{ fontSize: 14, margin: 0 }}>Your team</h3>
                 <span className="rt">{groups.actionRequired.length} leagues</span>
               </div>
-              <div className="portoverview">
+              <div className="mgrtable">
                 {groups.actionRequired.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                    <span className="tname">{league.name}</span>
+                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("action_required")}>
                       {alerts.length} issue{alerts.length === 1 ? "" : "s"}
                     </span>
@@ -371,10 +389,10 @@ export default function ManagerDashboard({
                 <h3 style={{ fontSize: 14, margin: 0 }}>Commissioner</h3>
                 <span className="rt">{groups.commissioner.length} leagues</span>
               </div>
-              <div className="portoverview">
+              <div className="mgrtable">
                 {groups.commissioner.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                    <span className="tname">{league.name}</span>
+                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
                     <span className="portmeta">{alerts[0].message}</span>
                   </Link>
@@ -389,16 +407,16 @@ export default function ManagerDashboard({
                 <h3 style={{ fontSize: 14, margin: 0 }}>Drafts & deadlines</h3>
                 <span className="rt">{groups.upcomingDrafts.length + groups.review.length} leagues</span>
               </div>
-              <div className="portoverview">
+              <div className="mgrtable">
                 {groups.upcomingDrafts.map(({ league, draft }) => (
-                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                    <span className="tname">{league.name}</span>
+                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
                   </Link>
                 ))}
                 {groups.review.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                    <span className="tname">{league.name}</span>
+                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
                     <span className="portmeta">{alerts[0].message}</span>
                   </Link>
@@ -425,10 +443,10 @@ export default function ManagerDashboard({
             </button>
           </div>
           {showAllClear && (
-            <div className="portoverview">
+            <div className="mgrtable">
               {groups.allClear.map((league) => (
-                <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                  <span className="tname">{league.name}</span>
+                <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                  <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                   <span className="pos" style={alertSeverityChipStyle("clear")}>clear</span>
                 </Link>
               ))}
@@ -495,10 +513,10 @@ export default function ManagerDashboard({
             ))}
           </div>
 
-          <div className="portoverview">
+          <div className="mgrtable">
             {sorted.map((lg) => (
-              <Link href={`/manager/${lg.id}`} className="portoverviewrow" key={lg.id}>
-                <span className="tname">{lg.name}</span>
+              <Link href={`/manager/${lg.id}`} className="mgrrow" key={lg.id}>
+                <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
                 <span className="portmeta">{lg.totalRosters} teams</span>
                 <span className="portmeta">{lg.season}</span>
                 <span className="pos" style={statusChipStyle(lg.status)}>

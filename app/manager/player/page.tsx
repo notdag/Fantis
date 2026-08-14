@@ -1,7 +1,4 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
-import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
-import AdminLogin from "@/components/AdminLogin";
 import PlayerLeagues from "@/components/manager/PlayerLeagues";
 import { db } from "@/lib/db";
 import type { PlayerLeagueRow, PlayerAlertRef } from "@/components/manager/PlayerLeagues";
@@ -12,33 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default async function PlayerPage() {
-  const store = await cookies();
-  const authed = isValidToken(store.get(ADMIN_COOKIE)?.value);
-
-  return (
-    <div className="fantis">
-      <div className="wrap">
-        <nav className="nav">
-          <div className="brand">
-            <div className="mark">F</div>
-            <b>Fantis</b>
-            <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>player search</span>
-          </div>
-        </nav>
-        {authed ? (
-          <PlayerContent />
-        ) : (
-          <AdminLogin
-            title="Sleeper Manager access"
-            description="Owner-only dashboard for managing your real Sleeper leagues. Not for regular visitors."
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-async function PlayerContent() {
   if (!process.env.DATABASE_URL) {
     return (
       <section className="sec">

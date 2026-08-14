@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import Link from "next/link";
-import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
-import AdminLogin from "@/components/AdminLogin";
 import { db } from "@/lib/db";
 import { formatUpcoming } from "@/lib/manager";
 
@@ -12,33 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default async function DraftsPage() {
-  const store = await cookies();
-  const authed = isValidToken(store.get(ADMIN_COOKIE)?.value);
-
-  return (
-    <div className="fantis">
-      <div className="wrap">
-        <nav className="nav">
-          <div className="brand">
-            <div className="mark">F</div>
-            <b>Fantis</b>
-            <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>drafts</span>
-          </div>
-        </nav>
-        {authed ? (
-          <DraftsContent />
-        ) : (
-          <AdminLogin
-            title="Sleeper Manager access"
-            description="Owner-only dashboard for managing your real Sleeper leagues. Not for regular visitors."
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-async function DraftsContent() {
   if (!process.env.DATABASE_URL) {
     return (
       <section className="sec">
@@ -91,16 +61,12 @@ async function DraftsContent() {
 
   return (
     <>
-      <section className="sec">
-        <div className="sechead">
-          <h2>Drafts</h2>
-          <Link href="/manager" className="link">
-            ← Sleeper Manager
-          </Link>
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="mgrhead">
+          <div className="mgraccentbar" />
+          <h1>Drafts</h1>
+          <p>{drafts.length} league{drafts.length === 1 ? "" : "s"} with a draft still ahead.</p>
         </div>
-        <p className="hint">
-          {drafts.length} league{drafts.length === 1 ? "" : "s"} with a draft still ahead.
-        </p>
       </section>
 
       {drafts.length === 0 ? (
@@ -116,10 +82,10 @@ async function DraftsContent() {
                 <h2 style={{ fontSize: 18 }}>{s.label}</h2>
                 <span className="rt">{s.rows.length} leagues</span>
               </div>
-              <div className="portoverview">
+              <div className="mgrtable">
                 {s.rows.map((d) => (
-                  <Link href={`/manager/${d.leagueId}`} className="portoverviewrow" key={d.id}>
-                    <span className="tname">{d.league.name}</span>
+                  <Link href={`/manager/${d.leagueId}`} className="mgrrow" key={d.id}>
+                    <span className="tname" style={{ flex: 1 }}>{d.league.name}</span>
                     <span className="portvalue">
                       {d.startTime ? formatUpcoming(d.startTime.toISOString()) : "no date set"}
                     </span>

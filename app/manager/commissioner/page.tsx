@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
 import Link from "next/link";
-import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
-import AdminLogin from "@/components/AdminLogin";
 import { db } from "@/lib/db";
 import { alertSeverityChipStyle } from "@/lib/manager";
 
@@ -12,33 +9,6 @@ export const metadata: Metadata = {
 };
 
 export default async function CommissionerPage() {
-  const store = await cookies();
-  const authed = isValidToken(store.get(ADMIN_COOKIE)?.value);
-
-  return (
-    <div className="fantis">
-      <div className="wrap">
-        <nav className="nav">
-          <div className="brand">
-            <div className="mark">F</div>
-            <b>Fantis</b>
-            <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>commissioner</span>
-          </div>
-        </nav>
-        {authed ? (
-          <CommissionerContent />
-        ) : (
-          <AdminLogin
-            title="Sleeper Manager access"
-            description="Owner-only dashboard for managing your real Sleeper leagues. Not for regular visitors."
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-async function CommissionerContent() {
   if (!process.env.DATABASE_URL) {
     return (
       <section className="sec">
@@ -58,24 +28,22 @@ async function CommissionerContent() {
 
   return (
     <section className="sec">
-      <div className="sechead">
-        <h2>Commissioner</h2>
-        <Link href="/manager" className="link">
-          ← Sleeper Manager
-        </Link>
+      <div className="mgrhead">
+        <div className="mgraccentbar" />
+        <h1>Commissioner</h1>
+        <p>
+          Real, derived signals only — Sleeper&rsquo;s API doesn&rsquo;t carry payment or
+          registration data, so the only commissioner-relevant check is an unclaimed team.
+        </p>
       </div>
-      <p className="hint">
-        Real, derived signals only — Sleeper&rsquo;s API doesn&rsquo;t carry payment or
-        registration data, so the only commissioner-relevant check is an unclaimed team.
-      </p>
 
       {alerts.length === 0 ? (
-        <p className="hint" style={{ marginTop: 12 }}>Every league has a full set of claimed teams.</p>
+        <p className="hint">Every league has a full set of claimed teams.</p>
       ) : (
-        <div className="portoverview" style={{ marginTop: 12 }}>
+        <div className="mgrtable">
           {alerts.map((a) => (
-            <Link href={`/manager/${a.leagueId}`} className="portoverviewrow" key={a.id}>
-              <span className="tname">{a.league.name}</span>
+            <Link href={`/manager/${a.leagueId}`} className="mgrrow" key={a.id}>
+              <span className="tname" style={{ flex: 1 }}>{a.league.name}</span>
               <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
               <span className="portmeta">{a.message}</span>
             </Link>

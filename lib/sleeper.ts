@@ -122,6 +122,13 @@ export async function getPlayers(): Promise<PlayerMap> {
 export const avatar = (id: string | null | undefined) =>
   id ? `https://sleepercdn.com/avatars/thumbs/${id}` : null;
 
+// Player headshot (distinct from avatar() above, which is for
+// league/team avatars) — same real URL already used in production at
+// components/Portfolio.tsx, pulled out here so new call sites don't
+// duplicate the string.
+export const playerPhotoUrl = (playerId: string) =>
+  `https://sleepercdn.com/content/nfl/players/${playerId}.jpg`;
+
 export const SEASONS = ["2026", "2025", "2024"];
 
 export const getState = () => jget<SleeperState>(`${S}/state/nfl`);

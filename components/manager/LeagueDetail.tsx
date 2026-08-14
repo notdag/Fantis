@@ -13,10 +13,26 @@ import {
   type ManagedMatchup,
   type ManagedRoster,
 } from "@/lib/manager";
-import { getPlayers } from "@/lib/sleeper";
+import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import type { PlayerMap } from "@/lib/types";
+
+function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
+  const ring = pos ? posChipStyle(pos).color : "var(--line)";
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="mgravatar"
+      src={playerPhotoUrl(playerId)}
+      alt=""
+      style={{ width: size, height: size, borderColor: ring }}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
 
 // Sleeper's league `settings` blob is untyped JSON here (see prisma/schema.prisma
 // — deliberately not normalized). Every field below is read defensively;
@@ -118,12 +134,15 @@ export default function LeagueDetail({
 
   return (
     <>
-      <section className="sec">
-        <div className="sechead">
-          <h2>{league.name}</h2>
-          <Link href="/manager" className="link">
-            ← All leagues
-          </Link>
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="mgrhead">
+          <div className="mgraccentbar" />
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <h1>{league.name}</h1>
+            <Link href="/manager" className="link">
+              ← All leagues
+            </Link>
+          </div>
         </div>
 
         <div className="portsummary">
@@ -315,13 +334,13 @@ function RosterSection({
   const bench = roster.players.filter((id) => !roster.starters.includes(id));
 
   return (
-    <div className="portoverview">
+    <div className="mgrtable">
       {slots.map((slot, i) => {
         const playerId = roster.starters[i];
         const empty = !playerId || playerId === "0";
         const label = empty ? null : playerLabel(pmap, playerId);
         return (
-          <div className="portoverviewrow" style={{ cursor: "default" }} key={slot.key}>
+          <div className="mgrrow static" key={slot.key}>
             <span className="portmeta" style={{ minWidth: 44 }}>
               {slot.code}
             </span>
@@ -331,7 +350,8 @@ function RosterSection({
               </span>
             ) : (
               <>
-                <span className="tname">{label!.name}</span>
+                <Avatar playerId={playerId} pos={label!.pos} size={26} />
+                <span className="tname" style={{ flex: 1 }}>{label!.name}</span>
                 {label!.pos && (
                   <span className="pos" style={posChipStyle(label!.pos)}>
                     {label!.pos}
@@ -348,7 +368,7 @@ function RosterSection({
         );
       })}
       {bench.length > 0 && (
-        <div className="portoverviewrow" style={{ cursor: "default", opacity: 0.7 }}>
+        <div className="mgrrow static" style={{ opacity: 0.85 }}>
           <span className="tname">Bench</span>
           <span className="portmeta">
             {bench.map((id) => playerLabel(pmap, id).name).join(", ")}

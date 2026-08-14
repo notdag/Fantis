@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getPlayers } from "@/lib/sleeper";
+import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
+import { IconFlag, IconCheck, IconUsers } from "./MgrIcons";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface PlayerLeagueRow {
@@ -22,6 +23,22 @@ export interface PlayerAlertRef {
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
 
 type Status = "starting" | "bench" | "not_rostered";
+
+function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
+  const ring = pos ? posChipStyle(pos).color : "var(--line)";
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="mgravatar"
+      src={playerPhotoUrl(playerId)}
+      alt=""
+      style={{ width: size, height: size, borderColor: ring }}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
 
 export default function PlayerLeagues({
   leagues,
@@ -84,10 +101,10 @@ export default function PlayerLeagues({
   const notRostered = rows.filter((r) => r.status === "not_rostered");
 
   const renderRows = (list: typeof rows, severity: "action_required" | "review" | "clear" | null) => (
-    <div className="portoverview">
+    <div className="mgrtable">
       {list.map((r) => (
-        <Link href={`/manager/${r.leagueId}`} className="portoverviewrow" key={r.leagueId}>
-          <span className="tname">{r.leagueName}</span>
+        <Link href={`/manager/${r.leagueId}`} className="mgrrow" key={r.leagueId}>
+          <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
           {severity && (
             <span className="pos" style={alertSeverityChipStyle(severity)}>
               {severity === "action_required" ? "needs attention" : severity === "review" ? "review" : "clear"}
@@ -98,19 +115,19 @@ export default function PlayerLeagues({
     </div>
   );
 
+  const selected = selectedId ? pmap?.[selectedId] : null;
+
   return (
     <>
-      <section className="sec">
-        <div className="sechead">
-          <h2>Player search</h2>
-          <Link href="/manager" className="link">
-            ← Sleeper Manager
-          </Link>
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="mgrhead">
+          <div className="mgraccentbar" />
+          <h1>Player search</h1>
+          <p>
+            Search any player to see where he stands across every synced league — starting, bench,
+            not rostered, and which leagues have a real alert tied to him.
+          </p>
         </div>
-        <p className="hint">
-          Search any player to see where he stands across every synced league — starting, bench,
-          not rostered, and which leagues have a real alert tied to him.
-        </p>
 
         <div className="field" style={{ maxWidth: 360 }}>
           <input
@@ -125,18 +142,19 @@ export default function PlayerLeagues({
         </div>
 
         {!selectedId && searchResults.length > 0 && (
-          <div className="portoverview" style={{ marginTop: 8, maxWidth: 360 }}>
+          <div className="mgrtable" style={{ marginTop: 8, maxWidth: 400 }}>
             {searchResults.map(([id, p]) => (
               <button
                 key={id}
-                className="portoverviewrow"
-                style={{ width: "100%", textAlign: "left", border: "none", background: "none", cursor: "pointer" }}
+                className="mgrrow"
+                style={{ border: "none" }}
                 onClick={() => {
                   setSelectedId(id);
                   setQuery(p.n);
                 }}
               >
-                <span className="tname">{p.n}</span>
+                <Avatar playerId={id} pos={p.p} size={28} />
+                <span className="tname" style={{ flex: 1 }}>{p.n}</span>
                 <span className="pos" style={posChipStyle(p.p)}>
                   {p.p}
                 </span>
@@ -151,31 +169,62 @@ export default function PlayerLeagues({
         <>
           <section className="sec">
             <div className="sechead">
-              <h2 style={{ fontSize: 18 }}>{pmap?.[selectedId]?.n ?? selectedId}</h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Avatar playerId={selectedId} pos={selected?.p} size={40} />
+                <h2 style={{ fontSize: 18, margin: 0 }}>{selected?.n ?? selectedId}</h2>
+              </div>
               <span className="rt">
                 rostered in {starting.length + bench.length} of {leagues.length} leagues
               </span>
             </div>
-            <div className="portsummary">
-              <div className="portcard">
-                <div className="portcardhead">Starting, needs attention</div>
-                <p className="portcardtitle" style={{ fontSize: 22, margin: 0, color: "var(--red)" }}>
-                  {startingAttention.length}
-                </p>
+            <div className="mgrstats">
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
+                >
+                  <IconFlag width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Starting, needs attention</p>
+                  <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{startingAttention.length}</p>
+                </div>
               </div>
-              <div className="portcard">
-                <div className="portcardhead">Starting, clear</div>
-                <p className="portcardtitle" style={{ fontSize: 22, margin: 0, color: "var(--mint)" }}>
-                  {startingClear.length}
-                </p>
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
+                >
+                  <IconCheck width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Starting, clear</p>
+                  <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{startingClear.length}</p>
+                </div>
               </div>
-              <div className="portcard">
-                <div className="portcardhead">Bench</div>
-                <p className="portcardtitle" style={{ fontSize: 22, margin: 0 }}>{bench.length}</p>
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+                >
+                  <IconUsers width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Bench</p>
+                  <p className="mgrstatvalue">{bench.length}</p>
+                </div>
               </div>
-              <div className="portcard">
-                <div className="portcardhead">Not rostered</div>
-                <p className="portcardtitle" style={{ fontSize: 22, margin: 0 }}>{notRostered.length}</p>
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{ color: "var(--dim)", background: "color-mix(in srgb, var(--dim) 16%, transparent)" }}
+                >
+                  <IconUsers width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Not rostered</p>
+                  <p className="mgrstatvalue">{notRostered.length}</p>
+                </div>
               </div>
             </div>
           </section>
