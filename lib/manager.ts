@@ -24,6 +24,12 @@ export interface ManagedLeague {
   lastSyncedAt: string | null;
 }
 
+export interface ManagedSyncRunError {
+  leagueId: string;
+  leagueName?: string;
+  message: string;
+}
+
 export interface ManagedSyncRun {
   id: string;
   accountId: string | null;
@@ -33,6 +39,7 @@ export interface ManagedSyncRun {
   leaguesSeen: number;
   leaguesOk: number;
   leaguesFailed: number;
+  errors: ManagedSyncRunError[] | null;
 }
 
 export interface ManagedRoster {

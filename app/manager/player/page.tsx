@@ -1,0 +1,80 @@
+import type { Metadata } from "next";
+import { cookies } from "next/headers";
+import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
+import AdminLogin from "@/components/AdminLogin";
+import PlayerLeagues from "@/components/manager/PlayerLeagues";
+import { db } from "@/lib/db";
+import type { PlayerLeagueRow, PlayerAlertRef } from "@/components/manager/PlayerLeagues";
+
+export const metadata: Metadata = {
+  title: "Fantis — Player search",
+  robots: { index: false, follow: false },
+};
+
+export default async function PlayerPage() {
+  const store = await cookies();
+  const authed = isValidToken(store.get(ADMIN_COOKIE)?.value);
+
+  return (
+    <div className="fantis">
+      <div className="wrap">
+        <nav className="nav">
+          <div className="brand">
+            <div className="mark">F</div>
+            <b>Fantis</b>
+            <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>player search</span>
+          </div>
+        </nav>
+        {authed ? (
+          <PlayerContent />
+        ) : (
+          <AdminLogin
+            title="Sleeper Manager access"
+            description="Owner-only dashboard for managing your real Sleeper leagues. Not for regular visitors."
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+async function PlayerContent() {
+  if (!process.env.DATABASE_URL) {
+    return (
+      <section className="sec">
+        <h2>Player search</h2>
+        <p className="hint">
+          No database configured yet — set <code>DATABASE_URL</code> in your environment to use
+          Sleeper Manager. See <code>.env.example</code>.
+        </p>
+      </section>
+    );
+  }
+
+  const [leagueRows, rosterRows, alertRows] = await Promise.all([
+    db.league.findMany({ orderBy: { name: "asc" } }),
+    db.roster.findMany(),
+    db.alert.findMany({ where: { playerId: { not: null } }, select: { leagueId: true, playerId: true } }),
+  ]);
+
+  const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
+
+  const leagues: PlayerLeagueRow[] = leagueRows
+    .filter((lg) => rosterByLeague.has(lg.id))
+    .map((lg) => {
+      const roster = rosterByLeague.get(lg.id)!;
+      return {
+        leagueId: lg.id,
+        leagueName: lg.name,
+        players: roster.players,
+        starters: roster.starters,
+      };
+    });
+
+  const alertRefs: PlayerAlertRef[] = alertRows.map((a) => ({
+    leagueId: a.leagueId,
+    playerId: a.playerId as string,
+  }));
+
+  return <PlayerLeagues leagues={leagues} alertRefs={alertRefs} />;
+}

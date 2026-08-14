@@ -208,9 +208,21 @@ export default function ManagerDashboard({
       <section className="sec">
         <div className="sechead">
           <h2>Sleeper Manager</h2>
-          <span className="rt">
+          <span className="rt" style={{ display: "flex", alignItems: "center", gap: 12 }}>
             {leagues.length} league{leagues.length === 1 ? "" : "s"} across {accounts.length}{" "}
             connected account{accounts.length === 1 ? "" : "s"}
+            <Link href="/manager/waiver" className="link">
+              Waiver Assistant →
+            </Link>
+            <Link href="/manager/player" className="link">
+              Player search →
+            </Link>
+            <Link href="/manager/drafts" className="link">
+              Drafts →
+            </Link>
+            <Link href="/manager/commissioner" className="link">
+              Commissioner →
+            </Link>
           </span>
         </div>
 
@@ -263,8 +275,50 @@ export default function ManagerDashboard({
         </div>
       </section>
 
+      {lastRun && (
+        <section className="sec">
+          <div className="sechead">
+            <h2 style={{ fontSize: 18 }}>Sync health</h2>
+            <span className="rt">
+              {lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues synced
+            </span>
+          </div>
+          {lastRun.leaguesFailed > 0 ? (
+            <>
+              <p className="hint" style={{ color: "var(--red)" }}>
+                {lastRun.leaguesFailed} league{lastRun.leaguesFailed === 1 ? "" : "s"} failed to sync
+              </p>
+              {lastRun.errors && lastRun.errors.length > 0 && (
+                <div className="portoverview">
+                  {lastRun.errors.map((e, i) => (
+                    <div className="portoverviewrow" style={{ cursor: "default" }} key={`${e.leagueId}-${i}`}>
+                      <span className="tname">{e.leagueName ?? e.leagueId}</span>
+                      <span className="portmeta">{e.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button
+                className="btn ghost"
+                style={{ marginTop: 8 }}
+                onClick={syncNow}
+                disabled={syncing || accounts.length === 0}
+              >
+                {syncing ? "Retrying…" : "Retry"}
+              </button>
+            </>
+          ) : (
+            <p className="hint">Every league synced cleanly last run.</p>
+          )}
+        </section>
+      )}
+
       {leagues.length > 0 && (
         <section className="sec">
+          <div className="sechead">
+            <h2 style={{ fontSize: 18 }}>Today</h2>
+            <span className="rt">what needs you right now</span>
+          </div>
           <div className="portsummary">
             <div className="portcard">
               <div className="portcardhead">Total leagues</div>
@@ -287,79 +341,78 @@ export default function ManagerDashboard({
               </p>
             </div>
           </div>
-        </section>
-      )}
 
-      {groups.actionRequired.length > 0 && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Action required</h2>
-            <span className="rt">{groups.actionRequired.length} leagues</span>
-          </div>
-          <div className="portoverview">
-            {groups.actionRequired.map(({ league, alerts }) => (
-              <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                <span className="tname">{league.name}</span>
-                <span className="pos" style={alertSeverityChipStyle("action_required")}>
-                  {alerts.length} issue{alerts.length === 1 ? "" : "s"}
-                </span>
-                <span className="portmeta">{alerts[0].message}{alerts.length > 1 ? ` +${alerts.length - 1} more` : ""}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
+          {groups.actionRequired.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div className="sechead" style={{ marginBottom: 8 }}>
+                <h3 style={{ fontSize: 14, margin: 0 }}>Your team</h3>
+                <span className="rt">{groups.actionRequired.length} leagues</span>
+              </div>
+              <div className="portoverview">
+                {groups.actionRequired.map(({ league, alerts }) => (
+                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
+                    <span className="tname">{league.name}</span>
+                    <span className="pos" style={alertSeverityChipStyle("action_required")}>
+                      {alerts.length} issue{alerts.length === 1 ? "" : "s"}
+                    </span>
+                    <span className="portmeta">
+                      {alerts[0].message}
+                      {alerts.length > 1 ? ` +${alerts.length - 1} more` : ""}
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {groups.commissioner.length > 0 && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Commissioner</h2>
-            <span className="rt">{groups.commissioner.length} leagues</span>
-          </div>
-          <div className="portoverview">
-            {groups.commissioner.map(({ league, alerts }) => (
-              <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                <span className="tname">{league.name}</span>
-                <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
-                <span className="portmeta">{alerts[0].message}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
+          {groups.commissioner.length > 0 && (
+            <div style={{ marginTop: 18 }}>
+              <div className="sechead" style={{ marginBottom: 8 }}>
+                <h3 style={{ fontSize: 14, margin: 0 }}>Commissioner</h3>
+                <span className="rt">{groups.commissioner.length} leagues</span>
+              </div>
+              <div className="portoverview">
+                {groups.commissioner.map(({ league, alerts }) => (
+                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
+                    <span className="tname">{league.name}</span>
+                    <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
+                    <span className="portmeta">{alerts[0].message}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {groups.upcomingDrafts.length > 0 && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Upcoming drafts</h2>
-            <span className="rt">{groups.upcomingDrafts.length} leagues</span>
-          </div>
-          <div className="portoverview">
-            {groups.upcomingDrafts.map(({ league, draft }) => (
-              <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                <span className="tname">{league.name}</span>
-                <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
+          {(groups.upcomingDrafts.length > 0 || groups.review.length > 0) && (
+            <div style={{ marginTop: 18 }}>
+              <div className="sechead" style={{ marginBottom: 8 }}>
+                <h3 style={{ fontSize: 14, margin: 0 }}>Drafts & deadlines</h3>
+                <span className="rt">{groups.upcomingDrafts.length + groups.review.length} leagues</span>
+              </div>
+              <div className="portoverview">
+                {groups.upcomingDrafts.map(({ league, draft }) => (
+                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
+                    <span className="tname">{league.name}</span>
+                    <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
+                  </Link>
+                ))}
+                {groups.review.map(({ league, alerts }) => (
+                  <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
+                    <span className="tname">{league.name}</span>
+                    <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
+                    <span className="portmeta">{alerts[0].message}</span>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {groups.review.length > 0 && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Review</h2>
-            <span className="rt">{groups.review.length} leagues</span>
-          </div>
-          <div className="portoverview">
-            {groups.review.map(({ league, alerts }) => (
-              <Link href={`/manager/${league.id}`} className="portoverviewrow" key={league.id}>
-                <span className="tname">{league.name}</span>
-                <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
-                <span className="portmeta">{alerts[0].message}</span>
-              </Link>
-            ))}
-          </div>
+          {groups.actionRequired.length === 0 &&
+            groups.commissioner.length === 0 &&
+            groups.upcomingDrafts.length === 0 &&
+            groups.review.length === 0 && (
+              <p className="hint" style={{ marginTop: 18 }}>Nothing needs you right now.</p>
+            )}
         </section>
       )}
 

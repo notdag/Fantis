@@ -27,7 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not authorized." }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => null)) as { leagueId?: string } | null;
+  const body = (await req.json().catch(() => null)) as { leagueId?: string; type?: string } | null;
   const leagueId = body?.leagueId;
   if (!leagueId) {
     return NextResponse.json({ error: "leagueId is required." }, { status: 400 });
@@ -38,12 +38,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "No such league." }, { status: 404 });
   }
 
+  // "open_waiver" is meant to land on Sleeper's real waiver/add-player page
+  // for this league, not just its home page — but that exact URL hasn't
+  // been verified against Sleeper's live site yet (see WaiverAssistant.tsx),
+  // so this falls back to the same, already-correct league-home URL rather
+  // than guess a path and present it as fact.
+  const type = body?.type === "open_waiver" ? "open_waiver" : "open_league";
+  const targetUrl = `https://sleeper.com/leagues/${leagueId}`;
+
   const action = await db.action.create({
     data: {
       leagueId,
-      type: "open_league",
+      type,
       status: "pending",
-      targetUrl: `https://sleeper.com/leagues/${leagueId}`,
+      targetUrl,
     },
   });
 

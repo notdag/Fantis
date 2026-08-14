@@ -4,7 +4,14 @@ import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import AdminLogin from "@/components/AdminLogin";
 import ManagerDashboard from "@/components/manager/ManagerDashboard";
 import { db } from "@/lib/db";
-import type { ManagedAccount, ManagedAlert, ManagedDraft, ManagedLeague, ManagedSyncRun } from "@/lib/manager";
+import type {
+  ManagedAccount,
+  ManagedAlert,
+  ManagedDraft,
+  ManagedLeague,
+  ManagedSyncRun,
+  ManagedSyncRunError,
+} from "@/lib/manager";
 
 // Not linked from the main nav and not indexable — same spirit as /admin.
 export const metadata: Metadata = {
@@ -91,6 +98,7 @@ async function ManagerContent() {
         leaguesSeen: lastRunRow.leaguesSeen,
         leaguesOk: lastRunRow.leaguesOk,
         leaguesFailed: lastRunRow.leaguesFailed,
+        errors: (lastRunRow.errors as ManagedSyncRunError[] | null) ?? null,
       }
     : null;
 
