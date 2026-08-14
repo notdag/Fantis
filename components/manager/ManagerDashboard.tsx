@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -37,7 +37,19 @@ export default function ManagerDashboard({
   draftsByLeague: Record<string, ManagedDraft>;
   automationLastPingAt: string | null;
 }) {
-  const connected = automationConnected(automationLastPingAt);
+  // automationConnected() depends on Date.now(), which differs between the
+  // server render and the client hydration pass a moment later — and since
+  // it drives which whole block of JSX renders (not just text), letting it
+  // differ between those two passes is a real hydration mismatch (React
+  // error #418), not just a cosmetic one. Rendering "not connected" (the
+  // same as the initial mounted=false state) on both the server pass and
+  // the client's first hydration pass keeps them identical; the real value
+  // only takes effect after hydration finishes, via this effect.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  const connected = mounted && automationConnected(automationLastPingAt);
   const router = useRouter();
 
   const [username, setUsername] = useState("");
