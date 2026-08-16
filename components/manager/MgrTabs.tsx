@@ -7,6 +7,7 @@ const TABS = [
   { href: "/manager", label: "Today" },
   { href: "/manager/teams", label: "My Teams" },
   { href: "/manager/byes", label: "Byes" },
+  { href: "/manager/injuries", label: "Injuries" },
   { href: "/manager/waiver", label: "Waiver" },
   { href: "/manager/player", label: "Player search" },
   { href: "/manager/drafts", label: "Drafts" },
