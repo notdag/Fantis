@@ -113,6 +113,10 @@ export default function ManagerDashboard({
   const [sortBy, setSortBy] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [showAllClear, setShowAllClear] = useState(false);
+  // The connect form is only useful once, for first-time setup — once at
+  // least one account is already connected, it's just clutter above the
+  // real "Sync now" action, so it starts collapsed behind a small link.
+  const [showConnectForm, setShowConnectForm] = useState(accounts.length === 0);
 
   const connect = async () => {
     const u = username.trim();
@@ -276,21 +280,37 @@ export default function ManagerDashboard({
         </div>
 
         <div className="card sync">
-          <div className="field">
-            <input
-              className="input"
-              placeholder="Sleeper username to connect"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && connect()}
-            />
-            <button className="btn" onClick={connect} disabled={connecting || !username.trim()}>
-              {connecting ? "Connecting…" : "Connect"}
-            </button>
-            <button className="btn ghost" onClick={syncNow} disabled={syncing || accounts.length === 0}>
-              {syncing ? "Syncing…" : "Sync now"}
-            </button>
-          </div>
+          {showConnectForm ? (
+            <div className="field">
+              <input
+                className="input"
+                placeholder="Sleeper username to connect"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && connect()}
+              />
+              <button className="btn" onClick={connect} disabled={connecting || !username.trim()}>
+                {connecting ? "Connecting…" : "Connect"}
+              </button>
+              <button className="btn ghost" onClick={syncNow} disabled={syncing || accounts.length === 0}>
+                {syncing ? "Syncing…" : "Sync now"}
+              </button>
+              {accounts.length > 0 && (
+                <button className="btn ghost" onClick={() => setShowConnectForm(false)}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="field" style={{ alignItems: "center" }}>
+              <button className="btn ghost" onClick={syncNow} disabled={syncing}>
+                {syncing ? "Syncing…" : "Sync now"}
+              </button>
+              <button className="linklike" onClick={() => setShowConnectForm(true)} style={{ fontSize: 13 }}>
+                + Connect another account
+              </button>
+            </div>
+          )}
           {connectError && <div className="err">{connectError}</div>}
           {syncError && <div className="err">{syncError}</div>}
           <div className="hint" style={{ marginTop: 8 }}>
