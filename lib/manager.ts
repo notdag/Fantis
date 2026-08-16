@@ -58,8 +58,12 @@ export interface ManagedRoster {
 export interface ManagedMatchup {
   week: number;
   myPoints: number;
+  myStarters: string[];
+  myStartersPoints: number[];
   opponentTeamName: string | null;
   opponentPoints: number | null;
+  opponentStarters: string[];
+  opponentStartersPoints: number[];
 }
 
 export interface ManagedDraft {

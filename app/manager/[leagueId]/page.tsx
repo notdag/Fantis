@@ -70,8 +70,12 @@ export default async function ManagerLeaguePage({
     ? {
         week: matchupRow.week,
         myPoints: matchupRow.myPoints,
+        myStarters: matchupRow.myStarters,
+        myStartersPoints: matchupRow.myStartersPoints,
         opponentTeamName: matchupRow.opponentTeamName,
         opponentPoints: matchupRow.opponentPoints,
+        opponentStarters: matchupRow.opponentStarters,
+        opponentStartersPoints: matchupRow.opponentStartersPoints,
       }
     : null;
 

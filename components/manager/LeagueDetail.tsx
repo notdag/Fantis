@@ -333,7 +333,9 @@ export default function LeagueDetail({
         <section className="sec">
           <div className="sechead">
             <h2 style={{ fontSize: 18 }}>This week&rsquo;s matchup</h2>
-            <span className="rt">week {matchup.week}</span>
+            <Link href={`/manager/${league.id}/matchup`} className="link">
+              View full matchup →
+            </Link>
           </div>
           <div className="portoverview">
             <div className="portoverviewrow" style={{ cursor: "default" }}>

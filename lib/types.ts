@@ -93,6 +93,7 @@ export interface SleeperMatchupRow {
   roster_id: number;
   matchup_id: number | null;
   starters: string[] | null;
+  starters_points: number[] | null;
   points: number;
 }
 

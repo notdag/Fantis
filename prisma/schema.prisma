@@ -195,17 +195,21 @@ model Roster {
 // for status "in_season" (pre_draft/drafting leagues have no real matchup
 // yet).
 model Matchup {
-  id               String    @id @default(cuid())
-  leagueId         String
-  league           League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  week             Int
-  myRosterId       Int
-  myMatchupId      Int
-  myPoints         Float
-  opponentRosterId Int?
-  opponentTeamName String?
-  opponentPoints   Float?
-  lastSyncedAt     DateTime?
+  id                     String    @id @default(cuid())
+  leagueId               String
+  league                 League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week                   Int
+  myRosterId             Int
+  myMatchupId            Int
+  myPoints               Float
+  myStarters             String[] @default([])
+  myStartersPoints       Float[]  @default([])
+  opponentRosterId       Int?
+  opponentTeamName       String?
+  opponentPoints         Float?
+  opponentStarters       String[] @default([])
+  opponentStartersPoints Float[]  @default([])
+  lastSyncedAt           DateTime?
 
   @@unique([leagueId, week])
   @@index([leagueId])
