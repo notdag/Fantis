@@ -17,7 +17,53 @@ import {
   type ManagedLeague,
   type ManagedSyncRun,
 } from "@/lib/manager";
-import { IconUsers, IconFlag, IconCalendar, IconCheck } from "./MgrIcons";
+import { avatar } from "@/lib/sleeper";
+import { IconUsers, IconFlag, IconCalendar, IconCheck, IconSearch } from "./MgrIcons";
+
+// League settings is untyped JSON (see prisma/schema.prisma) — read
+// defensively, same pattern as LeagueDetail.tsx's settingsField().
+function leagueAvatarId(settings: unknown): string | null {
+  if (!settings || typeof settings !== "object") return null;
+  const v = (settings as Record<string, unknown>).avatar;
+  return typeof v === "string" ? v : null;
+}
+
+function LeagueAvatar({ league }: { league: ManagedLeague }) {
+  const id = leagueAvatarId(league.settings);
+  const url = avatar(id);
+  if (!url) {
+    return (
+      <span
+        className="mgravatar"
+        style={{
+          width: 24,
+          height: 24,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 10,
+          fontWeight: 700,
+          color: "var(--dim)",
+          background: "var(--ink)",
+        }}
+      >
+        {league.name.slice(0, 1).toUpperCase()}
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="mgravatar"
+      src={url}
+      alt=""
+      style={{ width: 24, height: 24 }}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
 
 type SortKey = "name" | "season" | "teams" | "status" | "synced";
 type SortDir = "asc" | "desc";
@@ -155,6 +201,15 @@ export default function ManagerDashboard({
     });
     return rows;
   }, [filtered, sortBy, sortDir]);
+
+  // Real per-status counts (unfiltered by the search box, since the chips
+  // themselves are the status filter) — shown on each chip so you know
+  // what "In season" etc. actually contains before clicking it.
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const lg of leagues) counts[lg.status] = (counts[lg.status] ?? 0) + 1;
+    return counts;
+  }, [leagues]);
 
   // Exception-based grouping: the whole point is that the groups themselves
   // do the triage, no filter click needed. Real Alert rows only — a league
@@ -483,7 +538,7 @@ export default function ManagerDashboard({
               className={`chip-filter ${statusFilter === "ALL" ? "on" : ""}`}
               onClick={() => setStatusFilter("ALL")}
             >
-              All
+              All <span className="portmeta">{leagues.length}</span>
             </button>
             {STATUSES.map((s) => (
               <button
@@ -491,12 +546,23 @@ export default function ManagerDashboard({
                 className={`chip-filter ${statusFilter === s ? "on" : ""}`}
                 onClick={() => setStatusFilter(s)}
               >
-                {statusLabel(s)}
+                {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
               </button>
             ))}
           </div>
 
-          <div className="field" style={{ marginBottom: 8, gap: 12 }}>
+          <div
+            className="field"
+            style={{
+              marginBottom: 0,
+              gap: 12,
+              position: "sticky",
+              top: 0,
+              zIndex: 1,
+              background: "var(--ink)",
+              padding: "8px 0",
+            }}
+          >
             {(["name", "season", "teams", "status", "synced"] as SortKey[]).map((k) => (
               <button
                 key={k}
@@ -520,6 +586,7 @@ export default function ManagerDashboard({
           <div className="mgrtable">
             {sorted.map((lg) => (
               <Link href={`/manager/${lg.id}`} className="mgrrow" key={lg.id}>
+                <LeagueAvatar league={lg} />
                 <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
                 <span className="portmeta">{lg.totalRosters} teams</span>
                 <span className="portmeta">{lg.season}</span>
@@ -529,8 +596,34 @@ export default function ManagerDashboard({
                 <span className="portmeta">synced {mounted ? formatRelative(lg.lastSyncedAt) : "—"}</span>
               </Link>
             ))}
-            {sorted.length === 0 && <p className="hint" style={{ padding: 16 }}>No leagues match these filters.</p>}
+            {sorted.length === 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "32px 16px",
+                  color: "var(--dim)",
+                }}
+              >
+                <IconSearch width={22} height={22} />
+                <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No leagues found</span>
+                <span className="hint" style={{ margin: 0 }}>Try a different search or status filter.</span>
+              </div>
+            )}
           </div>
+          {sorted.length > 0 && (
+            <div className="hint" style={{ marginTop: 8, display: "flex", justifyContent: "space-between" }}>
+              <span>
+                {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
+                {sorted.length !== leagues.length ? ` of ${leagues.length}` : ""}
+              </span>
+              <span>
+                {sorted.reduce((sum, lg) => sum + lg.totalRosters, 0)} total teams
+              </span>
+            </div>
+          )}
         </section>
       )}
     </>

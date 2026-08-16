@@ -5,7 +5,7 @@ import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
-import { IconArrowUp, IconArrowDown } from "./MgrIcons";
+import { IconArrowUp, IconArrowDown, IconSearch } from "./MgrIcons";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
@@ -203,6 +203,25 @@ export default function WaiverAssistant({
                 <span className="portmeta">{p.t}</span>
               </button>
             ))}
+          </div>
+        )}
+        {!selectedId && query.trim().length >= 2 && searchResults.length === 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 6,
+              padding: "24px 16px",
+              marginTop: 8,
+              maxWidth: 400,
+              border: "1px solid var(--line)",
+              borderRadius: 12,
+            }}
+          >
+            <IconSearch width={20} height={20} style={{ color: "var(--dim)" }} />
+            <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No players found</span>
+            <span className="hint" style={{ margin: 0 }}>Try a different spelling.</span>
           </div>
         )}
       </section>
