@@ -69,6 +69,7 @@ type SortKey = "name" | "season" | "teams" | "status" | "synced";
 type SortDir = "asc" | "desc";
 
 const STATUSES = ["pre_draft", "drafting", "in_season", "complete"] as const;
+const UNGROUPED = "__ungrouped__";
 
 export default function ManagerDashboard({
   accounts,
@@ -112,6 +113,7 @@ export default function ManagerDashboard({
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | (typeof STATUSES)[number]>("ALL");
+  const [groupFilter, setGroupFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [showAllClear, setShowAllClear] = useState(false);
@@ -189,9 +191,25 @@ export default function ManagerDashboard({
     return leagues.filter(
       (lg) =>
         (statusFilter === "ALL" || lg.status === statusFilter) &&
+        (groupFilter === "ALL" ||
+          (groupFilter === UNGROUPED ? !lg.group : lg.group === groupFilter)) &&
         (!q || lg.name.toLowerCase().includes(q))
     );
-  }, [leagues, query, statusFilter]);
+  }, [leagues, query, statusFilter, groupFilter]);
+
+  // Real distinct group values the owner has actually set, sorted by how
+  // many leagues use each — freeform text, so this is a dropdown (unbounded
+  // cardinality) rather than a chip row like the fixed status values above.
+  const groupOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    let ungrouped = 0;
+    for (const lg of leagues) {
+      if (lg.group) counts.set(lg.group, (counts.get(lg.group) ?? 0) + 1);
+      else ungrouped += 1;
+    }
+    const named = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+    return { named, ungrouped };
+  }, [leagues]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -361,6 +379,12 @@ export default function ManagerDashboard({
                 </>
               )}
             </div>
+            {lastRun && (
+              <div className="hint" style={{ marginTop: 2 }}>
+                rosters {lastRun.rostersOk}/{lastRun.leaguesOk} · matchups {lastRun.matchupsOk}/
+                {lastRun.leaguesOk} · drafts {lastRun.draftsOk}/{lastRun.leaguesOk}
+              </div>
+            )}
             {!connected && (
               <div className="hint" style={{ marginTop: 4 }}>
                 <a
@@ -595,6 +619,23 @@ export default function ManagerDashboard({
                 {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
               </button>
             ))}
+            {(groupOptions.named.length > 0 || groupOptions.ungrouped > 0) && (
+              <select
+                className="select sm"
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+              >
+                <option value="ALL">All groups</option>
+                {groupOptions.named.map(([name, count]) => (
+                  <option key={name} value={name}>
+                    {name} ({count})
+                  </option>
+                ))}
+                {groupOptions.ungrouped > 0 && (
+                  <option value={UNGROUPED}>Ungrouped ({groupOptions.ungrouped})</option>
+                )}
+              </select>
+            )}
           </div>
 
           <div
@@ -634,6 +675,18 @@ export default function ManagerDashboard({
               <Link href={`/manager/${lg.id}`} className="mgrrow" key={lg.id}>
                 <LeagueAvatar league={lg} />
                 <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
+                {lg.group && (
+                  <span
+                    className="pos"
+                    style={{
+                      color: "var(--amber)",
+                      background: "color-mix(in srgb, var(--amber) 16%, transparent)",
+                      borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                    }}
+                  >
+                    {lg.group}
+                  </span>
+                )}
                 <span className="portmeta">{lg.totalRosters} teams</span>
                 <span className="portmeta">{lg.season}</span>
                 <span className="pos" style={statusChipStyle(lg.status)}>

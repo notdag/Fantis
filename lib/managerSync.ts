@@ -43,6 +43,13 @@ export interface SyncResult {
   leaguesSeen: number;
   leaguesOk: number;
   leaguesFailed: number;
+  // Per-step counts within the leagues that succeeded overall — a league
+  // can be "ok" while legitimately having no matchup (pre-draft) or no
+  // draft (draft_id missing), so these are real sub-counts, not a second
+  // pass/fail axis.
+  rostersOk: number;
+  matchupsOk: number;
+  draftsOk: number;
   errors: SyncError[];
   // Set only when the account-level league list itself couldn't be fetched
   // at all (nothing to batch yet) — distinct from a per-league failure.
@@ -62,6 +69,9 @@ export async function syncAccount(
       leaguesSeen: 0,
       leaguesOk: 0,
       leaguesFailed: 0,
+      rostersOk: 0,
+      matchupsOk: 0,
+      draftsOk: 0,
       errors: [],
       fatal: e instanceof Error ? e.message : "Couldn't reach Sleeper for this account's leagues.",
     };
@@ -102,6 +112,9 @@ export async function syncAccount(
 
   const errors: SyncError[] = [];
   let ok = 0;
+  let rostersOk = 0;
+  let matchupsOk = 0;
+  let draftsOk = 0;
 
   // Chunks of 10 concurrent, sequential rounds. Promise.allSettled (not
   // Promise.all) deliberately — one bad league's fetch must not take down
@@ -167,6 +180,7 @@ export async function syncAccount(
               lastSyncedAt: new Date(),
             },
           });
+          rostersOk += 1;
         }
 
         if (myRoster && lg.status === "in_season") {
@@ -219,6 +233,7 @@ export async function syncAccount(
                   lastSyncedAt: new Date(),
                 },
               });
+              matchupsOk += 1;
             }
           }
         }
@@ -246,6 +261,7 @@ export async function syncAccount(
                 lastSyncedAt: new Date(),
               },
             });
+            draftsOk += 1;
           }
         }
 
@@ -325,6 +341,9 @@ export async function syncAccount(
     leaguesSeen: leagues.length,
     leaguesOk: ok,
     leaguesFailed: errors.length,
+    rostersOk,
+    matchupsOk,
+    draftsOk,
     errors,
   };
 }

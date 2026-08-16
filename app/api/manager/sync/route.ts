@@ -42,6 +42,9 @@ export async function POST(req: Request) {
   let leaguesSeen = 0;
   let leaguesOk = 0;
   let leaguesFailed = 0;
+  let rostersOk = 0;
+  let matchupsOk = 0;
+  let draftsOk = 0;
   const errors: (SyncError | { message: string })[] = [];
 
   for (const account of accounts) {
@@ -53,6 +56,9 @@ export async function POST(req: Request) {
     leaguesSeen += result.leaguesSeen;
     leaguesOk += result.leaguesOk;
     leaguesFailed += result.leaguesFailed;
+    rostersOk += result.rostersOk;
+    matchupsOk += result.matchupsOk;
+    draftsOk += result.draftsOk;
     errors.push(...result.errors);
   }
 
@@ -70,6 +76,9 @@ export async function POST(req: Request) {
       leaguesSeen,
       leaguesOk,
       leaguesFailed,
+      rostersOk,
+      matchupsOk,
+      draftsOk,
       errors: (errors.length > 0 ? errors : undefined) as Prisma.InputJsonValue | undefined,
     },
   });

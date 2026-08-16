@@ -21,6 +21,7 @@ export interface ManagedLeague {
   totalRosters: number;
   status: string;
   settings: unknown;
+  group: string | null;
   lastSyncedAt: string | null;
 }
 
@@ -39,6 +40,9 @@ export interface ManagedSyncRun {
   leaguesSeen: number;
   leaguesOk: number;
   leaguesFailed: number;
+  rostersOk: number;
+  matchupsOk: number;
+  draftsOk: number;
   errors: ManagedSyncRunError[] | null;
 }
 

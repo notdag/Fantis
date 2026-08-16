@@ -73,6 +73,27 @@ export default function LeagueDetail({
   // always taking space above the actually-useful roster/alerts content.
   const [infoOpen, setInfoOpen] = useState(false);
   const [snoozing, setSnoozing] = useState<string | null>(null);
+
+  // League Groups: a free-text label the owner sets to organize leagues by
+  // whatever grouping matters to them (buy-in tier, friend group, etc.) —
+  // Fantis's own data, never read from or written to Sleeper.
+  const [editingGroup, setEditingGroup] = useState(false);
+  const [groupValue, setGroupValue] = useState(league.group ?? "");
+  const [savingGroup, setSavingGroup] = useState(false);
+  const saveGroup = async () => {
+    setSavingGroup(true);
+    try {
+      await fetch(`/api/manager/leagues/${league.id}/group`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group: groupValue.trim() || null }),
+      });
+      setEditingGroup(false);
+      router.refresh();
+    } finally {
+      setSavingGroup(false);
+    }
+  };
   const snooze = async (alertId: string, hours: number) => {
     setSnoozing(alertId);
     try {
@@ -165,6 +186,49 @@ export default function LeagueDetail({
               <span className="pos" style={statusChipStyle(league.status)}>
                 {statusLabel(league.status)}
               </span>
+              {editingGroup ? (
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    className="input"
+                    style={{ padding: "4px 8px", fontSize: 12.5, width: 140 }}
+                    placeholder="Group name…"
+                    value={groupValue}
+                    autoFocus
+                    onChange={(e) => setGroupValue(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && saveGroup()}
+                  />
+                  <button className="btn ghost sm" disabled={savingGroup} onClick={saveGroup}>
+                    Save
+                  </button>
+                  <button
+                    className="linklike"
+                    style={{ fontSize: 12.5 }}
+                    onClick={() => {
+                      setGroupValue(league.group ?? "");
+                      setEditingGroup(false);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button
+                  className={league.group ? "pos" : "linklike"}
+                  style={
+                    league.group
+                      ? {
+                          color: "var(--amber)",
+                          background: "color-mix(in srgb, var(--amber) 16%, transparent)",
+                          borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                          cursor: "pointer",
+                        }
+                      : { fontSize: 13 }
+                  }
+                  onClick={() => setEditingGroup(true)}
+                >
+                  {league.group ?? "+ Add group"}
+                </button>
+              )}
               <button className="linklike" onClick={() => setInfoOpen((v) => !v)} style={{ fontSize: 13 }}>
                 {infoOpen ? "Hide info" : "League info"}
               </button>

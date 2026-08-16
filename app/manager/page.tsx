@@ -56,6 +56,7 @@ export default async function ManagerPage() {
     totalRosters: lg.totalRosters,
     status: lg.status,
     settings: lg.settings,
+    group: lg.group,
     lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
   }));
 
@@ -69,6 +70,9 @@ export default async function ManagerPage() {
         leaguesSeen: lastRunRow.leaguesSeen,
         leaguesOk: lastRunRow.leaguesOk,
         leaguesFailed: lastRunRow.leaguesFailed,
+        rostersOk: lastRunRow.rostersOk,
+        matchupsOk: lastRunRow.matchupsOk,
+        draftsOk: lastRunRow.draftsOk,
         errors: (lastRunRow.errors as ManagedSyncRunError[] | null) ?? null,
       }
     : null;

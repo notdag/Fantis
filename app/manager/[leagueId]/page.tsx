@@ -41,6 +41,7 @@ export default async function ManagerLeaguePage({
     totalRosters: row.totalRosters,
     status: row.status,
     settings: row.settings,
+    group: row.group,
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
   };
 

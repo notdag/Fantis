@@ -143,6 +143,11 @@ model League {
   // sub-field defensively. Null only transiently between the initial
   // "connect" summary upsert and that league's first detail-sync pass.
   settings     Json?
+  // Fantis's own data, not Sleeper's — a free-text label the owner sets to
+  // group leagues that share nothing Sleeper exposes (buy-in tier, which
+  // friend group, dynasty vs redraft naming isn't a real field). Never
+  // written by sync; only by the owner via the group-editing UI.
+  group        String?
   lastSyncedAt DateTime?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
@@ -167,6 +172,13 @@ model SyncRun {
   leaguesSeen   Int             @default(0)
   leaguesOk     Int             @default(0)
   leaguesFailed Int             @default(0)
+  // Per-step counts, not just per-league pass/fail — a league can succeed
+  // overall while its matchup/draft sub-fetch was legitimately skipped
+  // (pre-draft has no matchup; no draft_id means no draft). These make that
+  // visible instead of collapsing everything into one ok/fail number.
+  rostersOk     Int             @default(0)
+  matchupsOk    Int             @default(0)
+  draftsOk      Int             @default(0)
   errors        Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
 
   @@index([accountId])
