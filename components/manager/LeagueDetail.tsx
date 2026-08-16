@@ -7,8 +7,6 @@ import {
   statusChipStyle,
   statusLabel,
   formatRelative,
-  alertSeverityChipStyle,
-  isSnoozed,
   type ManagedAlert,
   type ManagedDraft,
   type ManagedLeague,
@@ -18,6 +16,7 @@ import {
 import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
+import AlertRow from "./AlertRow";
 import type { PlayerMap } from "@/lib/types";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
@@ -72,7 +71,6 @@ export default function LeagueDetail({
   // useful to see every visit — collapsed behind a toggle rather than
   // always taking space above the actually-useful roster/alerts content.
   const [infoOpen, setInfoOpen] = useState(false);
-  const [snoozing, setSnoozing] = useState<string | null>(null);
 
   // League Groups: a free-text label the owner sets to organize leagues by
   // whatever grouping matters to them (buy-in tier, friend group, etc.) —
@@ -94,20 +92,6 @@ export default function LeagueDetail({
       setSavingGroup(false);
     }
   };
-  const snooze = async (alertId: string, hours: number) => {
-    setSnoozing(alertId);
-    try {
-      await fetch(`/api/manager/alerts/${alertId}/snooze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hours }),
-      });
-      router.refresh();
-    } finally {
-      setSnoozing(null);
-    }
-  };
-
   // Player id -> name/position/team/injury resolved client-side, same
   // day-cached pattern as TeamHub.tsx/Portfolio.tsx — keeps live Sleeper
   // calls out of Server Components.
@@ -331,64 +315,9 @@ export default function LeagueDetail({
           <div className="tradeinbox">
             {[...alerts]
               .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "action_required" ? -1 : 1))
-              .map((a) => {
-                const snoozed = mounted && isSnoozed(a);
-                return (
-                  <div className="tradeinboxrow" key={a.id}>
-                    <span className="pos" style={alertSeverityChipStyle(a.severity)}>
-                      {a.severity === "action_required" ? "action required" : "review"}
-                    </span>
-                    <span className="tname" style={{ flex: 1 }}>
-                      {a.message}
-                    </span>
-                    {snoozed ? (
-                      <>
-                        <span className="portmeta">
-                          snoozed until {mounted ? new Date(a.snoozedUntil!).toLocaleString() : "—"}
-                        </span>
-                        <button
-                          className="btn ghost sm"
-                          disabled={snoozing === a.id}
-                          onClick={() => snooze(a.id, 0)}
-                        >
-                          Un-snooze
-                        </button>
-                      </>
-                    ) : (
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button
-                          className="btn ghost sm"
-                          disabled={snoozing === a.id}
-                          onClick={() => snooze(a.id, 24)}
-                        >
-                          1d
-                        </button>
-                        <button
-                          className="btn ghost sm"
-                          disabled={snoozing === a.id}
-                          onClick={() => snooze(a.id, 72)}
-                        >
-                          3d
-                        </button>
-                        <button
-                          className="btn ghost sm"
-                          disabled={snoozing === a.id}
-                          onClick={() => snooze(a.id, 24 * 7)}
-                        >
-                          1wk
-                        </button>
-                        <button
-                          className="btn ghost sm"
-                          disabled={snoozing === a.id}
-                          onClick={() => snooze(a.id, 24 * 365)}
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              .map((a) => (
+                <AlertRow key={a.id} alert={a} mounted={mounted} />
+              ))}
           </div>
         </section>
       )}

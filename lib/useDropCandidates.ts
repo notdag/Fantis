@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getSeasonProjectionTotals, getState } from "./sleeper";
-import type { SeasonProjectionTotal } from "./types";
+import type { PlayerMap, SeasonProjectionTotal } from "./types";
 
 // Real season-long PPR projection per player, same source and same
 // day-cached fetch pattern as lib/useTradeValues.ts's season-totals effect
@@ -68,4 +68,37 @@ export function pickDropCandidate(
 
   const starterPick = rank(players);
   return starterPick ? { ...starterPick, fromBench: false } : null;
+}
+
+export interface ReplacementCandidate {
+  playerId: string;
+  value: number;
+}
+
+// The inverse of pickDropCandidate: given a starter who needs replacing
+// (injured/questionable/bye alert), the highest real season-points bench
+// player at the exact same position — same season-projection source, same
+// "no flex/roster-rule awareness, confirm on Sleeper" caveat as the drop
+// suggestion. Returns null with no eligible same-position bench player, no
+// season data yet, or the outgoing player isn't in pmap.
+export function pickReplacementCandidate(
+  outgoingPlayerId: string,
+  players: string[],
+  starters: string[],
+  pmap: PlayerMap | null,
+  seasonTotals: Record<string, SeasonProjectionTotal> | null
+): ReplacementCandidate | null {
+  if (!pmap || !seasonTotals) return null;
+  const pos = pmap[outgoingPlayerId]?.p;
+  if (!pos) return null;
+
+  let best: ReplacementCandidate | null = null;
+  for (const id of players) {
+    if (starters.includes(id) || id === outgoingPlayerId) continue;
+    if (pmap[id]?.p !== pos) continue;
+    const pts = seasonTotals[id]?.pts;
+    if (pts == null) continue;
+    if (!best || pts > best.value) best = { playerId: id, value: pts };
+  }
+  return best;
 }
