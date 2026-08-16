@@ -30,6 +30,8 @@ export interface SleeperRosterSettings {
   fpts_decimal?: number;
   fpts_against?: number;
   fpts_against_decimal?: number;
+  waiver_position?: number;
+  waiver_budget_used?: number;
 }
 
 export interface SleeperRoster {
@@ -37,6 +39,7 @@ export interface SleeperRoster {
   owner_id: string;
   starters: string[] | null;
   players: string[] | null;
+  reserve: string[] | null;
   settings?: SleeperRosterSettings;
 }
 

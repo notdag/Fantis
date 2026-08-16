@@ -178,17 +178,20 @@ model SyncRun {
 // scope). leagueId is the primary key (1:1); Sleeper's own roster_id is
 // only unique *within* a league, so it can't be the PK on its own.
 model Roster {
-  leagueId     String    @id
-  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  rosterId     Int // Sleeper's roster_id within this league
-  starters     String[] // "0" = Sleeper's real empty-slot placeholder
-  players      String[]
-  wins         Int       @default(0)
-  losses       Int       @default(0)
-  ties         Int       @default(0)
-  fpts         Float?
-  fptsAgainst  Float?
-  lastSyncedAt DateTime?
+  leagueId       String    @id
+  league         League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId       Int // Sleeper's roster_id within this league
+  starters       String[] // "0" = Sleeper's real empty-slot placeholder
+  players        String[]
+  reserve        String[] @default([]) // real Sleeper IR/reserve slot — confirmed real field, distinct from players/starters
+  waiverPosition Int?
+  faabUsed       Int?
+  wins           Int       @default(0)
+  losses         Int       @default(0)
+  ties           Int       @default(0)
+  fpts           Float?
+  fptsAgainst    Float?
+  lastSyncedAt   DateTime?
 }
 
 // One row per league per week — my side + resolved opponent. Only synced

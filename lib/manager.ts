@@ -47,6 +47,9 @@ export interface ManagedRoster {
   rosterId: number;
   starters: string[];
   players: string[];
+  reserve: string[];
+  waiverPosition: number | null;
+  faabUsed: number | null;
   wins: number;
   losses: number;
   ties: number;

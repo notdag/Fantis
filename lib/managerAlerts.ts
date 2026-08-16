@@ -19,6 +19,7 @@ export type AlertSeverity = "action_required" | "review";
 export interface ComputedAlert {
   type:
     | "injured_starter"
+    | "questionable_starter"
     | "empty_slot"
     | "bye_starter"
     | "draft_upcoming"
@@ -55,6 +56,7 @@ export function computeAlerts(input: ComputeAlertsInput): ComputedAlert[] {
   if (input.leagueStatus === "in_season") {
     alerts.push(...checkEmptySlots(input));
     alerts.push(...checkInjuredStarters(input));
+    alerts.push(...checkQuestionableStarters(input));
     alerts.push(...checkByeStarters(input));
     alerts.push(...checkTradeDeadline(input));
   }
@@ -95,6 +97,29 @@ function checkInjuredStarters({ starters, pmap }: ComputeAlertsInput): ComputedA
       message: `${entry.n} (${entry.p}) is starting while listed ${entry.inj}`,
       playerId,
       dedupKey: dedupKey("injured_starter", playerId, ""),
+    });
+  }
+  return out;
+}
+
+// Separate from checkInjuredStarters (which is Out/Doubtful/IR — likely to
+// actually score zero) — Questionable is real Sleeper data too but a much
+// weaker signal (the player may well play), so it's review, not
+// action_required, and kept as its own alert type rather than folded into
+// the existing regex.
+function checkQuestionableStarters({ starters, pmap }: ComputeAlertsInput): ComputedAlert[] {
+  if (!pmap) return [];
+  const out: ComputedAlert[] = [];
+  for (const playerId of starters) {
+    if (!playerId || playerId === "0") continue;
+    const entry = pmap[playerId];
+    if (!entry?.inj || !/^questionable$/i.test(entry.inj)) continue;
+    out.push({
+      type: "questionable_starter",
+      severity: "review",
+      message: `${entry.n} (${entry.p}) is starting while listed Questionable`,
+      playerId,
+      dedupKey: dedupKey("questionable_starter", playerId, ""),
     });
   }
   return out;

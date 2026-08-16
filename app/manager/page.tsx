@@ -29,13 +29,14 @@ export default async function ManagerPage() {
     );
   }
 
-  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow] = await Promise.all([
+  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow, rosterRows] = await Promise.all([
     db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
     db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
     db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
     db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
     db.draft.findMany(),
     db.automationPing.findUnique({ where: { id: "singleton" } }),
+    db.roster.findMany({ select: { wins: true, losses: true, ties: true, fpts: true } }),
   ]);
 
   const accounts: ManagedAccount[] = accountRows.map((a) => ({
@@ -106,6 +107,7 @@ export default async function ManagerPage() {
       alertsByLeague={alertsByLeague}
       draftsByLeague={draftsByLeague}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
+      rosters={rosterRows}
     />
   );
 }

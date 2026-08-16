@@ -41,6 +41,7 @@ export default async function PlayerPage() {
         leagueName: lg.name,
         players: roster.players,
         starters: roster.starters,
+        reserve: roster.reserve,
       };
     });
 

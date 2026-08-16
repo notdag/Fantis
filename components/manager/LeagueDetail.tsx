@@ -358,7 +358,9 @@ export default function LeagueDetail({
             <h2 style={{ fontSize: 18 }}>My roster</h2>
             <span className="rt">
               {roster.wins}-{roster.losses}
-              {roster.ties > 0 ? `-${roster.ties}` : ""} · synced{" "}
+              {roster.ties > 0 ? `-${roster.ties}` : ""}
+              {roster.waiverPosition != null ? ` · waiver #${roster.waiverPosition}` : ""}
+              {roster.faabUsed != null ? ` · $${roster.faabUsed} FAAB used` : ""} · synced{" "}
               {mounted ? formatRelative(roster.lastSyncedAt) : "—"}
             </span>
           </div>

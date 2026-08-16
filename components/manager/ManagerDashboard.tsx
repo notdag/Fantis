@@ -77,6 +77,7 @@ export default function ManagerDashboard({
   alertsByLeague,
   draftsByLeague,
   automationLastPingAt,
+  rosters,
 }: {
   accounts: ManagedAccount[];
   leagues: ManagedLeague[];
@@ -84,6 +85,7 @@ export default function ManagerDashboard({
   alertsByLeague: Record<string, ManagedAlert[]>;
   draftsByLeague: Record<string, ManagedDraft>;
   automationLastPingAt: string | null;
+  rosters: { wins: number; losses: number; ties: number; fpts: number | null }[];
 }) {
   // Shared guard for every Date.now()-dependent render below
   // (automationConnected, formatRelative, formatUpcoming, draftsThisWeek) —
@@ -274,6 +276,26 @@ export default function ManagerDashboard({
     return latest;
   }, null);
 
+  // Real combined record/points across every synced roster — same
+  // aggregation components/manager/MyTeams.tsx already does, so the two
+  // pages should never disagree since they're the same source data.
+  const portfolio = useMemo(() => {
+    let wins = 0, losses = 0, ties = 0, fpts = 0, withPoints = 0;
+    for (const r of rosters) {
+      wins += r.wins;
+      losses += r.losses;
+      ties += r.ties;
+      if (r.fpts != null) {
+        fpts += r.fpts;
+        withPoints += 1;
+      }
+    }
+    const games = wins + losses + ties;
+    const winPct = games > 0 ? ((wins + ties * 0.5) / games) * 100 : null;
+    const avgPts = withPoints > 0 ? fpts / withPoints : null;
+    return { wins, losses, ties, winPct, totalPts: fpts, avgPts };
+  }, [rosters]);
+
   return (
     <>
       <section className="sec" style={{ paddingTop: 12, paddingBottom: detailsOpen ? undefined : 12 }}>
@@ -332,7 +354,10 @@ export default function ManagerDashboard({
                 <>
                   {" "}
                   · last run: {lastRun.status} ({lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues ok
-                  {lastRun.leaguesFailed > 0 ? `, ${lastRun.leaguesFailed} failed` : ""})
+                  {lastRun.leaguesFailed > 0 ? `, ${lastRun.leaguesFailed} failed` : ""}
+                  {lastRun.finishedAt &&
+                    ` in ${((new Date(lastRun.finishedAt).getTime() - new Date(lastRun.startedAt).getTime()) / 1000).toFixed(1)}s`}
+                  )
                 </>
               )}
             </div>
@@ -416,6 +441,26 @@ export default function ManagerDashboard({
               <div className="mgrstatbody">
                 <p className="mgrstatlabel">All clear</p>
                 <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{groups.allClear.length}</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Combined record</p>
+                <p className="mgrstatvalue">
+                  {portfolio.wins}-{portfolio.losses}
+                  {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
+                  {portfolio.winPct != null && (
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
+                      {portfolio.winPct.toFixed(0)}%
+                    </span>
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Avg points / league</p>
+                <p className="mgrstatvalue">{portfolio.avgPts != null ? portfolio.avgPts.toFixed(1) : "—"}</p>
               </div>
             </div>
           </div>

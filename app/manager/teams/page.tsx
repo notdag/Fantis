@@ -61,6 +61,8 @@ export default async function TeamsPage() {
       opponentPoints: matchup?.opponentPoints ?? null,
       week: matchup?.week ?? null,
       alertCount: alertCountByLeague.get(lg.id) ?? 0,
+      waiverPosition: roster?.waiverPosition ?? null,
+      faabUsed: roster?.faabUsed ?? null,
     };
   });
 

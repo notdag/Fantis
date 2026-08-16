@@ -13,6 +13,7 @@ export interface PlayerLeagueRow {
   leagueName: string;
   players: string[];
   starters: string[];
+  reserve: string[];
 }
 
 export interface PlayerAlertRef {
@@ -22,7 +23,7 @@ export interface PlayerAlertRef {
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
 
-type Status = "starting" | "bench" | "not_rostered";
+type Status = "starting" | "bench" | "ir" | "not_rostered";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
   const ring = pos ? posChipStyle(pos).color : "var(--line)";
@@ -86,7 +87,9 @@ export default function PlayerLeagues({
     if (!selectedId) return [];
     return leagues.map((lg) => {
       let status: Status = "not_rostered";
-      if (lg.players.includes(selectedId)) {
+      if (lg.reserve.includes(selectedId)) {
+        status = "ir";
+      } else if (lg.players.includes(selectedId)) {
         status = lg.starters.includes(selectedId) ? "starting" : "bench";
       }
       const needsAttention = attentionKeys.has(`${lg.leagueId}:${selectedId}`);
@@ -98,7 +101,39 @@ export default function PlayerLeagues({
   const startingAttention = starting.filter((r) => r.needsAttention);
   const startingClear = starting.filter((r) => !r.needsAttention);
   const bench = rows.filter((r) => r.status === "bench");
+  const ir = rows.filter((r) => r.status === "ir");
   const notRostered = rows.filter((r) => r.status === "not_rostered");
+
+  // Real position-exposure breakdown across every synced roster — no
+  // search needed, shown as the default view. Pure aggregation over data
+  // already fetched (Roster.players + the same pmap this page already
+  // loads for search), no new Sleeper calls.
+  const exposure = useMemo(() => {
+    if (!pmap) return null;
+    const counts = new Map<string, Map<string, number>>();
+    for (const lg of leagues) {
+      for (const playerId of lg.players) {
+        const entry = pmap[playerId];
+        if (!entry || !OFFENSE_POS.has(entry.p)) continue;
+        const byPos = counts.get(entry.p) ?? new Map<string, number>();
+        byPos.set(playerId, (byPos.get(playerId) ?? 0) + 1);
+        counts.set(entry.p, byPos);
+      }
+    }
+    const out: Record<string, { playerId: string; count: number }[]> = {};
+    for (const pos of ["QB", "RB", "WR", "TE"]) {
+      const byPos = counts.get(pos);
+      if (!byPos) {
+        out[pos] = [];
+        continue;
+      }
+      out[pos] = Array.from(byPos.entries())
+        .map(([playerId, count]) => ({ playerId, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 8);
+    }
+    return out;
+  }, [leagues, pmap]);
 
   const renderRows = (list: typeof rows, severity: "action_required" | "review" | "clear" | null) => (
     <div className="mgrtable">
@@ -184,6 +219,51 @@ export default function PlayerLeagues({
         )}
       </section>
 
+      {!selectedId && exposure && (
+        <section className="sec">
+          <div className="sechead">
+            <h2 style={{ fontSize: 18 }}>Position exposure</h2>
+            <span className="rt">across {leagues.length} synced leagues</span>
+          </div>
+          <p className="hint" style={{ marginBottom: 12 }}>
+            Real ownership counts across every rostered player — no search needed.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+            {(["QB", "RB", "WR", "TE"] as const).map((pos) => (
+              <div key={pos}>
+                <p className="mgrstatlabel" style={{ marginBottom: 6 }}>{pos}</p>
+                <div className="mgrtable">
+                  {exposure[pos].length === 0 && (
+                    <div className="mgrrow static">
+                      <span className="hint" style={{ margin: 0 }}>No data yet.</span>
+                    </div>
+                  )}
+                  {exposure[pos].map(({ playerId, count }) => {
+                    const entry = pmap?.[playerId];
+                    const pct = leagues.length > 0 ? Math.round((count / leagues.length) * 100) : 0;
+                    return (
+                      <button
+                        key={playerId}
+                        className="mgrrow"
+                        style={{ border: "none" }}
+                        onClick={() => {
+                          setSelectedId(playerId);
+                          setQuery(entry?.n ?? "");
+                        }}
+                      >
+                        <Avatar playerId={playerId} pos={entry?.p} size={22} />
+                        <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
+                        <span className="portvalue">{pct}%</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {selectedId && (
         <>
           <section className="sec">
@@ -236,6 +316,18 @@ export default function PlayerLeagues({
               <div className="mgrstat">
                 <div
                   className="mgrstaticon"
+                  style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
+                >
+                  <IconUsers width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">IR</p>
+                  <p className="mgrstatvalue">{ir.length}</p>
+                </div>
+              </div>
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
                   style={{ color: "var(--dim)", background: "color-mix(in srgb, var(--dim) 16%, transparent)" }}
                 >
                   <IconUsers width={17} height={17} />
@@ -275,6 +367,16 @@ export default function PlayerLeagues({
                 <span className="rt">{bench.length} leagues</span>
               </div>
               {renderRows(bench, null)}
+            </section>
+          )}
+
+          {ir.length > 0 && (
+            <section className="sec">
+              <div className="sechead">
+                <h2 style={{ fontSize: 18 }}>IR</h2>
+                <span className="rt">{ir.length} leagues</span>
+              </div>
+              {renderRows(ir, null)}
             </section>
           )}
 

@@ -17,6 +17,8 @@ export interface MyTeamRow {
   opponentPoints: number | null;
   week: number | null;
   alertCount: number;
+  waiverPosition: number | null;
+  faabUsed: number | null;
 }
 
 type SortKey = "name" | "record" | "week" | "alerts";
@@ -148,6 +150,10 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
                 <span className="tname" style={{ flex: 1 }}>{t.leagueName}</span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {hasRecord ? `${t.wins}-${t.losses}${(t.ties ?? 0) > 0 ? `-${t.ties}` : ""}` : "—"}
+                </span>
+                <span className="portmeta" style={{ minWidth: 70 }}>
+                  {t.waiverPosition != null ? `waiver #${t.waiverPosition}` : ""}
+                  {t.faabUsed != null ? `${t.waiverPosition != null ? " · " : ""}$${t.faabUsed} used` : ""}
                 </span>
                 <span className="portmeta" style={{ minWidth: 130, textAlign: "right" }}>
                   {hasMatchup
