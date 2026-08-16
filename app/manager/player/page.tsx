@@ -24,7 +24,10 @@ export default async function PlayerPage() {
   const [leagueRows, rosterRows, alertRows] = await Promise.all([
     db.league.findMany({ orderBy: { name: "asc" } }),
     db.roster.findMany(),
-    db.alert.findMany({ where: { playerId: { not: null } }, select: { leagueId: true, playerId: true } }),
+    db.alert.findMany({
+      where: { playerId: { not: null }, resolvedAt: null },
+      select: { leagueId: true, playerId: true, snoozedUntil: true },
+    }),
   ]);
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
@@ -41,10 +44,15 @@ export default async function PlayerPage() {
       };
     });
 
-  const alertRefs: PlayerAlertRef[] = alertRows.map((a) => ({
-    leagueId: a.leagueId,
-    playerId: a.playerId as string,
-  }));
+  // Same "snoozed drops out of the needs-attention view" filtering as
+  // the Commissioner page and Today's dashboard groups.
+  const now = new Date();
+  const alertRefs: PlayerAlertRef[] = alertRows
+    .filter((a) => !a.snoozedUntil || a.snoozedUntil <= now)
+    .map((a) => ({
+      leagueId: a.leagueId,
+      playerId: a.playerId as string,
+    }));
 
   return <PlayerLeagues leagues={leagues} alertRefs={alertRefs} />;
 }

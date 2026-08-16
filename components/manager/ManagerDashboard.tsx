@@ -10,6 +10,7 @@ import {
   formatUpcoming,
   alertSeverityChipStyle,
   automationConnected,
+  isSnoozed,
   type ManagedAccount,
   type ManagedAlert,
   type ManagedDraft,
@@ -173,7 +174,10 @@ export default function ManagerDashboard({
     let draftsThisWeek = 0;
 
     for (const lg of leagues) {
-      const alerts = alertsByLeague[lg.id] ?? [];
+      // Snoozed alerts are real/active (still counted toward "All clear"
+      // being false), but don't clutter the exception groups — same
+      // filtering as the Commissioner/Player search server pages.
+      const alerts = (alertsByLeague[lg.id] ?? []).filter((a) => !isSnoozed(a));
       const required = alerts.filter((a) => a.severity === "action_required");
       const unclaimed = alerts.filter((a) => a.type === "unclaimed_team");
       const draftAlert = alerts.find((a) => a.type === "draft_upcoming");

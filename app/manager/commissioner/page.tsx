@@ -21,10 +21,15 @@ export default async function CommissionerPage() {
     );
   }
 
-  const alerts = await db.alert.findMany({
-    where: { type: "unclaimed_team" },
+  const alertRows = await db.alert.findMany({
+    where: { type: "unclaimed_team", resolvedAt: null },
     include: { league: true },
   });
+  // Snoozed alerts stay real/active (visible on the league detail page,
+  // which is where snoozing happens) but drop out of this "what needs a
+  // commissioner action" view — same filtering spirit as Today's groups.
+  const now = new Date();
+  const alerts = alertRows.filter((a) => !a.snoozedUntil || a.snoozedUntil <= now);
 
   return (
     <section className="sec">

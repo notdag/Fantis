@@ -245,18 +245,46 @@ export async function syncAccount(
           draftStatus,
           tradeDeadlineWeek,
         });
-        await db.alert.deleteMany({ where: { leagueId: lg.league_id } });
-        if (computed.length > 0) {
-          await db.alert.createMany({
-            data: computed.map((a) => ({
-              leagueId: lg.league_id,
-              type: a.type,
-              severity: a.severity,
-              message: a.message,
-              playerId: a.playerId,
-              week,
-            })),
-          });
+        // Diff against currently-unresolved alerts (by dedupKey) instead of
+        // wiping and recreating — this is what makes snooze survive across
+        // syncs (an update never touches snoozedUntil) and gives real
+        // history (a dedupKey that drops out of `computed` gets a real
+        // resolvedAt instead of just vanishing). Only matches against
+        // resolvedAt: null rows, so a condition that reoccurs after having
+        // once resolved creates a fresh row rather than reactivating the
+        // old one — the old resolved instance stays intact as its own
+        // history entry.
+        const existingAlerts = await db.alert.findMany({
+          where: { leagueId: lg.league_id, resolvedAt: null },
+        });
+        const existingByKey = new Map(existingAlerts.map((a) => [a.dedupKey, a]));
+        const computedKeys = new Set(computed.map((a) => a.dedupKey));
+
+        for (const a of computed) {
+          const match = existingByKey.get(a.dedupKey);
+          if (match) {
+            await db.alert.update({
+              where: { id: match.id },
+              data: { message: a.message, severity: a.severity, week },
+            });
+          } else {
+            await db.alert.create({
+              data: {
+                leagueId: lg.league_id,
+                type: a.type,
+                severity: a.severity,
+                message: a.message,
+                playerId: a.playerId,
+                week,
+                dedupKey: a.dedupKey,
+              },
+            });
+          }
+        }
+        for (const old of existingAlerts) {
+          if (!computedKeys.has(old.dedupKey)) {
+            await db.alert.update({ where: { id: old.id }, data: { resolvedAt: new Date() } });
+          }
         }
       })
     );

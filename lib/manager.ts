@@ -77,6 +77,12 @@ export interface ManagedAlert {
   playerId: string | null;
   week: number;
   createdAt: string;
+  resolvedAt: string | null;
+  snoozedUntil: string | null;
+}
+
+export function isSnoozed(alert: ManagedAlert): boolean {
+  return alert.snoozedUntil != null && new Date(alert.snoozedUntil) > new Date();
 }
 
 export interface ManagedAction {

@@ -33,7 +33,7 @@ export default async function ManagerPage() {
     db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
     db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
     db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    db.alert.findMany({ orderBy: { createdAt: "asc" } }),
+    db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
     db.draft.findMany(),
     db.automationPing.findUnique({ where: { id: "singleton" } }),
   ]);
@@ -82,6 +82,8 @@ export default async function ManagerPage() {
       playerId: a.playerId,
       week: a.week,
       createdAt: a.createdAt.toISOString(),
+      resolvedAt: a.resolvedAt?.toISOString() ?? null,
+      snoozedUntil: a.snoozedUntil?.toISOString() ?? null,
     };
     (alertsByLeague[a.leagueId] ??= []).push(alert);
   }

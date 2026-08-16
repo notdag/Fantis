@@ -47,7 +47,7 @@ export default async function ManagerLeaguePage({
   const [rosterRow, matchupRow, alertRows, draftRow] = await Promise.all([
     db.roster.findUnique({ where: { leagueId } }),
     db.matchup.findFirst({ where: { leagueId }, orderBy: { week: "desc" } }),
-    db.alert.findMany({ where: { leagueId }, orderBy: { createdAt: "asc" } }),
+    db.alert.findMany({ where: { leagueId, resolvedAt: null }, orderBy: { createdAt: "asc" } }),
     db.draft.findFirst({ where: { leagueId } }),
   ]);
 
@@ -83,6 +83,8 @@ export default async function ManagerLeaguePage({
     playerId: a.playerId,
     week: a.week,
     createdAt: a.createdAt.toISOString(),
+    resolvedAt: a.resolvedAt?.toISOString() ?? null,
+    snoozedUntil: a.snoozedUntil?.toISOString() ?? null,
   }));
 
   const draft: ManagedDraft | null = draftRow

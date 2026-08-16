@@ -27,6 +27,16 @@ export interface ComputedAlert {
   severity: AlertSeverity;
   message: string;
   playerId: string | null;
+  dedupKey: string;
+}
+
+// Stable identity for "the same alert" across syncs — playerId disambiguates
+// per-player alert types (injured/bye starter); message disambiguates
+// per-slot alerts (empty_slot, since a league can have more than one) and is
+// harmless for the singleton types (draft/trade-deadline/unclaimed, which
+// only ever fire once per league per sync).
+function dedupKey(type: ComputedAlert["type"], playerId: string | null, message: string): string {
+  return `${type}:${playerId ?? message}`;
 }
 
 export interface ComputeAlertsInput {
@@ -59,11 +69,13 @@ function checkEmptySlots({ rosterPositions, starters }: ComputeAlertsInput): Com
   slots.forEach((slot, i) => {
     const playerId = starters[i];
     if (!playerId || playerId === "0") {
+      const message = `Empty ${slot.label} slot`;
       out.push({
         type: "empty_slot",
         severity: "action_required",
-        message: `Empty ${slot.label} slot`,
+        message,
         playerId: null,
+        dedupKey: dedupKey("empty_slot", null, message),
       });
     }
   });
@@ -82,6 +94,7 @@ function checkInjuredStarters({ starters, pmap }: ComputeAlertsInput): ComputedA
       severity: "action_required",
       message: `${entry.n} (${entry.p}) is starting while listed ${entry.inj}`,
       playerId,
+      dedupKey: dedupKey("injured_starter", playerId, ""),
     });
   }
   return out;
@@ -99,6 +112,7 @@ function checkByeStarters({ starters, pmap, currentWeek }: ComputeAlertsInput): 
       severity: "action_required",
       message: `${entry.n} (${entry.p}, ${entry.t}) is on bye this week but starting`,
       playerId,
+      dedupKey: dedupKey("bye_starter", playerId, ""),
     });
   }
   return out;
@@ -106,12 +120,17 @@ function checkByeStarters({ starters, pmap, currentWeek }: ComputeAlertsInput): 
 
 function checkDraftUpcoming({ draftStatus }: ComputeAlertsInput): ComputedAlert[] {
   if (!draftStatus || draftStatus === "complete") return [];
+  const message = draftStatus === "drafting" ? "Draft is in progress" : "Draft hasn't happened yet";
   return [
     {
       type: "draft_upcoming",
       severity: "review",
-      message: draftStatus === "drafting" ? "Draft is in progress" : "Draft hasn't happened yet",
+      message,
       playerId: null,
+      // Keyed by type alone, not message — the pre_draft -> drafting phase
+      // change is the same ongoing alert, not a new one, so it shouldn't
+      // "resolve" and restart just because the wording updates.
+      dedupKey: dedupKey("draft_upcoming", null, "draft_upcoming"),
     },
   ];
 }
@@ -120,15 +139,19 @@ function checkTradeDeadline({ tradeDeadlineWeek, currentWeek }: ComputeAlertsInp
   if (tradeDeadlineWeek == null) return [];
   const diff = tradeDeadlineWeek - currentWeek;
   if (diff < 0 || diff > TRADE_DEADLINE_WARNING_WEEKS) return [];
+  const message =
+    diff === 0
+      ? `Trade deadline is this week (week ${tradeDeadlineWeek})`
+      : `Trade deadline in ${diff} week${diff === 1 ? "" : "s"} (week ${tradeDeadlineWeek})`;
   return [
     {
       type: "trade_deadline_upcoming",
       severity: "review",
-      message:
-        diff === 0
-          ? `Trade deadline is this week (week ${tradeDeadlineWeek})`
-          : `Trade deadline in ${diff} week${diff === 1 ? "" : "s"} (week ${tradeDeadlineWeek})`,
+      message,
       playerId: null,
+      // Keyed by type alone — the countdown wording changes every week,
+      // but it's the same approaching-deadline alert, not a new one.
+      dedupKey: dedupKey("trade_deadline_upcoming", null, "trade_deadline_upcoming"),
     },
   ];
 }
@@ -143,6 +166,9 @@ function checkUnclaimedTeam({ leagueStatus, rosterOwnerIds }: ComputeAlertsInput
       severity: "review",
       message: `${unclaimed} unclaimed team${unclaimed === 1 ? "" : "s"} in this league`,
       playerId: null,
+      // Keyed by type alone, same reasoning as draft/trade-deadline above —
+      // the count fluctuating as teams get claimed shouldn't churn history.
+      dedupKey: dedupKey("unclaimed_team", null, "unclaimed_team"),
     },
   ];
 }

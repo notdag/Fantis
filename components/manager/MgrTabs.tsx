@@ -9,6 +9,7 @@ const TABS = [
   { href: "/manager/player", label: "Player search" },
   { href: "/manager/drafts", label: "Drafts" },
   { href: "/manager/commissioner", label: "Commissioner" },
+  { href: "/manager/history", label: "History" },
 ];
 
 export default function MgrTabs() {

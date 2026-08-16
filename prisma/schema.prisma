@@ -228,17 +228,21 @@ model Draft {
 // the freshly computed set) — simplest correct approach, no incremental
 // dedup/read-state tracking.
 model Alert {
-  id        String   @id @default(cuid())
-  leagueId  String
-  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  type      String // injured_starter | empty_slot | bye_starter | draft_upcoming | trade_deadline_upcoming | unclaimed_team
-  severity  String // action_required | review
-  message   String // full human-readable text, built at compute time
-  playerId  String?
-  week      Int
-  createdAt DateTime @default(now())
+  id           String    @id @default(cuid())
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  type         String // injured_starter | empty_slot | bye_starter | draft_upcoming | trade_deadline_upcoming | unclaimed_team
+  severity     String // action_required | review
+  message      String // full human-readable text, built at compute time
+  playerId     String?
+  week         Int
+  dedupKey     String // `${type}:${playerId ?? message}` — stable identity across syncs
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime? // set when a sync no longer reproduces this dedupKey
+  snoozedUntil DateTime? // set by the user via /api/manager/alerts/[id]/snooze; null = not snoozed
 
   @@index([leagueId])
+  @@index([leagueId, resolvedAt])
 }
 
 // Phase 2b forward note only (not designed here): Transaction sync is
