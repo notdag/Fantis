@@ -117,6 +117,13 @@ export default function ManagerDashboard({
   // least one account is already connected, it's just clutter above the
   // real "Sync now" action, so it starts collapsed behind a small link.
   const [showConnectForm, setShowConnectForm] = useState(accounts.length === 0);
+  // The whole header/sync card block collapses to one compact line once
+  // there's at least one connected account and nothing's actually wrong —
+  // Daryl wants Today to be the first thing on screen, not setup chrome he
+  // only ever needed once. Forced open on first-time setup or a real sync
+  // failure, since those genuinely need to be seen, not hidden behind a click.
+  const hasSyncFailure = (lastRun?.leaguesFailed ?? 0) > 0;
+  const [detailsOpen, setDetailsOpen] = useState(accounts.length === 0 || hasSyncFailure);
 
   const connect = async () => {
     const u = username.trim();
@@ -269,118 +276,92 @@ export default function ManagerDashboard({
 
   return (
     <>
-      <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Sleeper Manager</h1>
-          <p>
-            {leagues.length} league{leagues.length === 1 ? "" : "s"} across {accounts.length} connected
-            account{accounts.length === 1 ? "" : "s"}.
-          </p>
+      <section className="sec" style={{ paddingTop: 12, paddingBottom: detailsOpen ? undefined : 12 }}>
+        <div className="field" style={{ alignItems: "center", gap: 10 }}>
+          <span className="hint" style={{ margin: 0 }}>
+            {leagues.length} league{leagues.length === 1 ? "" : "s"} · synced{" "}
+            {mounted ? formatRelative(mostRecentSync) : "—"}
+            {hasSyncFailure && (
+              <span style={{ color: "var(--red)" }}> · {lastRun!.leaguesFailed} failed</span>
+            )}
+            {" · "}
+            {connected ? (
+              <span style={{ color: "var(--mint)" }}>● connected</span>
+            ) : (
+              <span style={{ color: "var(--dim)" }}>○ not connected</span>
+            )}
+          </span>
+          <button className="btn ghost sm" onClick={syncNow} disabled={syncing}>
+            {syncing ? "Syncing…" : "Sync now"}
+          </button>
+          <button className="linklike" onClick={() => setDetailsOpen((v) => !v)} style={{ fontSize: 13 }}>
+            {detailsOpen ? "Hide details" : "Details"}
+          </button>
         </div>
 
-        <div className="card sync">
-          {showConnectForm ? (
-            <div className="field">
-              <input
-                className="input"
-                placeholder="Sleeper username to connect"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && connect()}
-              />
-              <button className="btn" onClick={connect} disabled={connecting || !username.trim()}>
-                {connecting ? "Connecting…" : "Connect"}
-              </button>
-              <button className="btn ghost" onClick={syncNow} disabled={syncing || accounts.length === 0}>
-                {syncing ? "Syncing…" : "Sync now"}
-              </button>
-              {accounts.length > 0 && (
-                <button className="btn ghost" onClick={() => setShowConnectForm(false)}>
-                  Cancel
+        {detailsOpen && (
+          <div className="card sync" style={{ marginTop: 12 }}>
+            {showConnectForm ? (
+              <div className="field">
+                <input
+                  className="input"
+                  placeholder="Sleeper username to connect"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && connect()}
+                />
+                <button className="btn" onClick={connect} disabled={connecting || !username.trim()}>
+                  {connecting ? "Connecting…" : "Connect"}
                 </button>
-              )}
-            </div>
-          ) : (
-            <div className="field" style={{ alignItems: "center" }}>
-              <button className="btn ghost" onClick={syncNow} disabled={syncing}>
-                {syncing ? "Syncing…" : "Sync now"}
-              </button>
+                {accounts.length > 0 && (
+                  <button className="btn ghost" onClick={() => setShowConnectForm(false)}>
+                    Cancel
+                  </button>
+                )}
+              </div>
+            ) : (
               <button className="linklike" onClick={() => setShowConnectForm(true)} style={{ fontSize: 13 }}>
                 + Connect another account
               </button>
-            </div>
-          )}
-          {connectError && <div className="err">{connectError}</div>}
-          {syncError && <div className="err">{syncError}</div>}
-          <div className="hint" style={{ marginTop: 8 }}>
-            Last synced {mounted ? formatRelative(mostRecentSync) : "—"}
-            {lastRun && (
-              <>
-                {" "}
-                · last run: {lastRun.status} ({lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues ok
-                {lastRun.leaguesFailed > 0 ? `, ${lastRun.leaguesFailed} failed` : ""})
-              </>
             )}
-          </div>
-          <div className="hint" style={{ marginTop: 4 }}>
-            {connected ? (
-              <span style={{ color: "var(--mint)" }}>● Browser automation connected</span>
-            ) : (
-              <>
-                <span style={{ color: "var(--dim)" }}>○ Browser automation not connected</span> —{" "}
+            {connectError && <div className="err">{connectError}</div>}
+            {syncError && <div className="err">{syncError}</div>}
+            <div className="hint" style={{ marginTop: 8 }}>
+              {accounts.length} connected account{accounts.length === 1 ? "" : "s"}
+              {lastRun && (
+                <>
+                  {" "}
+                  · last run: {lastRun.status} ({lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues ok
+                  {lastRun.leaguesFailed > 0 ? `, ${lastRun.leaguesFailed} failed` : ""})
+                </>
+              )}
+            </div>
+            {!connected && (
+              <div className="hint" style={{ marginTop: 4 }}>
                 <a
                   className="link"
                   href="/automation/fantis-sleeper-manager.user.js"
                   target="_blank"
                   rel="noreferrer"
                 >
-                  install the userscript
+                  Install the userscript
                 </a>{" "}
                 (requires Tampermonkey) to open leagues from an alert automatically.
-              </>
+              </div>
+            )}
+            {lastRun?.errors && lastRun.errors.length > 0 && (
+              <div className="mgrtable" style={{ marginTop: 8 }}>
+                {lastRun.errors.map((e, i) => (
+                  <div className="mgrrow static" key={`${e.leagueId}-${i}`}>
+                    <span className="tname" style={{ flex: 1 }}>{e.leagueName ?? e.leagueId}</span>
+                    <span className="portmeta">{e.message}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-        </div>
+        )}
       </section>
-
-      {lastRun && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Sync health</h2>
-            <span className="rt">
-              {lastRun.leaguesOk}/{lastRun.leaguesSeen} leagues synced
-            </span>
-          </div>
-          {lastRun.leaguesFailed > 0 ? (
-            <>
-              <p className="hint" style={{ color: "var(--red)" }}>
-                {lastRun.leaguesFailed} league{lastRun.leaguesFailed === 1 ? "" : "s"} failed to sync
-              </p>
-              {lastRun.errors && lastRun.errors.length > 0 && (
-                <div className="mgrtable">
-                  {lastRun.errors.map((e, i) => (
-                    <div className="mgrrow static" key={`${e.leagueId}-${i}`}>
-                      <span className="tname" style={{ flex: 1 }}>{e.leagueName ?? e.leagueId}</span>
-                      <span className="portmeta">{e.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <button
-                className="btn ghost"
-                style={{ marginTop: 8 }}
-                onClick={syncNow}
-                disabled={syncing || accounts.length === 0}
-              >
-                {syncing ? "Retrying…" : "Retry"}
-              </button>
-            </>
-          ) : (
-            <p className="hint">Every league synced cleanly last run.</p>
-          )}
-        </section>
-      )}
 
       {leagues.length > 0 && (
         <section className="sec">
