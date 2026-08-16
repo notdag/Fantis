@@ -68,6 +68,10 @@ export default function LeagueDetail({
   }, []);
 
   const router = useRouter();
+  // League ID/season/teams/connected-via/last-synced is real but rarely
+  // useful to see every visit — collapsed behind a toggle rather than
+  // always taking space above the actually-useful roster/alerts content.
+  const [infoOpen, setInfoOpen] = useState(false);
   const [snoozing, setSnoozing] = useState<string | null>(null);
   const snooze = async (alertId: string, hours: number) => {
     setSnoozing(alertId);
@@ -157,72 +161,74 @@ export default function LeagueDetail({
           <div className="mgraccentbar" />
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <h1>{league.name}</h1>
-            <Link href="/manager" className="link">
-              ← All leagues
-            </Link>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="pos" style={statusChipStyle(league.status)}>
+                {statusLabel(league.status)}
+              </span>
+              <button className="linklike" onClick={() => setInfoOpen((v) => !v)} style={{ fontSize: 13 }}>
+                {infoOpen ? "Hide info" : "League info"}
+              </button>
+              <Link href="/manager" className="link">
+                ← All leagues
+              </Link>
+            </span>
           </div>
         </div>
 
-        <div className="portsummary">
-          <div className="portcard">
-            <div className="portcardhead">League</div>
-            <div className="portcardrows">
-              <div className="portcardrow">
-                <span>League ID</span>
-                <b>{league.id}</b>
-              </div>
-              <div className="portcardrow">
-                <span>Season</span>
-                <b>{league.season}</b>
-              </div>
-              <div className="portcardrow">
-                <span>Teams</span>
-                <b>{league.totalRosters}</b>
-              </div>
-              <div className="portcardrow">
-                <span>Status</span>
-                <b>
-                  <span className="pos" style={statusChipStyle(league.status)}>
-                    {statusLabel(league.status)}
-                  </span>
-                </b>
-              </div>
-              <div className="portcardrow">
-                <span>Connected via</span>
-                <b>{league.accountUsername}</b>
-              </div>
-              {typeof previousLeagueId === "string" && (
+        {infoOpen && (
+          <div className="portsummary">
+            <div className="portcard">
+              <div className="portcardhead">League</div>
+              <div className="portcardrows">
                 <div className="portcardrow">
-                  <span>Previous season</span>
-                  <b>{previousLeagueId}</b>
+                  <span>League ID</span>
+                  <b>{league.id}</b>
                 </div>
-              )}
+                <div className="portcardrow">
+                  <span>Season</span>
+                  <b>{league.season}</b>
+                </div>
+                <div className="portcardrow">
+                  <span>Teams</span>
+                  <b>{league.totalRosters}</b>
+                </div>
+                <div className="portcardrow">
+                  <span>Connected via</span>
+                  <b>{league.accountUsername}</b>
+                </div>
+                {typeof previousLeagueId === "string" && (
+                  <div className="portcardrow">
+                    <span>Previous season</span>
+                    <b>{previousLeagueId}</b>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
 
-          <div className="portcard">
-            <div className="portcardhead">Sync</div>
-            <div className="portcardrows">
-              <div className="portcardrow">
-                <span>Last synced</span>
-                <b>{mounted ? formatRelative(league.lastSyncedAt) : "—"}</b>
-              </div>
-              {typeof draftId === "string" && (
+            <div className="portcard">
+              <div className="portcardhead">Sync</div>
+              <div className="portcardrows">
                 <div className="portcardrow">
-                  <span>Draft</span>
-                  <a
-                    className="link"
-                    href={`https://sleeper.com/draft/nfl/${draftId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open draft →
-                  </a>
+                  <span>Last synced</span>
+                  <b>{mounted ? formatRelative(league.lastSyncedAt) : "—"}</b>
                 </div>
-              )}
+                {typeof draftId === "string" && (
+                  <div className="portcardrow">
+                    <span>Draft</span>
+                    <a
+                      className="link"
+                      href={`https://sleeper.com/draft/nfl/${draftId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open draft →
+                    </a>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <a
