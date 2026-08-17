@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS } from "./players";
+import { usePlayers } from "./usePlayers";
 import { getSeasonProjectionTotals, getState } from "./sleeper";
 import { getPlayerProps, type PropLine } from "./sportsgameodds";
 import { sleeperId, stripSuffix, useSleeperIdMaps } from "./playerIdMap";
@@ -14,6 +14,7 @@ import type { SeasonProjectionTotal } from "./types";
 // props for 12h server-side), so this doesn't add new network cost beyond
 // what Rankings already pays if it's open in another tab.
 export function useTradeValues(): Record<string, TradeValueResult> {
+  const PLAYERS = usePlayers();
   const idMaps = useSleeperIdMaps();
   const [seasonTotals, setSeasonTotals] = useState<Record<string, SeasonProjectionTotal> | null>(
     null
@@ -61,5 +62,5 @@ export function useTradeValues(): Record<string, TradeValueResult> {
       if (result) out[p.name] = result;
     }
     return out;
-  }, [idMaps, seasonTotals, props]);
+  }, [PLAYERS, idMaps, seasonTotals, props]);
 }

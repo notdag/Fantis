@@ -13,7 +13,7 @@
 // else's roster" (for the real per-league power-rank comparison).
 import { useEffect, useMemo, useState } from "react";
 import { getLeagueUsers, getPlayers, getRosters, getState, getTransactions } from "./sleeper";
-import { PLAYERS } from "./players";
+import { usePlayers } from "./usePlayers";
 import { stripSuffix } from "./playerIdMap";
 import { useTradeValues } from "./useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue } from "./fantasyCalc";
@@ -79,6 +79,7 @@ export interface TradeRow {
 }
 
 export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) {
+  const PLAYERS = usePlayers();
   const values = useTradeValues();
   const fcValues = useFantasyCalcValues();
   const [pmap, setPmap] = useState<PlayerMap | null>(null);
@@ -230,7 +231,7 @@ export function usePortfolio(leagues: SleeperLeague[], myUserId: string | null) 
     const map: Record<string, (typeof PLAYERS)[number]> = {};
     for (const p of PLAYERS) map[p.name] = p;
     return map;
-  }, []);
+  }, [PLAYERS]);
 
   const data = useMemo(() => {
     const overview: PortfolioLeagueRow[] = [];

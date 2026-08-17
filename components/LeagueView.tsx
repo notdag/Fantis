@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS, POS_COLOR, posChipStyle } from "@/lib/players";
+import { POS_COLOR, posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { useTradeValues } from "@/lib/useTradeValues";
@@ -46,6 +47,7 @@ export default function LeagueView({
 }) {
   const { lg, teams, pmap } = bundle;
 
+  const PLAYERS = usePlayers();
   const { projections } = useProjections();
   const values = useTradeValues();
   const valuesLoading = Object.keys(values).length === 0;
@@ -55,7 +57,7 @@ export default function LeagueView({
     const map: Record<string, (typeof PLAYERS)[number]> = {};
     for (const p of PLAYERS) map[p.name] = p;
     return map;
-  }, []);
+  }, [PLAYERS]);
 
   // How many players are curated at each position — position rank color
   // bands scale to this so a shallow position (TE) and a deep one (RB) both
@@ -64,7 +66,7 @@ export default function LeagueView({
     const counts: Record<string, number> = {};
     for (const p of PLAYERS) counts[p.pos] = (counts[p.pos] || 0) + 1;
     return counts;
-  }, []);
+  }, [PLAYERS]);
   const availablePoolSize = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const p of available) counts[p.pos] = (counts[p.pos] || 0) + 1;

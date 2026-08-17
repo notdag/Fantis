@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { PLAYERS, posChipStyle } from "@/lib/players";
+import { posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue, type FantasyCalcMaps } from "@/lib/fantasyCalc";
 import { findTradeSuggestions, type TradeSuggestion, type RosterPlayerLite } from "@/lib/tradeSuggestions";
@@ -14,8 +15,8 @@ import type { LeagueBundle, Player } from "@/lib/types";
 // market) — fall back to what the suggestion itself knows (pos/team), with
 // tier/posRank left at 0 rather than a fabricated rank. Picked/result rows
 // only render posRank when it's real (> 0).
-function toPlayer(rp: RosterPlayerLite): Player {
-  const curated = PLAYERS.find(
+function toPlayer(rp: RosterPlayerLite, players: Player[]): Player {
+  const curated = players.find(
     (p) => p.name === rp.name || stripSuffix(p.name) === stripSuffix(rp.name)
   );
   if (curated) return curated;
@@ -31,6 +32,7 @@ export default function Trade({
   myUserId: string | null;
   onNavigate: (tab: "leagues") => void;
 }) {
+  const PLAYERS = usePlayers();
   const [a, setA] = useState<Player[]>([]);
   const [b, setB] = useState<Player[]>([]);
   const values = useTradeValues();
@@ -44,8 +46,8 @@ export default function Trade({
   );
 
   const applySuggestion = (s: TradeSuggestion) => {
-    setA([toPlayer(s.give)]);
-    setB([toPlayer(s.receive)]);
+    setA([toPlayer(s.give, PLAYERS)]);
+    setB([toPlayer(s.receive, PLAYERS)]);
   };
 
   const sum = (picks: Player[]) =>
@@ -242,6 +244,7 @@ function TradeSide({
   values: Record<string, TradeValueResult>;
   fcValues: FantasyCalcMaps | null;
 }) {
+  const PLAYERS = usePlayers();
   const [q, setQ] = useState("");
   const chosen = new Set([...picks, ...other].map((p) => p.name));
   const matches =

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { PLAYERS, POS_COLOR, posChipStyle } from "@/lib/players";
+import { POS_COLOR, posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useAvailablePlayers } from "@/lib/useAvailablePlayers";
 import { useProjections } from "@/lib/useProjections";
@@ -36,6 +37,7 @@ export default function TeamHub({
   myUserId: string | null;
   onNavigate: (tab: NavTarget) => void;
 }) {
+  const PLAYERS = usePlayers();
   const values = useTradeValues();
   const valuesLoading = Object.keys(values).length === 0;
   const { available, loading: waiversLoading } = useAvailablePlayers(bundle);
@@ -49,12 +51,12 @@ export default function TeamHub({
     const map: Record<string, (typeof PLAYERS)[number]> = {};
     for (const p of PLAYERS) map[p.name] = p;
     return map;
-  }, []);
+  }, [PLAYERS]);
   const curatedPoolSize = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const p of PLAYERS) counts[p.pos] = (counts[p.pos] || 0) + 1;
     return counts;
-  }, []);
+  }, [PLAYERS]);
 
   const [openPlayer, setOpenPlayer] = useState<OpenPlayer | null>(null);
   const openPlayerCard = (id: string, playerName: string, pos: string) => {

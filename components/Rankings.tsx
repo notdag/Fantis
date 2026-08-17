@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS, TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
+import { TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
@@ -48,16 +49,16 @@ const SEASON_KEYS: SortKey[] = ["rank", "pos", "adp", "rushYd", "recYd", "passYd
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
 
-// The curated list's own array order *is* the master redraft rank — set by
-// the owner's tier board (all positions mixed, e.g. Gibbs/Bijan before any
-// QB), not grouped by position. posRank is already derived from a player's
-// position within this same order (see lib/players.ts). Sorting by "pos"
-// groups into position blocks (every QB, then every RB, ...); sorting by
-// "rank" is the real thing — default view should be this, not a QB-first
-// block grouping that happens to fall out of POS_ORDER.
-const PLAYER_ORDER = new Map(PLAYERS.map((p, i) => [p.name, i]));
-
 export default function Rankings() {
+  const PLAYERS = usePlayers();
+  // The curated list's own array order *is* the master redraft rank — set
+  // by the owner's tier board (all positions mixed, e.g. Gibbs/Bijan before
+  // any QB), not grouped by position. posRank is already derived from a
+  // player's position within this same order (see lib/players.ts). Sorting
+  // by "pos" groups into position blocks (every QB, then every RB, ...);
+  // sorting by "rank" is the real thing — default view should be this, not
+  // a QB-first block grouping that happens to fall out of POS_ORDER.
+  const PLAYER_ORDER = useMemo(() => new Map(PLAYERS.map((p, i) => [p.name, i])), [PLAYERS]);
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>("ALL");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("rank");
@@ -135,7 +136,7 @@ export default function Rankings() {
       };
     }
     return merged;
-  }, [projections, idMaps]);
+  }, [PLAYERS, projections, idMaps]);
 
   // Each player's real ADP-based overall rank, fixed regardless of which
   // column the table is currently sorted by. Shown in the "#" cell so that
@@ -160,7 +161,7 @@ export default function Rankings() {
     for (const { name } of withAdp) map.set(name, i++);
     for (const name of withoutAdp) map.set(name, i++);
     return map;
-  }, [live]);
+  }, [PLAYERS, PLAYER_ORDER, live]);
 
   const seasonLive = useMemo(() => {
     const merged: Record<string, SeasonProjectionTotal | undefined> = {};
@@ -170,7 +171,7 @@ export default function Rankings() {
       merged[p.name] = id ? seasonTotals[id] : undefined;
     }
     return merged;
-  }, [seasonTotals, idMaps]);
+  }, [PLAYERS, seasonTotals, idMaps]);
 
   const loadSeason = async () => {
     if (!season || seasonLoading || seasonTotals) return;
@@ -275,7 +276,7 @@ export default function Rankings() {
       if (bv == null) return -1;
       return (av - bv) * dir;
     });
-  }, [pos, query, sortBy, sortDir, live, seasonLive, projMode]);
+  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode]);
 
   // If the selected player gets filtered out (search/position change), close
   // the panel instead of leaving it detached from anything on screen.
@@ -317,7 +318,7 @@ export default function Rankings() {
       });
     }
     return out;
-  }, [live]);
+  }, [PLAYERS, live]);
 
   const selectedPlayer = selected ? PLAYERS.find((p) => p.name === selected) || null : null;
   const selectedStat = selectedPlayer ? live[selectedPlayer.name] : undefined;

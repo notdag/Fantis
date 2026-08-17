@@ -12,7 +12,8 @@ import {
   getUser,
 } from "@/lib/sleeper";
 import type { LeagueBundle, PlayerMap, SleeperLeague, Team } from "@/lib/types";
-import { PLAYERS, posChipStyle } from "@/lib/players";
+import { posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import LeagueView from "@/components/LeagueView";
 import TeamHub from "@/components/TeamHub";
 import Rankings from "@/components/Rankings";
@@ -25,6 +26,7 @@ import PixelLoader from "@/components/PixelLoader";
 type Tab = "leagues" | "rankings" | "trade" | "startsit" | "portfolio";
 
 export default function FantisApp() {
+  const PLAYERS = usePlayers();
   const [tab, setTab] = useState<Tab>("leagues");
   const [username, setUsername] = useState("");
   const [season, setSeason] = useState("2026");

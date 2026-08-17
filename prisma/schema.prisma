@@ -92,18 +92,26 @@ model Subscription {
   updatedAt            DateTime  @updatedAt
 }
 
-// Player rankings/values. Replaces the hardcoded array in the prototype.
-model RankingPlayer {
-  id        String   @id @default(cuid())
-  name      String
-  position  String   // QB | RB | WR | TE | K | DEF
-  team      String?
-  value     Float    // 0–100 scale, same idea as the prototype
-  tier      Int?
-  season    String
-  updatedAt DateTime @updatedAt
-
-  @@unique([name, season])
+// The curated player list (tier + posRank) that used to live entirely in
+// the checked-in lib/players.data.ts — moved here so the owner-only /admin
+// tier board (components/TierBoard.tsx) can write directly and have it
+// take effect on the next page load, instead of the old flow (generate
+// file source, paste it in, commit, deploy) that Vercel's read-only
+// production filesystem forced. `order` is the master rank (top to bottom,
+// all positions mixed) — posRank is derived from position within that
+// order and stored alongside it as a cache, same relationship
+// lib/players.ts's computePosRanks() always had. A save from the tier
+// board replaces every row in one transaction (see
+// app/api/admin/save-tiers/route.ts) since the board always sends the
+// full ordered list, never a partial diff.
+model RankedPlayer {
+  id      String @id @default(cuid())
+  order   Int    @unique
+  name    String
+  pos     String
+  team    String
+  tier    Int
+  posRank Int
 }
 
 // ---------------------------------------------------------------------------
