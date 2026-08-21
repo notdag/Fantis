@@ -231,11 +231,27 @@ export async function getSeasonProjectionTotals(
     }
   }
 
+  // Fetched concurrently, not week-by-week — 18 sequential awaits measured
+  // ~7.3s real end-to-end on a cold cache; Sleeper's public read API has no
+  // documented rate limit to throttle against (same conclusion
+  // managerSync.ts's DETAIL_BATCH_SIZE comment already reached), so all 18
+  // fire at once. onProgress reports completion COUNT, not week number,
+  // since completion order is no longer guaranteed once concurrent.
+  const weeks = Array.from({ length: SEASON_WEEKS }, (_, i) => i + 1);
+  let completed = 0;
+  const responses = await Promise.all(
+    weeks.map((week) =>
+      jget<Record<string, RawWeeklyProjection | null>>(
+        `${S}/projections/nfl/regular/${season}/${week}`
+      ).then((raw) => {
+        onProgress?.(++completed, SEASON_WEEKS);
+        return raw;
+      })
+    )
+  );
+
   const totals: Record<string, SeasonProjectionTotal> = {};
-  for (let week = 1; week <= SEASON_WEEKS; week++) {
-    const raw = await jget<Record<string, RawWeeklyProjection | null>>(
-      `${S}/projections/nfl/regular/${season}/${week}`
-    );
+  for (const raw of responses) {
     for (const id in raw) {
       const p = raw[id];
       if (!p || p.pts_ppr == null) continue;
@@ -259,7 +275,6 @@ export async function getSeasonProjectionTotals(
       t.weeksCounted += 1;
       totals[id] = t;
     }
-    onProgress?.(week, SEASON_WEEKS);
   }
 
   if (typeof window !== "undefined") {
