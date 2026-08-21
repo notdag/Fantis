@@ -19,7 +19,7 @@ import {
 import { avatar } from "@/lib/sleeper";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
-import { IconFlag, IconCheck, IconStar, IconSearch } from "./MgrIcons";
+import { IconFlag, IconCheck, IconStar, IconSearch, IconUsers, IconCalendar } from "./MgrIcons";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
 import { SectionHead } from "./PageHead";
@@ -69,7 +69,7 @@ function LeagueAvatar({ league }: { league: ManagedLeague }) {
   );
 }
 
-type SortKey = "name" | "season" | "teams" | "status" | "synced";
+type SortKey = "name" | "season" | "teams" | "status" | "synced" | "record";
 type SortDir = "asc" | "desc";
 
 const STATUSES = ["pre_draft", "drafting", "in_season", "complete"] as const;
@@ -210,6 +210,11 @@ export default function ManagerDashboard({
     );
   }, [leagues, query, statusFilter, groupFilter]);
 
+  // Per-league record lookup for the "All leagues" table's Record column
+  // — same `rosters` prop already used for the portfolio aggregation
+  // further down, just keyed for a single-row lookup instead of summed.
+  const rosterByLeague = useMemo(() => new Map(rosters.map((r) => [r.leagueId, r])), [rosters]);
+
   // Real distinct group values the owner has actually set, sorted by how
   // many leagues use each — freeform text, so this is a dropdown (unbounded
   // cardinality) rather than a chip row like the fixed status values above.
@@ -239,12 +244,25 @@ export default function ManagerDashboard({
           return a.status.localeCompare(b.status) * dir;
         case "synced":
           return ((a.lastSyncedAt ?? "").localeCompare(b.lastSyncedAt ?? "")) * dir;
+        case "record": {
+          // Unrecorded (no synced roster yet) sorts to the bottom
+          // regardless of direction — same "unranked sorts last" spirit
+          // as the rank column's comparator elsewhere on this page.
+          const ra = rosterByLeague.get(a.id);
+          const rb = rosterByLeague.get(b.id);
+          const pa = ra ? ra.wins - ra.losses : null;
+          const pb = rb ? rb.wins - rb.losses : null;
+          if (pa == null && pb == null) return 0;
+          if (pa == null) return 1;
+          if (pb == null) return -1;
+          return (pa - pb) * dir;
+        }
         default:
           return 0;
       }
     });
     return rows;
-  }, [filtered, sortBy, sortDir]);
+  }, [filtered, sortBy, sortDir, rosterByLeague]);
 
   // Real per-status counts (unfiltered by the search box, since the chips
   // themselves are the status filter) — shown on each chip so you know
@@ -356,6 +374,25 @@ export default function ManagerDashboard({
     }
     return { topHalf, ranked };
   }, [rankByLeague]);
+
+  // Real portfolio composition — every number here is a plain count over
+  // already-fetched leagues/draftsByLeague, no new data. draftsByLeague
+  // includes every synced draft regardless of status (app/manager/page.tsx's
+  // db.draft.findMany() has no status filter), so completed vs upcoming is
+  // a real split of the same real Draft rows the "Drafts & deadlines"
+  // section above already uses.
+  const portfolioComposition = useMemo(() => {
+    let activeLeagues = 0, upcomingDrafts = 0, completedDrafts = 0;
+    for (const lg of leagues) {
+      if (lg.status === "in_season") activeLeagues += 1;
+      const draft = draftsByLeague[lg.id];
+      if (draft) {
+        if (draft.status === "complete") completedDrafts += 1;
+        else upcomingDrafts += 1;
+      }
+    }
+    return { totalLeagues: leagues.length, activeLeagues, upcomingDrafts, completedDrafts };
+  }, [leagues, draftsByLeague]);
 
   return (
     <>
@@ -617,7 +654,13 @@ export default function ManagerDashboard({
       ) : (
         <section className="sec">
           <SectionHead title="All leagues" right="browse everything, not just exceptions" />
-          <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
+          <StatCardGrid variant="grid">
+            <StatCard icon={IconUsers} color="var(--muted)" label="Total leagues" value={portfolioComposition.totalLeagues} />
+            <StatCard icon={IconCheck} color="var(--mint)" label="Active leagues" value={portfolioComposition.activeLeagues} />
+            <StatCard icon={IconCalendar} color="var(--amber)" label="Upcoming drafts" value={portfolioComposition.upcomingDrafts} />
+            <StatCard icon={IconFlag} color="var(--muted)" label="Completed drafts" value={portfolioComposition.completedDrafts} />
+          </StatCardGrid>
+          <div className="field" style={{ marginTop: 20, marginBottom: 12, alignItems: "center" }}>
             <input
               className="input"
               placeholder="Search leagues…"
@@ -671,7 +714,7 @@ export default function ManagerDashboard({
               padding: "8px 0",
             }}
           >
-            {(["name", "season", "teams", "status", "synced"] as SortKey[]).map((k) => (
+            {(["name", "season", "teams", "record", "status", "synced"] as SortKey[]).map((k) => (
               <button
                 key={k}
                 className={`sorth ${sortBy === k ? "on" : ""}`}
@@ -683,9 +726,11 @@ export default function ManagerDashboard({
                     ? "Season"
                     : k === "teams"
                       ? "Teams"
-                      : k === "status"
-                        ? "Status"
-                        : "Synced"}
+                      : k === "record"
+                        ? "Record"
+                        : k === "status"
+                          ? "Status"
+                          : "Synced"}
                 {sortBy === k && <span className="arrow">{sortDir === "asc" ? "↑" : "↓"}</span>}
               </button>
             ))}
@@ -710,6 +755,12 @@ export default function ManagerDashboard({
                 )}
                 <span className="portmeta">{lg.totalRosters} teams</span>
                 <span className="portmeta">{lg.season}</span>
+                <span className="portmeta" style={{ minWidth: 50 }}>
+                  {(() => {
+                    const r = rosterByLeague.get(lg.id);
+                    return r ? `${r.wins}-${r.losses}${r.ties > 0 ? `-${r.ties}` : ""}` : "—";
+                  })()}
+                </span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {(() => {
                     const r = rankByLeague.get(lg.id);
