@@ -14,26 +14,16 @@
    Rankings/Trade/Portfolio/Team Hub.
    ========================================================================= */
 
-.mgrtabs{display:flex;gap:8px;flex-wrap:wrap}
-.mgrtab{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--muted);
-  cursor:pointer;font-size:13px;font-weight:600;padding:8px 14px;border-radius:999px;
-  text-decoration:none;display:inline-flex;align-items:center;gap:6px;
-  transition:border-color .15s,color .15s,background-color .15s}
-.mgrtab:hover{color:var(--bone);border-color:var(--dim)}
-.mgrtab.on{border-color:var(--amber);color:var(--amber);
-  background:color-mix(in srgb, var(--amber) 12%, var(--panel))}
-
 .mgrtabspin{width:10px;height:10px;border-radius:50%;flex:none;
   border:1.5px solid color-mix(in srgb, currentColor 30%, transparent);
   border-top-color:currentColor;animation:mgrspin .6s linear infinite}
 @keyframes mgrspin{to{transform:rotate(360deg)}}
 
-/* Grouped nav (2026-08) — 11 flat tabs became hard to scan at 100+ league
-   scale, so related pages cluster under one trigger. Every real route/URL
-   is unchanged; this is presentation only. Trigger reuses .mgrtab exactly
-   (same pill, same .on treatment when any child route is active) so the
-   grouped and ungrouped items in the same bar don't look like two systems. */
-.mgrtabgroup{position:relative}
+/* Floating dropdown panel — originally the grouped top-tab-bar's dropdown
+   (2026-08), now reused verbatim by the sidebar's collapsed-rail flyout
+   (see ManagerShell.tsx / .mgrnavflyout below). Kept as its own class pair
+   since the visual (small floating menu, .on active row) is identical in
+   both places. */
 .mgrtabmenu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:180px;
   background:var(--panel);border:1px solid var(--line);border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;padding:4px}
@@ -76,3 +66,87 @@
 .mgrdiff{display:inline-flex;align-items:center;gap:4px;font-weight:700;font-size:13px;
   font-variant-numeric:tabular-nums;white-space:nowrap}
 .mgrdiff svg{flex:none}
+
+/* Sidebar app shell (2026-08) — replaces the top pill-tab bar. Reuses
+   .mgrtabmenu/.mgrtabmenuitem above verbatim for the collapsed-rail flyout.
+   Nothing here touches .fantis/.wrap/.nav/.brand/.mark in app/globals.css —
+   .wrap is reused unmodified inside .mgrmain (only additive vertical
+   padding added below, its own left/right padding is untouched). The
+   232px/68px column-width transition is the one place a layout-affecting
+   animation is justified here (the main column's real available width
+   changes) — nav labels hide via display:none, never a width/padding
+   animation on individual items; the mobile drawer below is transform/
+   opacity only. */
+.mgrshell{display:grid;grid-template-columns:232px 1fr;min-height:100vh;
+  transition:grid-template-columns .18s ease}
+.mgrshell.mgrcollapsed{grid-template-columns:68px 1fr}
+
+.mgrsidebar{position:sticky;top:0;height:100vh;display:flex;flex-direction:column;
+  border-right:1px solid var(--line);background:var(--panel);padding:16px 12px;
+  overflow-y:auto;overflow-x:hidden}
+.mgrsidebarbrand{display:flex;align-items:center;gap:8px;padding:4px 6px 18px;min-width:0}
+.mgrsidebarbrand b{white-space:nowrap}
+
+.mgrnav{display:flex;flex-direction:column;gap:2px;flex:1}
+.mgrnavgroup{display:flex;flex-direction:column;gap:2px;margin-top:14px}
+.mgrnavgroup:first-child{margin-top:0}
+.mgrnavgrouplabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);padding:6px 10px 4px;white-space:nowrap}
+
+.mgrnavlink{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;
+  color:var(--muted);text-decoration:none;font-size:13.5px;font-weight:600;white-space:nowrap;
+  border:0;background:none;cursor:pointer;width:100%;text-align:left;font-family:inherit}
+.mgrnavlink svg{flex:none}
+.mgrnavlink:hover{color:var(--bone);background:var(--line-soft)}
+.mgrnavlink.on{color:var(--amber);background:color-mix(in srgb, var(--amber) 12%, var(--panel))}
+.mgrnavlink-sub{padding-left:14px}
+.mgrnavlabel{overflow:hidden;text-overflow:ellipsis}
+
+.mgrcollapsed .mgrsidebar .mgrnavlabel,
+.mgrcollapsed .mgrsidebar .mgrnavgrouplabel,
+.mgrcollapsed .mgrsidebar .mgrsidebarbrand b{display:none}
+.mgrcollapsed .mgrsidebar .mgrnavlink{justify-content:center}
+
+.mgrcollapsebtn{appearance:none;border:1px solid var(--line);background:var(--panel);
+  color:var(--muted);border-radius:8px;padding:8px;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;margin-top:auto;align-self:flex-end}
+.mgrcollapsed .mgrcollapsebtn{align-self:center}
+.mgrcollapsebtn:hover{color:var(--bone);border-color:var(--dim)}
+
+.mgrnavgroup-rail{position:relative}
+.mgrnavflyout{position:absolute;left:calc(100% + 8px);top:0;z-index:30;min-width:190px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;padding:4px}
+.mgrnavflyouthead{padding:8px 12px 4px;font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--dim)}
+
+.mgrmain{min-width:0}
+.mgrmain > .wrap{padding-top:24px;padding-bottom:48px}
+
+.mgrtopbar{display:none}
+.mgrdrawerbackdrop{display:none}
+.mgrdrawer{display:none}
+
+@media (max-width:860px){
+  .mgrshell{display:block}
+  .mgrsidebar{display:none}
+  .mgrtopbar{display:flex;align-items:center;gap:12px;padding:14px 16px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--ink);z-index:10}
+  .mgrhamburger{appearance:none;border:1px solid var(--line);background:var(--panel);
+    color:var(--bone);border-radius:8px;padding:8px;display:flex;cursor:pointer}
+  .mgrmain > .wrap{padding-left:16px;padding-right:16px}
+
+  .mgrdrawerbackdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);
+    z-index:40;opacity:0;pointer-events:none;transition:opacity .18s ease}
+  .mgrdrawerbackdrop.mgropen{opacity:1;pointer-events:auto}
+
+  .mgrdrawer{display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;
+    width:min(84vw,300px);background:var(--panel);border-right:1px solid var(--line);
+    z-index:50;transform:translateX(-100%);transition:transform .2s ease;
+    padding:16px 12px;overflow-y:auto}
+  .mgrdrawer.mgropen{transform:translateX(0)}
+  .mgrdrawerhead{display:flex;align-items:center;justify-content:space-between;padding:4px 6px 18px}
+  .mgrdrawerclose{appearance:none;border:0;background:none;color:var(--muted);cursor:pointer;
+    display:flex;padding:6px}
+  .mgrdrawerclose:hover{color:var(--bone)}
+}

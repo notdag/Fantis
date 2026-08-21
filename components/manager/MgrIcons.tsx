@@ -94,3 +94,52 @@ export function IconArrowDown(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconHome(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5 10v10h14V10" />
+    </svg>
+  );
+}
+
+export function IconWrench(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.8 2.8-2-2Z" />
+    </svg>
+  );
+}
+
+export function IconMenu(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+export function IconX(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+export function IconChevronLeft(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
+
+export function IconChevronRight(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M9 18l6-6-6-6" />
+    </svg>
+  );
+}
