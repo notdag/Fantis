@@ -33,10 +33,26 @@ export default async function ManagerPage() {
   const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow, rosterRows, leagueRosterRows] =
     await Promise.all([
       db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
-      db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
+      db.league.findMany({
+        select: {
+          id: true,
+          accountId: true,
+          name: true,
+          season: true,
+          totalRosters: true,
+          status: true,
+          settings: true,
+          group: true,
+          lastSyncedAt: true,
+          account: { select: { username: true } },
+        },
+        orderBy: { name: "asc" },
+      }),
       db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
       db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
-      db.draft.findMany(),
+      db.draft.findMany({
+        select: { id: true, leagueId: true, status: true, type: true, startTime: true },
+      }),
       db.automationPing.findUnique({ where: { id: "singleton" } }),
       db.roster.findMany({
         select: { leagueId: true, rosterId: true, wins: true, losses: true, ties: true, fpts: true },

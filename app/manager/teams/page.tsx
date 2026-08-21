@@ -23,11 +23,30 @@ export default async function TeamsPage() {
   }
 
   const [leagueRows, rosterRows, matchupRows, alertRows, leagueRosterRows] = await Promise.all([
-    db.league.findMany({ orderBy: { name: "asc" } }),
-    db.roster.findMany(),
+    db.league.findMany({ select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
+    db.roster.findMany({
+      select: {
+        leagueId: true,
+        rosterId: true,
+        wins: true,
+        losses: true,
+        ties: true,
+        waiverPosition: true,
+        faabUsed: true,
+      },
+    }),
     // Latest week's matchup per league, fetched once and reduced in JS —
     // cheaper than 80 individual findFirst({orderBy}) round-trips.
-    db.matchup.findMany({ orderBy: { week: "desc" } }),
+    db.matchup.findMany({
+      select: {
+        leagueId: true,
+        week: true,
+        myPoints: true,
+        opponentTeamName: true,
+        opponentPoints: true,
+      },
+      orderBy: { week: "desc" },
+    }),
     db.alert.findMany({ where: { resolvedAt: null }, select: { leagueId: true, snoozedUntil: true } }),
     db.leagueRoster.findMany({ select: { leagueId: true, rosterId: true, ownerId: true, players: true } }),
   ]);
