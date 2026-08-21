@@ -119,7 +119,7 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
       <section className="sec" style={{ paddingBottom: 0 }}>
         <div className="mgrhead">
           <div className="mgraccentbar" />
-          <h1>My Teams</h1>
+          <h1>My Leagues</h1>
           <p>
             Every league&rsquo;s roster in one table — record, this week&rsquo;s matchup, and how
             many real alerts are open — instead of clicking into each one.

@@ -5,7 +5,7 @@ import type { MyTeamRow } from "@/components/manager/MyTeams";
 import type { LeagueRosterRow } from "@/lib/leagueRank";
 
 export const metadata: Metadata = {
-  title: "Fantis — My Teams",
+  title: "Fantis — My Leagues",
   robots: { index: false, follow: false },
 };
 
@@ -13,7 +13,7 @@ export default async function TeamsPage() {
   if (!process.env.DATABASE_URL) {
     return (
       <section className="sec">
-        <h2>My Teams</h2>
+        <h2>My Leagues</h2>
         <p className="hint">
           No database configured yet — set <code>DATABASE_URL</code> in your environment to use
           Sleeper Manager. See <code>.env.example</code>.

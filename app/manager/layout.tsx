@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import AdminLogin from "@/components/AdminLogin";
 import ManagerShell from "@/components/manager/ManagerShell";
+import { db } from "@/lib/db";
 import "./manager.css";
 
 // Shared shell for every /manager/* page — auth gate, plus (once authed) the
@@ -35,9 +36,24 @@ export default async function ManagerLayout({ children }: { children: React.Reac
   }
 
   const initialCollapsed = store.get("fantis_mgr_sidebar")?.value === "1";
+
+  // Fetched once here (not per-page) so the header's league switcher and
+  // the sidebar's CurrentLeagueNavGroup work identically on every route,
+  // including portfolio pages that don't otherwise touch League/SyncRun.
+  const [leagueRows, lastRun] = await Promise.all([
+    db.league.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
+  ]);
+
   return (
     <div className="fantis">
-      <ManagerShell initialCollapsed={initialCollapsed}>{children}</ManagerShell>
+      <ManagerShell
+        initialCollapsed={initialCollapsed}
+        leagues={leagueRows}
+        lastSyncedAt={lastRun?.finishedAt?.toISOString() ?? null}
+      >
+        {children}
+      </ManagerShell>
     </div>
   );
 }

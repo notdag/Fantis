@@ -12,13 +12,13 @@ export type NavEntry =
   | { kind: "group"; icon: IconKey; label: string; links: { href: string; label: string }[] };
 
 export const NAV_ENTRIES: NavEntry[] = [
-  { kind: "link", icon: "home", label: "Today", href: "/manager" },
+  { kind: "link", icon: "home", label: "Command Center", href: "/manager" },
   {
     kind: "group",
     icon: "users",
-    label: "My Teams",
+    label: "My Leagues",
     links: [
-      { href: "/manager/teams", label: "My Teams" },
+      { href: "/manager/teams", label: "My Leagues" },
       { href: "/manager/matchups", label: "Matchups" },
       { href: "/manager/byes", label: "Byes" },
       { href: "/manager/injuries", label: "Injuries" },

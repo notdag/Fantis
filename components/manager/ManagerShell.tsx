@@ -4,6 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_ENTRIES, isActive, type IconKey, type NavEntry } from "./managerNav";
+import { LEAGUE_SUB_ROUTES, extractLeagueContext, leagueSubHref } from "./leagueSubRoutes";
+import ManagerHeader from "./ManagerHeader";
+import LeagueSubNavigation from "./LeagueSubNavigation";
+import BottomNavBar from "./BottomNavBar";
 import {
   IconHome,
   IconUsers,
@@ -115,7 +119,53 @@ function NavGroup({
   );
 }
 
-function NavList({ pathname, collapsed }: { pathname: string; collapsed: boolean }) {
+// Only rendered when the current route is inside a league (see
+// extractLeagueContext) — shows which league you're in plus its 8 real
+// sub-routes, so the sidebar itself answers "where am I" instead of that
+// only living in page content. Collapsed-rail mode omits this (matches
+// the existing collapsed behavior for portfolio groups: icon-only, no
+// per-league flyout — the horizontal LeagueSubNavigation covers that case).
+function CurrentLeagueNavGroup({
+  pathname,
+  collapsed,
+  leagues,
+}: {
+  pathname: string;
+  collapsed: boolean;
+  leagues: { id: string; name: string }[];
+}) {
+  const ctx = extractLeagueContext(pathname);
+  if (!ctx || collapsed) return null;
+  const league = leagues.find((lg) => lg.id === ctx.leagueId);
+
+  return (
+    <div className="mgrnavgroup mgrnavgroup-league">
+      <div className="mgrnavgrouplabel">{league?.name ?? "League"}</div>
+      {LEAGUE_SUB_ROUTES.map((r) => {
+        const href = leagueSubHref(ctx.leagueId, r.slug);
+        return (
+          <Link
+            key={r.slug}
+            href={href}
+            className={`mgrnavlink mgrnavlink-sub ${ctx.section === r.slug ? "on" : ""}`}
+          >
+            <NavLabel label={r.label} />
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function NavList({
+  pathname,
+  collapsed,
+  leagues,
+}: {
+  pathname: string;
+  collapsed: boolean;
+  leagues: { id: string; name: string }[];
+}) {
   return (
     <nav className="mgrnav">
       {NAV_ENTRIES.map((e) => {
@@ -134,6 +184,7 @@ function NavList({ pathname, collapsed }: { pathname: string; collapsed: boolean
         }
         return <NavGroup key={e.label} entry={e} pathname={pathname} collapsed={collapsed} />;
       })}
+      <CurrentLeagueNavGroup pathname={pathname} collapsed={collapsed} leagues={leagues} />
     </nav>
   );
 }
@@ -141,9 +192,13 @@ function NavList({ pathname, collapsed }: { pathname: string; collapsed: boolean
 export default function ManagerShell({
   children,
   initialCollapsed,
+  leagues,
+  lastSyncedAt,
 }: {
   children: React.ReactNode;
   initialCollapsed: boolean;
+  leagues: { id: string; name: string }[];
+  lastSyncedAt: string | null;
 }) {
   const pathname = usePathname();
   // Matches SSR exactly (initialCollapsed comes from the same cookie the
@@ -181,7 +236,7 @@ export default function ManagerShell({
           <div className="mark">F</div>
           <b>Fantis</b>
         </div>
-        <NavList pathname={pathname} collapsed={collapsed} />
+        <NavList pathname={pathname} collapsed={collapsed} leagues={leagues} />
         <button
           type="button"
           className="mgrcollapsebtn"
@@ -222,12 +277,17 @@ export default function ManagerShell({
             <IconX />
           </button>
         </div>
-        <NavList pathname={pathname} collapsed={false} />
+        <NavList pathname={pathname} collapsed={false} leagues={leagues} />
       </div>
 
       <div className="mgrmain">
-        <div className="wrap">{children}</div>
+        <ManagerHeader leagues={leagues} lastSyncedAt={lastSyncedAt} />
+        <div className="wrap">
+          <LeagueSubNavigation />
+          {children}
+        </div>
       </div>
+      <BottomNavBar onOpenMore={() => setDrawerOpen(true)} />
     </div>
   );
 }

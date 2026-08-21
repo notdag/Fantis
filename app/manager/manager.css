@@ -12,7 +12,19 @@
    Scoped to /manager/* only via app/manager/layout.tsx importing this file
    directly — nothing here touches app/globals.css or any class shared with
    Rankings/Trade/Portfolio/Team Hub.
+
+   Design tokens (2026-08 shell/nav pass) — formalizing values that were
+   already the real recurring literals throughout this file (not new
+   arbitrary numbers): spacing 4/8/12/16/20/24/32px, radius 8/10/12px.
+   Colors stay Fantis's own existing app/globals.css palette — no new
+   hues introduced.
    ========================================================================= */
+
+.fantis{
+  --mgr-elevated: color-mix(in srgb, var(--panel) 85%, var(--bone) 15%);
+  --mgr-line-strong: color-mix(in srgb, var(--line) 60%, var(--bone) 40%);
+  --mgr-info: var(--muted);
+}
 
 .mgrtabspin{width:10px;height:10px;border-radius:50%;flex:none;
   border:1.5px solid color-mix(in srgb, currentColor 30%, transparent);
@@ -138,8 +150,44 @@
 .mgrnavflyouthead{padding:8px 12px 4px;font-size:11px;font-weight:700;text-transform:uppercase;
   letter-spacing:.06em;color:var(--dim)}
 
-.mgrmain{min-width:0}
+.mgrmain{min-width:0;display:flex;flex-direction:column}
 .mgrmain > .wrap{padding-top:24px;padding-bottom:48px}
+
+/* Persistent header (2026-08) — desktop only; mobile keeps the existing
+   .mgrtopbar instead of stacking two header bars. */
+.mgrheader{position:sticky;top:0;z-index:5;height:64px;flex:none;display:flex;
+  align-items:center;justify-content:space-between;gap:16px;padding:0 24px;
+  background:var(--ink);border-bottom:1px solid var(--line)}
+.mgrheaderleft{min-width:0;overflow:hidden}
+.mgrheaderright{display:flex;align-items:center;gap:12px;flex:none}
+
+.mgrbreadcrumb{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.mgrbreadcrumblink{color:var(--muted);text-decoration:none}
+.mgrbreadcrumblink:hover{color:var(--bone)}
+.mgrbreadcrumbsep{color:var(--dim)}
+.mgrbreadcrumbcurrent{color:var(--bone);overflow:hidden;text-overflow:ellipsis}
+
+/* Horizontal league sub-nav (2026-08) — desktop only, contextual shortcut
+   mirroring CurrentLeagueNavGroup's routes in ManagerShell.tsx. */
+.mgrsubnav{display:flex;align-items:center;gap:4px;overflow-x:auto;
+  border-bottom:1px solid var(--line);margin-bottom:20px;padding-bottom:0}
+.mgrsubnavlink{flex:none;padding:10px 12px;font-size:13.5px;font-weight:600;color:var(--muted);
+  text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;
+  transition:color .12s,border-color .12s}
+.mgrsubnavlink:hover{color:var(--bone)}
+.mgrsubnavlink.on{color:var(--amber);border-bottom-color:var(--amber)}
+
+.mgrnavgroup-league{border-top:1px solid var(--line-soft);padding-top:14px}
+
+/* Mobile bottom nav (2026-08) — 4 fixed destinations, ≤860px only (see
+   media query below); .mgrmain > .wrap gets extra bottom padding there so
+   content never sits under the fixed bar. */
+.mgrbottomnav{display:none}
+.mgrbottomnavitem{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:8px 4px;font-size:10.5px;font-weight:600;color:var(--muted);text-decoration:none;
+  border:0;background:none;cursor:pointer;font-family:inherit}
+.mgrbottomnavitem.on{color:var(--amber)}
 
 .mgrtopbar{display:none}
 .mgrdrawerbackdrop{display:none}
@@ -149,11 +197,16 @@
   .mgrshell{display:block}
   .mgrsidebar{display:none}
   .mgrherorow{grid-template-columns:1fr}
+  .mgrheader{display:none}
+  .mgrsubnav{display:none}
   .mgrtopbar{display:flex;align-items:center;gap:12px;padding:14px 16px;
     border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--ink);z-index:10}
   .mgrhamburger{appearance:none;border:1px solid var(--line);background:var(--panel);
     color:var(--bone);border-radius:8px;padding:8px;display:flex;cursor:pointer}
-  .mgrmain > .wrap{padding-left:16px;padding-right:16px}
+  .mgrmain > .wrap{padding-left:16px;padding-right:16px;padding-bottom:76px}
+
+  .mgrbottomnav{display:flex;align-items:stretch;position:fixed;left:0;right:0;bottom:0;z-index:10;
+    background:var(--panel);border-top:1px solid var(--line)}
 
   .mgrdrawerbackdrop{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);
     z-index:40;opacity:0;pointer-events:none;transition:opacity .18s ease}
