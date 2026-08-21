@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   statusChipStyle,
   statusLabel,
@@ -47,6 +47,83 @@ function settingsField(settings: unknown, key: string): unknown {
   return (settings as Record<string, unknown>)[key];
 }
 
+// Quick jump to another league without going back to /manager first —
+// same flyout mechanics as ManagerShell.tsx's sidebar NavGroup (outside-
+// click + close-on-navigation), same search-filter convention as
+// PlayerLeagues.tsx/WaiverAssistant.tsx. Deliberately shows a default
+// (unfiltered, capped) list rather than gating behind a minimum query
+// length — this is browsing a known, bounded ~100-league set, not
+// narrowing an enormous irrelevant pool the way player search is.
+function LeagueSwitcher({
+  leagues,
+  currentLeagueId,
+}: {
+  leagues: { id: string; name: string }[];
+  currentLeagueId: string;
+}) {
+  const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  // Navigating between two /manager/[leagueId] routes doesn't necessarily
+  // remount this component, so it needs an explicit close on route change
+  // — same reasoning as ManagerShell.tsx's sidebar flyouts.
+  useEffect(() => {
+    setOpen(false);
+    setQuery("");
+  }, [pathname]);
+
+  const results = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return leagues
+      .filter((lg) => lg.id !== currentLeagueId && (!q || lg.name.toLowerCase().includes(q)))
+      .slice(0, 20);
+  }, [leagues, currentLeagueId, query]);
+
+  return (
+    <div style={{ position: "relative", display: "inline-flex" }} ref={ref}>
+      <button className="linklike" style={{ fontSize: 13 }} onClick={() => setOpen((v) => !v)}>
+        Switch league {open ? "▲" : "▼"}
+      </button>
+      {open && (
+        <div className="mgrtabmenu">
+          <input
+            className="input"
+            style={{ padding: "6px 8px", fontSize: 12.5, width: "100%", marginBottom: 4 }}
+            placeholder="Search leagues…"
+            value={query}
+            autoFocus
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <div className="mgrswitcherlist">
+            {results.length === 0 ? (
+              <div className="hint" style={{ padding: "8px 12px", margin: 0 }}>
+                No leagues found.
+              </div>
+            ) : (
+              results.map((lg) => (
+                <Link key={lg.id} href={`/manager/${lg.id}`} className="mgrtabmenuitem">
+                  {lg.name}
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LeagueDetail({
   league,
   roster,
@@ -54,6 +131,7 @@ export default function LeagueDetail({
   alerts,
   draft,
   leagueRosters,
+  leagues,
 }: {
   league: ManagedLeague;
   roster: ManagedRoster | null;
@@ -61,6 +139,7 @@ export default function LeagueDetail({
   alerts: ManagedAlert[];
   draft: ManagedDraft | null;
   leagueRosters: LeagueRosterRow[];
+  leagues: { id: string; name: string }[];
 }) {
   // formatRelative() depends on Date.now(), which differs between the
   // server render and the client hydration pass a moment later — rendering
@@ -278,6 +357,7 @@ export default function LeagueDetail({
               <button className="linklike" onClick={() => setInfoOpen((v) => !v)} style={{ fontSize: 13 }}>
                 {infoOpen ? "Hide info" : "League info"}
               </button>
+              <LeagueSwitcher leagues={leagues} currentLeagueId={league.id} />
               <Link href="/manager" className="link">
                 ← All leagues
               </Link>

@@ -19,18 +19,27 @@
   border-top-color:currentColor;animation:mgrspin .6s linear infinite}
 @keyframes mgrspin{to{transform:rotate(360deg)}}
 
-/* Floating dropdown panel — originally the grouped top-tab-bar's dropdown
-   (2026-08), now reused verbatim by the sidebar's collapsed-rail flyout
-   (see ManagerShell.tsx / .mgrnavflyout below). Kept as its own class pair
-   since the visual (small floating menu, .on active row) is identical in
-   both places. */
-.mgrtabmenu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:180px;
+/* Floating dropdown panel — .mgrtabmenuitem (row styling) is reused
+   verbatim by the sidebar's collapsed-rail flyout (ManagerShell.tsx's
+   .mgrnavflyout has its own container but shares this row class). The
+   .mgrtabmenu container itself was originally the grouped top-tab-bar's
+   dropdown (2026-08, since replaced by the sidebar) and went unused until
+   LeagueDetail.tsx's league switcher (2026-08) gave it a real second
+   life — widened here for real league names instead of 3-4-word nav
+   labels, since nothing else depended on the old narrower sizing. */
+.mgrtabmenu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:220px;max-width:320px;
   background:var(--panel);border:1px solid var(--line);border-radius:10px;
   box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;padding:4px}
 .mgrtabmenuitem{display:block;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:600;
-  color:var(--muted);text-decoration:none;white-space:nowrap;transition:background-color .12s,color .12s}
+  color:var(--muted);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  transition:background-color .12s,color .12s}
 .mgrtabmenuitem:hover{background:var(--line-soft);color:var(--bone)}
 .mgrtabmenuitem.on{color:var(--amber)}
+
+/* Scrollable results list inside .mgrtabmenu — only the list scrolls, not
+   the search input above it, so the input stays visible while browsing a
+   100+-league result set. */
+.mgrswitcherlist{max-height:280px;overflow-y:auto}
 
 .mgrhead{margin-bottom:22px}
 .mgrhead h1{font-weight:900;font-size:26px;margin:0 0 8px;letter-spacing:-.01em}

@@ -45,12 +45,16 @@ export default async function ManagerLeaguePage({
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
   };
 
-  const [rosterRow, matchupRow, alertRows, draftRow, leagueRosterRows] = await Promise.all([
+  const [rosterRow, matchupRow, alertRows, draftRow, leagueRosterRows, allLeagueRows] = await Promise.all([
     db.roster.findUnique({ where: { leagueId } }),
     db.matchup.findFirst({ where: { leagueId }, orderBy: { week: "desc" } }),
     db.alert.findMany({ where: { leagueId, resolvedAt: null }, orderBy: { createdAt: "asc" } }),
     db.draft.findFirst({ where: { leagueId } }),
     db.leagueRoster.findMany({ where: { leagueId }, select: { rosterId: true, ownerId: true, players: true } }),
+    // Real, already-synced league names for the header's league switcher —
+    // same bare {id,name} projection app/manager/matchups/page.tsx already
+    // uses, no new Sleeper calls.
+    db.league.findMany({ select: { id: true, name: true }, orderBy: { name: "asc" } }),
   ]);
 
   const roster: ManagedRoster | null = rosterRow
@@ -113,6 +117,7 @@ export default async function ManagerLeaguePage({
       alerts={alerts}
       draft={draft}
       leagueRosters={leagueRosterRows}
+      leagues={allLeagueRows}
     />
   );
 }
