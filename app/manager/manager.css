@@ -28,6 +28,20 @@
   border-top-color:currentColor;animation:mgrspin .6s linear infinite}
 @keyframes mgrspin{to{transform:rotate(360deg)}}
 
+/* Grouped nav (2026-08) — 11 flat tabs became hard to scan at 100+ league
+   scale, so related pages cluster under one trigger. Every real route/URL
+   is unchanged; this is presentation only. Trigger reuses .mgrtab exactly
+   (same pill, same .on treatment when any child route is active) so the
+   grouped and ungrouped items in the same bar don't look like two systems. */
+.mgrtabgroup{position:relative}
+.mgrtabmenu{position:absolute;top:calc(100% + 6px);left:0;z-index:20;min-width:180px;
+  background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);overflow:hidden;padding:4px}
+.mgrtabmenuitem{display:block;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:600;
+  color:var(--muted);text-decoration:none;white-space:nowrap;transition:background-color .12s,color .12s}
+.mgrtabmenuitem:hover{background:var(--line-soft);color:var(--bone)}
+.mgrtabmenuitem.on{color:var(--amber)}
+
 .mgrhead{margin-bottom:22px}
 .mgrhead h1{font-weight:900;font-size:26px;margin:0 0 8px;letter-spacing:-.01em}
 .mgrhead .mgraccentbar{width:44px;height:3px;border-radius:2px;background:var(--amber);margin-bottom:14px}
