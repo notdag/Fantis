@@ -46,6 +46,15 @@
 .mgrstatlabel{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);
   margin:0 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mgrstatvalue{font-size:20px;font-weight:800;margin:0;color:var(--bone)}
+.mgrstatsub{font-size:12px;color:var(--dim);margin:4px 0 0;line-height:1.4}
+
+/* Today's hero row (2026 Phase 2) — fixed 3-column instead of .mgrstats's
+   auto-fit, since this row is always exactly 3 real cards (Record/Need
+   attention/Top-half leagues) and a fixed grid reads denser and more
+   intentional than auto-fit reflow for a small fixed set. Cards inside
+   still reuse .mgrstat/.mgrstaticon/.mgrstatbody/.mgrstatlabel/
+   .mgrstatvalue verbatim — MyTeams.tsx's own .mgrstats grid is untouched. */
+.mgrherorow{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}
 
 .mgrtable{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--panel)}
 .mgrrow{display:flex;align-items:center;gap:14px;padding:12px 16px;width:100%;
@@ -130,6 +139,7 @@
 @media (max-width:860px){
   .mgrshell{display:block}
   .mgrsidebar{display:none}
+  .mgrherorow{grid-template-columns:1fr}
   .mgrtopbar{display:flex;align-items:center;gap:12px;padding:14px 16px;
     border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--ink);z-index:10}
   .mgrhamburger{appearance:none;border:1px solid var(--line);background:var(--panel);

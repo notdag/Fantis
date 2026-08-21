@@ -18,7 +18,9 @@ import {
   type ManagedSyncRun,
 } from "@/lib/manager";
 import { avatar } from "@/lib/sleeper";
-import { IconUsers, IconFlag, IconCalendar, IconCheck, IconSearch } from "./MgrIcons";
+import { useSeasonTotals } from "@/lib/useDropCandidates";
+import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
+import { IconFlag, IconCheck, IconStar, IconSearch } from "./MgrIcons";
 
 // League settings is untyped JSON (see prisma/schema.prisma) — read
 // defensively, same pattern as LeagueDetail.tsx's settingsField().
@@ -79,6 +81,7 @@ export default function ManagerDashboard({
   draftsByLeague,
   automationLastPingAt,
   rosters,
+  leagueRostersByLeague,
 }: {
   accounts: ManagedAccount[];
   leagues: ManagedLeague[];
@@ -86,7 +89,15 @@ export default function ManagerDashboard({
   alertsByLeague: Record<string, ManagedAlert[]>;
   draftsByLeague: Record<string, ManagedDraft>;
   automationLastPingAt: string | null;
-  rosters: { wins: number; losses: number; ties: number; fpts: number | null }[];
+  rosters: {
+    leagueId: string;
+    rosterId: number;
+    wins: number;
+    losses: number;
+    ties: number;
+    fpts: number | null;
+  }[];
+  leagueRostersByLeague: Record<string, LeagueRosterRow[]>;
 }) {
   // Shared guard for every Date.now()-dependent render below
   // (automationConnected, formatRelative, formatUpcoming, draftsThisWeek) —
@@ -299,6 +310,7 @@ export default function ManagerDashboard({
   // pages should never disagree since they're the same source data.
   const portfolio = useMemo(() => {
     let wins = 0, losses = 0, ties = 0, fpts = 0, withPoints = 0;
+    let winningLeagues = 0, evenLeagues = 0, losingLeagues = 0;
     for (const r of rosters) {
       wins += r.wins;
       losses += r.losses;
@@ -307,12 +319,41 @@ export default function ManagerDashboard({
         fpts += r.fpts;
         withPoints += 1;
       }
+      if (r.wins > r.losses) winningLeagues += 1;
+      else if (r.wins === r.losses) evenLeagues += 1;
+      else losingLeagues += 1;
     }
     const games = wins + losses + ties;
     const winPct = games > 0 ? ((wins + ties * 0.5) / games) * 100 : null;
     const avgPts = withPoints > 0 ? fpts / withPoints : null;
-    return { wins, losses, ties, winPct, totalPts: fpts, avgPts };
+    return { wins, losses, ties, winPct, totalPts: fpts, avgPts, winningLeagues, evenLeagues, losingLeagues };
   }, [rosters]);
+
+  // Real league-wide rank per league — same computeLeagueRank() call
+  // components/manager/MyTeams.tsx already proves works, fed by the same
+  // day-cached season totals (no new Sleeper call) and the LeagueRoster
+  // data app/manager/page.tsx now fetches for Today too.
+  const seasonTotals = useSeasonTotals();
+  const rankByLeague = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof computeLeagueRank>>();
+    for (const r of rosters) {
+      map.set(r.leagueId, computeLeagueRank(leagueRostersByLeague[r.leagueId] ?? [], r.rosterId, seasonTotals));
+    }
+    return map;
+  }, [rosters, leagueRostersByLeague, seasonTotals]);
+
+  // Same "top-half" bucketing/naming as MyTeams.tsx's totals.topHalf/
+  // totals.ranked, kept identical across both pages on purpose.
+  const rankSnapshot = useMemo(() => {
+    let topHalf = 0, ranked = 0;
+    for (const r of rankByLeague.values()) {
+      if (r.rank != null) {
+        ranked += 1;
+        if (r.rank <= r.totalTeams / 2) topHalf += 1;
+      }
+    }
+    return { topHalf, ranked };
+  }, [rankByLeague]);
 
   return (
     <>
@@ -418,17 +459,28 @@ export default function ManagerDashboard({
             <h2 style={{ fontSize: 18 }}>Today</h2>
             <span className="rt">what needs you right now</span>
           </div>
-          <div className="mgrstats">
+          <div className="mgrherorow">
             <div className="mgrstat">
               <div
                 className="mgrstaticon"
-                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+                style={{ color: "var(--bone)", background: "color-mix(in srgb, var(--bone) 12%, transparent)" }}
               >
-                <IconUsers width={17} height={17} />
+                <IconCheck width={17} height={17} />
               </div>
               <div className="mgrstatbody">
-                <p className="mgrstatlabel">Total leagues</p>
-                <p className="mgrstatvalue">{leagues.length}</p>
+                <p className="mgrstatlabel">Record</p>
+                <p className="mgrstatvalue">
+                  {portfolio.wins}-{portfolio.losses}
+                  {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
+                  {portfolio.winPct != null && (
+                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
+                      {portfolio.winPct.toFixed(0)}%
+                    </span>
+                  )}
+                </p>
+                <p className="mgrstatsub">
+                  {portfolio.winningLeagues} winning · {portfolio.evenLeagues} .500 · {portfolio.losingLeagues} losing
+                </p>
               </div>
             </div>
             <div className="mgrstat">
@@ -441,53 +493,42 @@ export default function ManagerDashboard({
               <div className="mgrstatbody">
                 <p className="mgrstatlabel">Need attention</p>
                 <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{groups.actionRequired.length}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-              >
-                <IconCalendar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Drafts this week</p>
-                <p className="mgrstatvalue">{groups.draftsThisWeek}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
-              >
-                <IconCheck width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">All clear</p>
-                <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{groups.allClear.length}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Combined record</p>
-                <p className="mgrstatvalue">
-                  {portfolio.wins}-{portfolio.losses}
-                  {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
-                  {portfolio.winPct != null && (
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
-                      {portfolio.winPct.toFixed(0)}%
-                    </span>
-                  )}
+                <p className="mgrstatsub">
+                  {groups.actionRequired.length} action required · {groups.commissioner.length + groups.review.length} review
                 </p>
               </div>
             </div>
             <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color:
+                    rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
+                      ? "var(--mint)"
+                      : "var(--muted)",
+                  background:
+                    rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
+                      ? "color-mix(in srgb, var(--mint) 16%, transparent)"
+                      : "color-mix(in srgb, var(--muted) 16%, transparent)",
+                }}
+              >
+                <IconStar width={17} height={17} />
+              </div>
               <div className="mgrstatbody">
-                <p className="mgrstatlabel">Avg points / league</p>
-                <p className="mgrstatvalue">{portfolio.avgPts != null ? portfolio.avgPts.toFixed(1) : "—"}</p>
+                <p className="mgrstatlabel">Top-half leagues</p>
+                <p className="mgrstatvalue">{rankSnapshot.ranked > 0 ? rankSnapshot.topHalf : "—"}</p>
+                <p className="mgrstatsub">
+                  {rankSnapshot.ranked > 0 ? `of ${rankSnapshot.ranked} ranked` : "no season data yet"}
+                </p>
               </div>
             </div>
           </div>
+
+          <p className="hint" style={{ marginTop: 10 }}>
+            {leagues.length} league{leagues.length === 1 ? "" : "s"} · {groups.draftsThisWeek} draft
+            {groups.draftsThisWeek === 1 ? "" : "s"} this week · avg{" "}
+            {portfolio.avgPts != null ? portfolio.avgPts.toFixed(1) : "—"} pts/league
+          </p>
 
           {groups.actionRequired.length > 0 && (
             <div style={{ marginTop: 18 }}>
@@ -689,6 +730,12 @@ export default function ManagerDashboard({
                 )}
                 <span className="portmeta">{lg.totalRosters} teams</span>
                 <span className="portmeta">{lg.season}</span>
+                <span className="portmeta" style={{ minWidth: 60 }}>
+                  {(() => {
+                    const r = rankByLeague.get(lg.id);
+                    return r?.rank != null ? `#${r.rank} of ${r.totalTeams}` : "—";
+                  })()}
+                </span>
                 <span className="pos" style={statusChipStyle(lg.status)}>
                   {statusLabel(lg.status)}
                 </span>

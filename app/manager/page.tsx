@@ -9,6 +9,7 @@ import type {
   ManagedSyncRun,
   ManagedSyncRunError,
 } from "@/lib/manager";
+import type { LeagueRosterRow } from "@/lib/leagueRank";
 
 // Not linked from the main nav and not indexable — same spirit as /admin.
 export const metadata: Metadata = {
@@ -29,15 +30,32 @@ export default async function ManagerPage() {
     );
   }
 
-  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow, rosterRows] = await Promise.all([
-    db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
-    db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
-    db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-    db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
-    db.draft.findMany(),
-    db.automationPing.findUnique({ where: { id: "singleton" } }),
-    db.roster.findMany({ select: { wins: true, losses: true, ties: true, fpts: true } }),
-  ]);
+  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow, rosterRows, leagueRosterRows] =
+    await Promise.all([
+      db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
+      db.league.findMany({ include: { account: true }, orderBy: { name: "asc" } }),
+      db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
+      db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
+      db.draft.findMany(),
+      db.automationPing.findUnique({ where: { id: "singleton" } }),
+      db.roster.findMany({
+        select: { leagueId: true, rosterId: true, wins: true, losses: true, ties: true, fpts: true },
+      }),
+      // Every team's roster in every league — already-synced data, zero new
+      // Sleeper calls (see LeagueRoster in prisma/schema.prisma). Same fetch
+      // app/manager/teams/page.tsx already does, reused here for real
+      // league-wide rank on Today.
+      db.leagueRoster.findMany({ select: { leagueId: true, rosterId: true, ownerId: true, players: true } }),
+    ]);
+
+  const leagueRostersByLeague: Record<string, LeagueRosterRow[]> = {};
+  for (const r of leagueRosterRows) {
+    (leagueRostersByLeague[r.leagueId] ??= []).push({
+      rosterId: r.rosterId,
+      ownerId: r.ownerId,
+      players: r.players,
+    });
+  }
 
   const accounts: ManagedAccount[] = accountRows.map((a) => ({
     id: a.id,
@@ -112,6 +130,7 @@ export default async function ManagerPage() {
       draftsByLeague={draftsByLeague}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       rosters={rosterRows}
+      leagueRostersByLeague={leagueRostersByLeague}
     />
   );
 }
