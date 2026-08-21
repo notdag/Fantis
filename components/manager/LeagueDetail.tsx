@@ -7,6 +7,7 @@ import {
   statusChipStyle,
   statusLabel,
   formatRelative,
+  formatUpcoming,
   type ManagedAlert,
   type ManagedDraft,
   type ManagedLeague,
@@ -19,6 +20,7 @@ import { buildStartingSlots } from "@/lib/rosterSlots";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
 import AlertRow from "./AlertRow";
+import { IconCheck, IconStar, IconCalendar } from "./MgrIcons";
 import type { PlayerMap } from "@/lib/types";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
@@ -188,6 +190,10 @@ export default function LeagueDetail({
   };
 
   const draftId = settingsField(league.settings, "draft_id");
+  // A draft card is only useful while a draft is actually relevant — an
+  // in_season/complete league's draft is old news, already implicitly
+  // covered by the league having real rostered players.
+  const showDraftCard = draft != null && (league.status === "pre_draft" || league.status === "drafting");
   const previousLeagueId = settingsField(league.settings, "previous_league_id");
   const scoringSettings = settingsField(league.settings, "scoring_settings");
   const rosterPositions = settingsField(league.settings, "roster_positions");
@@ -316,19 +322,6 @@ export default function LeagueDetail({
                   <span>Last synced</span>
                   <b>{mounted ? formatRelative(league.lastSyncedAt) : "—"}</b>
                 </div>
-                {typeof draftId === "string" && (
-                  <div className="portcardrow">
-                    <span>Draft</span>
-                    <a
-                      className="link"
-                      href={`https://sleeper.com/draft/nfl/${draftId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open draft →
-                    </a>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -361,6 +354,82 @@ export default function LeagueDetail({
           )}
         </div>
       </section>
+
+      {(roster || showDraftCard) && (
+        <section className="sec">
+          <div className="mgrstats">
+            {roster && (
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{ color: "var(--bone)", background: "color-mix(in srgb, var(--bone) 12%, transparent)" }}
+                >
+                  <IconCheck width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Record</p>
+                  <p className="mgrstatvalue">
+                    {roster.wins}-{roster.losses}
+                    {roster.ties > 0 ? `-${roster.ties}` : ""}
+                  </p>
+                  {roster.fpts != null && roster.fptsAgainst != null && (
+                    <p className="mgrstatsub">
+                      PF {roster.fpts.toFixed(1)} · PA {roster.fptsAgainst.toFixed(1)}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {roster && leagueRank?.rank != null && (
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{
+                    color: leagueRank.rank <= leagueRank.totalTeams / 2 ? "var(--mint)" : "var(--muted)",
+                    background:
+                      leagueRank.rank <= leagueRank.totalTeams / 2
+                        ? "color-mix(in srgb, var(--mint) 16%, transparent)"
+                        : "color-mix(in srgb, var(--muted) 16%, transparent)",
+                  }}
+                >
+                  <IconStar width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">League rank</p>
+                  <p className="mgrstatvalue">
+                    #{leagueRank.rank} of {leagueRank.totalTeams}
+                  </p>
+                  {leagueRank.myValue != null && (
+                    <p className="mgrstatsub">team value {Math.round(leagueRank.myValue)} pts</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {showDraftCard && draft && (
+              <div className="mgrstat">
+                <div className="mgrstaticon" style={statusChipStyle(league.status)}>
+                  <IconCalendar width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Draft</p>
+                  <p className="mgrstatvalue">
+                    {mounted ? (draft.status === "drafting" ? "Drafting now" : formatUpcoming(draft.startTime)) : "—"}
+                  </p>
+                  {typeof draftId === "string" && (
+                    <p className="mgrstatsub">
+                      <a className="link" href={`https://sleeper.com/draft/nfl/${draftId}`} target="_blank" rel="noreferrer">
+                        Open draft →
+                      </a>
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {alerts.length > 0 && (
         <section className="sec">
@@ -406,11 +475,8 @@ export default function LeagueDetail({
           <div className="sechead">
             <h2 style={{ fontSize: 18 }}>My roster</h2>
             <span className="rt">
-              {roster.wins}-{roster.losses}
-              {roster.ties > 0 ? `-${roster.ties}` : ""}
-              {leagueRank?.rank != null ? ` · rank ${leagueRank.rank} of ${leagueRank.totalTeams}` : ""}
-              {roster.waiverPosition != null ? ` · waiver #${roster.waiverPosition}` : ""}
-              {roster.faabUsed != null ? ` · $${roster.faabUsed} FAAB used` : ""} · synced{" "}
+              {roster.waiverPosition != null ? `waiver #${roster.waiverPosition} · ` : ""}
+              {roster.faabUsed != null ? `$${roster.faabUsed} FAAB used · ` : ""}synced{" "}
               {mounted ? formatRelative(roster.lastSyncedAt) : "—"}
             </span>
           </div>
@@ -461,7 +527,12 @@ function RosterSection({
   rosterPositions: string[];
 }) {
   const slots = buildStartingSlots(rosterPositions);
-  const bench = roster.players.filter((id) => !roster.starters.includes(id));
+  // Same IR-before-bench precedence already proven in PlayerLeagues.tsx —
+  // a real Sleeper reserve slot, distinct from bench, not folded into it.
+  const ir = roster.reserve;
+  const bench = roster.players.filter(
+    (id) => !roster.starters.includes(id) && !roster.reserve.includes(id)
+  );
 
   return (
     <div className="mgrtable">
@@ -502,6 +573,14 @@ function RosterSection({
           <span className="tname">Bench</span>
           <span className="portmeta">
             {bench.map((id) => playerLabel(pmap, id).name).join(", ")}
+          </span>
+        </div>
+      )}
+      {ir.length > 0 && (
+        <div className="mgrrow static" style={{ opacity: 0.85 }}>
+          <span className="tname">IR</span>
+          <span className="portmeta">
+            {ir.map((id) => playerLabel(pmap, id).name).join(", ")}
           </span>
         </div>
       )}
