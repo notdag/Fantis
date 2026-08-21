@@ -228,14 +228,29 @@ model Roster {
 // (delete + createMany in one transaction), same reasoning as
 // RankedPlayer's save — the sync loop always has the complete current
 // roster list for a league, never a partial diff.
+//
+// wins/losses/ties/fpts/fptsAgainst (2026-08) are the same story again:
+// getRosters()'s response already carries every team's real win/loss
+// record and points in `settings`, the sync loop just wasn't persisting
+// it for anyone but me — this is what makes a real Standings table
+// possible. teamName needs one real new (but unconditional-per-league,
+// not per-team) Sleeper call — getLeagueUsers() — since Sleeper doesn't
+// put display names in the rosters response itself; null if unresolved,
+// never fabricated (LeagueDetail.tsx falls back to "Team {rosterId}").
 model LeagueRoster {
-  id       String  @id @default(cuid())
-  leagueId String
-  league   League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  rosterId Int // Sleeper's roster_id within this league
-  ownerId  String? // null = unclaimed team, same meaning as elsewhere
-  players  String[]
-  starters String[]
+  id          String  @id @default(cuid())
+  leagueId    String
+  league      League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId    Int // Sleeper's roster_id within this league
+  ownerId     String? // null = unclaimed team, same meaning as elsewhere
+  players     String[]
+  starters    String[]
+  wins        Int     @default(0)
+  losses      Int     @default(0)
+  ties        Int     @default(0)
+  fpts        Float?
+  fptsAgainst Float?
+  teamName    String?
 
   @@unique([leagueId, rosterId])
   @@index([leagueId])

@@ -11,6 +11,12 @@ export interface LeagueRosterRow {
   rosterId: number;
   ownerId: string | null;
   players: string[];
+  wins?: number;
+  losses?: number;
+  ties?: number;
+  fpts?: number | null;
+  fptsAgainst?: number | null;
+  teamName?: string | null;
 }
 
 export interface LeagueRankResult {
@@ -37,5 +43,43 @@ export function computeLeagueRank(
     rank: idx >= 0 ? idx + 1 : null,
     totalTeams: rosters.length,
     myValue: idx >= 0 ? valued[idx].value : null,
+  };
+}
+
+export interface StandingResult {
+  standing: number | null; // 1 = best real record; null if myRosterId isn't in rosters
+  totalTeams: number;
+}
+
+// Real win% tiebreak: (wins + ties*0.5) / games, the same convention
+// already used by MyTeams.tsx's winPct() and ManagerDashboard.tsx's
+// portfolio win% calc — reused here, not reinvented. Teams with zero
+// games played sort last (same "unplayed sorts to bottom" treatment
+// those two already give a -1 winPct), not falsely tied at the top with
+// a real 0-win record.
+function winPct(r: LeagueRosterRow): number {
+  const games = (r.wins ?? 0) + (r.losses ?? 0) + (r.ties ?? 0);
+  return games === 0 ? -1 : ((r.wins ?? 0) + (r.ties ?? 0) * 0.5) / games;
+}
+
+// Real record-based order for a league's standings: win% desc, then real
+// season points-for desc as a tiebreak between identical records. Shared
+// by computeStanding() below and LeagueDetail.tsx's Standings table so
+// both use exactly the same sort, never two independently-drifting ones.
+export function sortByStanding(rosters: LeagueRosterRow[]): LeagueRosterRow[] {
+  return [...rosters].sort((a, b) => {
+    const pctDiff = winPct(b) - winPct(a);
+    if (pctDiff !== 0) return pctDiff;
+    return (b.fpts ?? 0) - (a.fpts ?? 0);
+  });
+}
+
+export function computeStanding(rosters: LeagueRosterRow[], myRosterId: number): StandingResult {
+  if (rosters.length === 0) return { standing: null, totalTeams: 0 };
+  const sorted = sortByStanding(rosters);
+  const idx = sorted.findIndex((r) => r.rosterId === myRosterId);
+  return {
+    standing: idx >= 0 ? idx + 1 : null,
+    totalTeams: rosters.length,
   };
 }

@@ -50,7 +50,20 @@ export default async function ManagerLeaguePage({
     db.matchup.findFirst({ where: { leagueId }, orderBy: { week: "desc" } }),
     db.alert.findMany({ where: { leagueId, resolvedAt: null }, orderBy: { createdAt: "asc" } }),
     db.draft.findFirst({ where: { leagueId } }),
-    db.leagueRoster.findMany({ where: { leagueId }, select: { rosterId: true, ownerId: true, players: true } }),
+    db.leagueRoster.findMany({
+      where: { leagueId },
+      select: {
+        rosterId: true,
+        ownerId: true,
+        players: true,
+        wins: true,
+        losses: true,
+        ties: true,
+        fpts: true,
+        fptsAgainst: true,
+        teamName: true,
+      },
+    }),
     // Real, already-synced league names for the header's league switcher —
     // same bare {id,name} projection app/manager/matchups/page.tsx already
     // uses, no new Sleeper calls.

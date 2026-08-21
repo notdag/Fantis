@@ -140,21 +140,48 @@ export async function syncAccount(
         const rosters = await getRosters(lg.league_id);
         const myRoster = rosters.find((r) => r.owner_id === accountId) ?? null;
 
+        // Every league member's real display/team name, fetched once per
+        // league — one real Sleeper call, reused below for both the
+        // LeagueRoster.teamName write and the opponent-name resolution
+        // further down. Previously getLeagueUsers() only ran conditionally
+        // (in-season leagues with a resolvable opponent this week), which
+        // silently left every other team's name unresolved and skipped
+        // pre_draft/drafting/complete leagues entirely.
+        const users = await getLeagueUsers(lg.league_id).catch(() => []);
+        const nameByOwnerId = new Map(
+          users.map((u) => [u.user_id, u.metadata?.team_name || u.display_name || null])
+        );
+
         // Every roster in the league, not just mine — getRosters() above
-        // already returned all of them in this one call, so this is zero
-        // additional Sleeper API calls. Full per-league replace (delete +
-        // createMany) since `rosters` is always the complete current list,
-        // never a partial diff — same reasoning as RankedPlayer's save.
+        // already returned all of them in this one call, so wins/losses/
+        // ties/fpts/fptsAgainst below are zero additional Sleeper calls
+        // (same real "already fetched, discarded" pattern that motivated
+        // this table in the first place). Full per-league replace (delete
+        // + createMany) since `rosters` is always the complete current
+        // list, never a partial diff — same reasoning as RankedPlayer's
+        // save.
         await db.$transaction([
           db.leagueRoster.deleteMany({ where: { leagueId: lg.league_id } }),
           db.leagueRoster.createMany({
-            data: rosters.map((r) => ({
-              leagueId: lg.league_id,
-              rosterId: r.roster_id,
-              ownerId: r.owner_id ?? null,
-              players: r.players ?? [],
-              starters: r.starters ?? [],
-            })),
+            data: rosters.map((r) => {
+              const settings = r.settings ?? {};
+              return {
+                leagueId: lg.league_id,
+                rosterId: r.roster_id,
+                ownerId: r.owner_id ?? null,
+                players: r.players ?? [],
+                starters: r.starters ?? [],
+                wins: settings.wins ?? 0,
+                losses: settings.losses ?? 0,
+                ties: settings.ties ?? 0,
+                fpts: settings.fpts != null ? settings.fpts + (settings.fpts_decimal ?? 0) / 100 : null,
+                fptsAgainst:
+                  settings.fpts_against != null
+                    ? settings.fpts_against + (settings.fpts_against_decimal ?? 0) / 100
+                    : null,
+                teamName: r.owner_id ? nameByOwnerId.get(r.owner_id) ?? null : null,
+              };
+            }),
           }),
         ]);
 
@@ -214,10 +241,7 @@ export async function syncAccount(
               if (opponentRow) {
                 const opponentRoster = rosters.find((r) => r.roster_id === opponentRow.roster_id);
                 if (opponentRoster?.owner_id) {
-                  const users = await getLeagueUsers(lg.league_id).catch(() => []);
-                  const opponentUser = users.find((u) => u.user_id === opponentRoster.owner_id);
-                  opponentTeamName =
-                    opponentUser?.metadata?.team_name || opponentUser?.display_name || null;
+                  opponentTeamName = nameByOwnerId.get(opponentRoster.owner_id) ?? null;
                 }
               }
               await db.matchup.upsert({

@@ -18,9 +18,9 @@ import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
-import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
+import { computeLeagueRank, computeStanding, sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import AlertRow from "./AlertRow";
-import { IconCheck, IconStar, IconCalendar } from "./MgrIcons";
+import { IconCheck, IconStar, IconCalendar, IconShield } from "./MgrIcons";
 import type { PlayerMap } from "@/lib/types";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
@@ -200,6 +200,15 @@ export default function LeagueDetail({
   const leagueRank = useMemo(
     () => (roster ? computeLeagueRank(leagueRosters, roster.rosterId, seasonTotals) : null),
     [leagueRosters, roster, seasonTotals]
+  );
+
+  // Real record-based standing — distinct from leagueRank above (which is
+  // season-point value, not actual win/loss). Every team's real wins/
+  // losses/ties/fpts is already in leagueRosters (see LeagueRoster in
+  // prisma/schema.prisma) — zero extra Sleeper calls.
+  const standing = useMemo(
+    () => (roster ? computeStanding(leagueRosters, roster.rosterId) : null),
+    [leagueRosters, roster]
   );
 
   // Real, league-wide best-available: every real Sleeper player (with a
@@ -487,6 +496,33 @@ export default function LeagueDetail({
               </div>
             )}
 
+            {roster && standing?.standing != null && (
+              <div className="mgrstat">
+                <div
+                  className="mgrstaticon"
+                  style={{
+                    color: standing.standing <= standing.totalTeams / 2 ? "var(--mint)" : "var(--muted)",
+                    background:
+                      standing.standing <= standing.totalTeams / 2
+                        ? "color-mix(in srgb, var(--mint) 16%, transparent)"
+                        : "color-mix(in srgb, var(--muted) 16%, transparent)",
+                  }}
+                >
+                  <IconShield width={17} height={17} />
+                </div>
+                <div className="mgrstatbody">
+                  <p className="mgrstatlabel">Standing</p>
+                  <p className="mgrstatvalue">
+                    #{standing.standing} of {standing.totalTeams}
+                  </p>
+                  <p className="mgrstatsub">
+                    real record · {roster.wins}-{roster.losses}
+                    {roster.ties > 0 ? `-${roster.ties}` : ""}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {showDraftCard && draft && (
               <div className="mgrstat">
                 <div className="mgrstaticon" style={statusChipStyle(league.status)}>
@@ -546,6 +582,49 @@ export default function LeagueDetail({
                 {matchup.opponentPoints != null ? matchup.opponentPoints.toFixed(1) : "—"}
               </span>
             </div>
+          </div>
+        </section>
+      )}
+
+      {roster && leagueRosters.length > 0 && (
+        <section className="sec">
+          <div className="sechead">
+            <h2 style={{ fontSize: 18 }}>Standings</h2>
+            <span className="rt">real record · synced with your rosters</span>
+          </div>
+          <div className="mgrtable">
+            {sortByStanding(leagueRosters).map((r, i) => {
+              const isMe = r.rosterId === roster.rosterId;
+              return (
+                <div
+                  className="mgrrow static"
+                  key={r.rosterId}
+                  style={isMe ? { background: "color-mix(in srgb, var(--amber) 10%, transparent)" } : undefined}
+                >
+                  <span className="portmeta" style={{ minWidth: 24 }}>{i + 1}</span>
+                  <span className="tname" style={{ flex: 1 }}>
+                    {r.teamName ?? `Team ${r.rosterId}`}
+                  </span>
+                  {isMe && (
+                    <span
+                      className="pos"
+                      style={{
+                        color: "var(--amber)",
+                        background: "color-mix(in srgb, var(--amber) 16%, transparent)",
+                        borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                      }}
+                    >
+                      You
+                    </span>
+                  )}
+                  <span className="portmeta">
+                    {r.wins ?? 0}-{r.losses ?? 0}
+                    {(r.ties ?? 0) > 0 ? `-${r.ties}` : ""}
+                  </span>
+                  <span className="portvalue">{r.fpts != null ? `${r.fpts.toFixed(1)} pts` : "—"}</span>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
