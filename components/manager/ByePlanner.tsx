@@ -6,6 +6,7 @@ import { getPlayers, getState, currentProjectionWeek, playerPhotoUrl } from "@/l
 import { posChipStyle } from "@/lib/players";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import type { PlayerMap } from "@/lib/types";
+import { IconCalendar, IconFlag, IconUsers } from "./MgrIcons";
 
 export interface ByeLeagueRow {
   leagueId: string;
@@ -72,6 +73,10 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
 
   const weeks = Array.from(byWeek.keys()).sort((a, b) => a - b);
   const loading = !pmap || currentWeek == null;
+  const thisWeekCount = currentWeek != null ? (byWeek.get(currentWeek)?.length ?? 0) : 0;
+  const totalUpcoming = weeks.reduce((sum, w) => sum + (byWeek.get(w)?.length ?? 0), 0);
+  const nextWeek = weeks[0];
+  const nextWeekCount = nextWeek != null ? (byWeek.get(nextWeek)?.length ?? 0) : 0;
 
   return (
     <>
@@ -84,6 +89,53 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
             players included, so you can plan a waiver pickup before it&rsquo;s a scramble.
           </p>
         </div>
+        {!loading && (
+          <div className="mgrherorow">
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color: thisWeekCount > 0 ? "var(--amber)" : "var(--mint)",
+                  background: `color-mix(in srgb, ${thisWeekCount > 0 ? "var(--amber)" : "var(--mint)"} 16%, transparent)`,
+                }}
+              >
+                <IconCalendar width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">On bye this week</p>
+                <p className="mgrstatvalue" style={{ color: thisWeekCount > 0 ? "var(--amber)" : undefined }}>
+                  {thisWeekCount}
+                </p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+              >
+                <IconUsers width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Upcoming this season</p>
+                <p className="mgrstatvalue">{totalUpcoming}</p>
+                <p className="mgrstatsub">across {weeks.length} week{weeks.length === 1 ? "" : "s"} ahead</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
+              >
+                <IconFlag width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Next bye week</p>
+                <p className="mgrstatvalue">{nextWeek != null ? `Week ${nextWeek}` : "—"}</p>
+                {nextWeek != null && <p className="mgrstatsub">{nextWeekCount} player{nextWeekCount === 1 ? "" : "s"}</p>}
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {loading ? (

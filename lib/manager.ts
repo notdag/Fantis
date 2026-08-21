@@ -43,6 +43,7 @@ export interface ManagedSyncRun {
   rostersOk: number;
   matchupsOk: number;
   draftsOk: number;
+  transactionsOk: number;
   errors: ManagedSyncRunError[] | null;
 }
 
@@ -94,6 +95,64 @@ export interface ManagedAlert {
 
 export function isSnoozed(alert: ManagedAlert): boolean {
   return alert.snoozedUntil != null && new Date(alert.snoozedUntil) > new Date();
+}
+
+export interface ManagedHistoryAlert extends ManagedAlert {
+  leagueName: string;
+}
+
+export interface ManagedTransactionPlayer {
+  playerId: string;
+  playerName: string;
+  pos: string | null;
+  rosterId: number;
+  teamName: string | null;
+}
+
+export interface ManagedTransaction {
+  id: string;
+  leagueId: string;
+  leagueName: string;
+  week: number;
+  sleeperTransactionId: string;
+  type: string;
+  status: string;
+  createdAt: string;
+  creatorTeamName: string | null;
+  rosterIds: number[];
+  adds: ManagedTransactionPlayer[] | null;
+  drops: ManagedTransactionPlayer[] | null;
+  waiverBid: number | null;
+}
+
+// Sleeper's own transaction types, verbatim.
+const TXN_TYPE_COLOR: Record<string, string> = {
+  trade: "var(--amber)",
+  waiver: "var(--mint)",
+  free_agent: "var(--muted)",
+};
+
+// Same color-mix() chip technique as statusChipStyle() above.
+export function transactionTypeChipStyle(type: string) {
+  const c = TXN_TYPE_COLOR[type] ?? "var(--muted)";
+  return {
+    color: c,
+    background: `color-mix(in srgb, ${c} 20%, transparent)`,
+    borderColor: `color-mix(in srgb, ${c} 52%, transparent)`,
+  };
+}
+
+export function transactionTypeLabel(type: string): string {
+  switch (type) {
+    case "trade":
+      return "Trade";
+    case "waiver":
+      return "Waiver";
+    case "free_agent":
+      return "Free agent";
+    default:
+      return type;
+  }
 }
 
 export interface ManagedAction {

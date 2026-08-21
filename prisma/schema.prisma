@@ -165,6 +165,7 @@ model League {
   drafts       Draft[]
   alerts       Alert[]
   actions      Action[]
+  transactions LeagueTransaction[]
 
   @@index([accountId])
 }
@@ -188,6 +189,7 @@ model SyncRun {
   rostersOk     Int             @default(0)
   matchupsOk    Int             @default(0)
   draftsOk      Int             @default(0)
+  transactionsOk Int            @default(0)
   errors        Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
 
   @@index([accountId])
@@ -314,9 +316,44 @@ model Alert {
   @@index([leagueId, resolvedAt])
 }
 
-// Phase 2b forward note only (not designed here): Transaction sync is
-// deferred — the main Fantis app already has a working real trade-inbox
-// feature client-side (lib/usePortfolio.ts).
+// Real trade/waiver/free-agent activity, one row per Sleeper transaction.
+// Only ever synced for the CURRENT week's round per in-season league (see
+// lib/managerSync.ts) — never backfilled across multiple weeks in one
+// sync, to stay inside the 60s sync budget (app/api/manager/sync/route.ts).
+// A sync does a full replace scoped to {leagueId, week} (delete +
+// createMany, same shape as LeagueRoster's per-league replace) so a past
+// week's rows, once that week has rolled by, are frozen at whatever
+// Sleeper reported the last time that week was current — this is how real
+// history accumulates without re-fetching every week on every sync.
+// adds/drops are stored pre-resolved (player name/pos + team name baked
+// in at sync time) so the transactions page never needs a second Sleeper
+// player-dump fetch to render — same "resolve once, store the resolved
+// value" precedent as Matchup.opponentTeamName.
+model LeagueTransaction {
+  id                   String   @id @default(cuid())
+  leagueId             String
+  league               League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week                 Int // the round this was fetched under
+  sleeperTransactionId String // Sleeper's own transaction_id — real stable identity
+  type                 String // Sleeper's own value verbatim: trade | waiver | free_agent
+  status               String // Sleeper's own value verbatim: complete | pending | failed
+  createdAt            DateTime // Sleeper's real `created` epoch, not a Fantis insert timestamp
+  creatorTeamName      String? // resolved via nameByOwnerId, same resolution Matchup.opponentTeamName already does; null if unresolved
+  rosterIds            Int[]    @default([]) // Sleeper's real roster_ids
+  adds                 Json? // [{playerId, playerName, pos, rosterId, teamName}] — resolved at sync time
+  drops                Json? // same shape, from Sleeper's real drops map
+  waiverBid            Int? // real FAAB amount for a waiver claim; null for trades/free agent adds and no-bid waiver leagues
+
+  @@unique([leagueId, sleeperTransactionId])
+  @@index([leagueId, week])
+  @@index([week])
+  @@index([createdAt])
+}
+
+// Known, documented gap: Sleeper's real draft_picks field (traded picks
+// inside a trade transaction) is not surfaced here — trades show player
+// adds/drops correctly but not a traded pick. Same "documented, not
+// silently wrong" spirit as the receptions-prop gap noted in CLAUDE.md.
 
 // ---------------------------------------------------------------------------
 // Phase 3: browser automation (Tampermonkey userscript, see

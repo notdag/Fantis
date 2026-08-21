@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { formatUpcoming } from "@/lib/manager";
+import { IconCalendar, IconFlag, IconSearch } from "@/components/manager/MgrIcons";
 
 export const metadata: Metadata = {
   title: "Fantis — Drafts",
@@ -67,6 +68,54 @@ export default async function DraftsPage() {
           <h1>Drafts</h1>
           <p>{drafts.length} league{drafts.length === 1 ? "" : "s"} with a draft still ahead.</p>
         </div>
+        {drafts.length > 0 && (
+          <div className="mgrherorow">
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color: groups.today.length > 0 ? "var(--amber)" : "var(--muted)",
+                  background: `color-mix(in srgb, ${groups.today.length > 0 ? "var(--amber)" : "var(--muted)"} 16%, transparent)`,
+                }}
+              >
+                <IconCalendar width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Today</p>
+                <p className="mgrstatvalue" style={{ color: groups.today.length > 0 ? "var(--amber)" : undefined }}>
+                  {groups.today.length}
+                </p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color: groups.tomorrow.length + groups.thisWeek.length > 0 ? "var(--amber)" : "var(--muted)",
+                  background: `color-mix(in srgb, ${groups.tomorrow.length + groups.thisWeek.length > 0 ? "var(--amber)" : "var(--muted)"} 16%, transparent)`,
+                }}
+              >
+                <IconFlag width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">This week</p>
+                <p className="mgrstatvalue">{groups.tomorrow.length + groups.thisWeek.length}</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+              >
+                <IconSearch width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Unscheduled</p>
+                <p className="mgrstatvalue">{groups.unscheduled.length}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       {drafts.length === 0 ? (

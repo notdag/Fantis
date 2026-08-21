@@ -55,6 +55,8 @@ export default async function WaiverPage() {
         players: roster.players,
         starters: roster.starters,
         allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
+        waiverPosition: roster.waiverPosition,
+        faabUsed: roster.faabUsed,
       };
     });
 

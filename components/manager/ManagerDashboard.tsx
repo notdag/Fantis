@@ -423,7 +423,8 @@ export default function ManagerDashboard({
             {lastRun && (
               <div className="hint" style={{ marginTop: 2 }}>
                 rosters {lastRun.rostersOk}/{lastRun.leaguesOk} · matchups {lastRun.matchupsOk}/
-                {lastRun.leaguesOk} · drafts {lastRun.draftsOk}/{lastRun.leaguesOk}
+                {lastRun.leaguesOk} · drafts {lastRun.draftsOk}/{lastRun.leaguesOk} · transactions{" "}
+                {lastRun.transactionsOk}/{lastRun.leaguesOk}
               </div>
             )}
             {!connected && (

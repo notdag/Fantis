@@ -17,10 +17,11 @@ import {
   getDraft,
   getLeagueUsers,
   getPlayers,
+  getTransactions,
 } from "./sleeper";
 import { computeAlerts } from "./managerAlerts";
 import { db } from "./db";
-import type { Prisma } from "../generated/prisma/client";
+import { Prisma } from "../generated/prisma/client";
 import type { PlayerMap, SleeperMatchupRow, SleeperDraftRaw } from "./types";
 
 // No documented Sleeper rate limit exists anywhere to tune against — this
@@ -50,6 +51,7 @@ export interface SyncResult {
   rostersOk: number;
   matchupsOk: number;
   draftsOk: number;
+  transactionsOk: number;
   errors: SyncError[];
   // Set only when the account-level league list itself couldn't be fetched
   // at all (nothing to batch yet) — distinct from a per-league failure.
@@ -72,6 +74,7 @@ export async function syncAccount(
       rostersOk: 0,
       matchupsOk: 0,
       draftsOk: 0,
+      transactionsOk: 0,
       errors: [],
       fatal: e instanceof Error ? e.message : "Couldn't reach Sleeper for this account's leagues.",
     };
@@ -115,6 +118,7 @@ export async function syncAccount(
   let rostersOk = 0;
   let matchupsOk = 0;
   let draftsOk = 0;
+  let transactionsOk = 0;
 
   // Chunks of 10 concurrent, sequential rounds. Promise.allSettled (not
   // Promise.all) deliberately — one bad league's fetch must not take down
@@ -278,6 +282,55 @@ export async function syncAccount(
               matchupsOk += 1;
             }
           }
+
+          // Real trade/waiver/free-agent activity for this league's CURRENT
+          // week only — one more real Sleeper call per in-season league
+          // inside the same batch-of-10 concurrency this closure already
+          // uses. Full replace scoped to {leagueId, week}: never touches
+          // other weeks' already-synced rows, so history accumulates
+          // naturally as each week gets synced once and never revisited
+          // (see LeagueTransaction in prisma/schema.prisma).
+          const rawTxns = await getTransactions(lg.league_id, week).catch(() => null);
+          if (rawTxns) {
+            const resolvePlayers = (m: Record<string, number> | null) =>
+              m
+                ? Object.entries(m).map(([playerId, rosterId]) => {
+                    const r = rosters.find((rr) => rr.roster_id === rosterId);
+                    return {
+                      playerId,
+                      playerName: pmap?.[playerId]?.n ?? playerId,
+                      pos: pmap?.[playerId]?.p ?? null,
+                      rosterId,
+                      teamName: r?.owner_id ? nameByOwnerId.get(r.owner_id) ?? null : null,
+                    };
+                  })
+                : null;
+
+            const txnRows = rawTxns.map((t) => {
+              const creatorRoster = t.creator ? rosters.find((r) => r.owner_id === t.creator) : undefined;
+              return {
+                leagueId: lg.league_id,
+                week,
+                sleeperTransactionId: t.transaction_id,
+                type: t.type,
+                status: t.status,
+                createdAt: new Date(t.created),
+                creatorTeamName: creatorRoster?.owner_id
+                  ? nameByOwnerId.get(creatorRoster.owner_id) ?? null
+                  : null,
+                rosterIds: t.roster_ids ?? [],
+                adds: (resolvePlayers(t.adds) ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                drops: (resolvePlayers(t.drops) ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                waiverBid: t.settings?.waiver_bid ?? null,
+              };
+            });
+
+            await db.$transaction([
+              db.leagueTransaction.deleteMany({ where: { leagueId: lg.league_id, week } }),
+              ...(txnRows.length > 0 ? [db.leagueTransaction.createMany({ data: txnRows })] : []),
+            ]);
+            transactionsOk += 1;
+          }
         }
 
         let draftStatus: string | null = null;
@@ -386,6 +439,7 @@ export async function syncAccount(
     rostersOk,
     matchupsOk,
     draftsOk,
+    transactionsOk,
     errors,
   };
 }

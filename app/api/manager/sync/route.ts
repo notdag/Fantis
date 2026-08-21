@@ -45,6 +45,7 @@ export async function POST(req: Request) {
   let rostersOk = 0;
   let matchupsOk = 0;
   let draftsOk = 0;
+  let transactionsOk = 0;
   const errors: (SyncError | { message: string })[] = [];
 
   for (const account of accounts) {
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
     rostersOk += result.rostersOk;
     matchupsOk += result.matchupsOk;
     draftsOk += result.draftsOk;
+    transactionsOk += result.transactionsOk;
     errors.push(...result.errors);
   }
 
@@ -79,6 +81,7 @@ export async function POST(req: Request) {
       rostersOk,
       matchupsOk,
       draftsOk,
+      transactionsOk,
       errors: (errors.length > 0 ? errors : undefined) as Prisma.InputJsonValue | undefined,
     },
   });

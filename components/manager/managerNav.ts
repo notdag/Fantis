@@ -4,7 +4,7 @@
 // established in the earlier navigation-cleanup increment (previously
 // lived in MgrTabs.tsx, which this replaces); every href here is a real,
 // working route with real data — nothing added for pages that don't
-// exist yet (Standings/Transactions/Draft Results/Settings).
+// exist yet (Standings/Draft Results/Settings).
 export type IconKey = "home" | "users" | "wrench" | "shield";
 
 export type NavEntry =
@@ -40,6 +40,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     label: "League Ops",
     links: [
       { href: "/manager/drafts", label: "Drafts" },
+      { href: "/manager/transactions", label: "Transactions" },
       { href: "/manager/commissioner", label: "Commissioner" },
       { href: "/manager/history", label: "History" },
     ],

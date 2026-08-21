@@ -6,6 +6,7 @@ import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
 import type { PlayerMap } from "@/lib/types";
+import { IconFlag, IconShield, IconUsers } from "./MgrIcons";
 
 export interface InjuryLeagueRow {
   leagueId: string;
@@ -78,6 +79,9 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
   });
   const loading = !pmap;
   const totalStarting = Array.from(byStatus.values()).flat().filter((r) => r.starting).length;
+  const outCount = byStatus.get("Out")?.length ?? 0;
+  const doubtfulCount = byStatus.get("Doubtful")?.length ?? 0;
+  const irCount = byStatus.get("IR")?.length ?? 0;
 
   return (
     <>
@@ -90,11 +94,65 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
             bench included, not just the starters the existing alerts already cover.
           </p>
         </div>
-        {!loading && totalStarting > 0 && (
-          <p className="hint" style={{ color: "var(--red)" }}>
-            {totalStarting} of these are currently in a starting lineup — those already have a
-            real alert on Today, this just lets you see everyone else too.
-          </p>
+        {!loading && (outCount + doubtfulCount + irCount) > 0 && (
+          <div className="mgrstats">
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
+              >
+                <IconFlag width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Out</p>
+                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{outCount}</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
+              >
+                <IconFlag width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Doubtful</p>
+                <p className="mgrstatvalue" style={{ color: "var(--amber)" }}>{doubtfulCount}</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
+              >
+                <IconShield width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">IR</p>
+                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{irCount}</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color: totalStarting > 0 ? "var(--red)" : "var(--mint)",
+                  background: `color-mix(in srgb, ${totalStarting > 0 ? "var(--red)" : "var(--mint)"} 16%, transparent)`,
+                }}
+              >
+                <IconUsers width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Starting while injured</p>
+                <p className="mgrstatvalue" style={{ color: totalStarting > 0 ? "var(--red)" : undefined }}>
+                  {totalStarting}
+                </p>
+                {totalStarting > 0 && (
+                  <p className="mgrstatsub">already have a real alert on Today</p>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </section>
 

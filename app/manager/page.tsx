@@ -107,6 +107,7 @@ export default async function ManagerPage() {
         rostersOk: lastRunRow.rostersOk,
         matchupsOk: lastRunRow.matchupsOk,
         draftsOk: lastRunRow.draftsOk,
+        transactionsOk: lastRunRow.transactionsOk,
         errors: (lastRunRow.errors as ManagedSyncRunError[] | null) ?? null,
       }
     : null;

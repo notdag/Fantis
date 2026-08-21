@@ -5,7 +5,7 @@ import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
-import { IconArrowUp, IconArrowDown, IconSearch } from "./MgrIcons";
+import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
@@ -16,6 +16,8 @@ export interface WaiverLeague {
   // Every real player rostered by ANY team in this league — a true
   // "is he actually available" check, not just "not on my roster."
   allRosteredPlayers: string[];
+  waiverPosition: number | null;
+  faabUsed: number | null;
 }
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -79,6 +81,21 @@ export default function WaiverAssistant({
   }, []);
 
   const seasonTotals = useSeasonTotals();
+
+  const waiverSummary = useMemo(() => {
+    const withFaab = leagues.filter((lg) => lg.faabUsed != null);
+    const faabTotal = withFaab.reduce((sum, lg) => sum + (lg.faabUsed ?? 0), 0);
+    const withPosition = leagues.filter((lg) => lg.waiverPosition != null);
+    let best: WaiverLeague | null = null;
+    for (const lg of withPosition) {
+      if (!best || (lg.waiverPosition as number) < (best.waiverPosition as number)) best = lg;
+    }
+    const avgPosition =
+      withPosition.length > 0
+        ? withPosition.reduce((sum, lg) => sum + (lg.waiverPosition ?? 0), 0) / withPosition.length
+        : null;
+    return { faabTotal, faabLeagues: withFaab.length, best, avgPosition, positionLeagues: withPosition.length };
+  }, [leagues]);
 
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -181,7 +198,56 @@ export default function WaiverAssistant({
           </p>
         </div>
 
-        <div className="field" style={{ maxWidth: 360 }}>
+        {!selectedId && (waiverSummary.faabLeagues > 0 || waiverSummary.positionLeagues > 0) && (
+          <div className="mgrherorow">
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
+              >
+                <IconDollar width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Total FAAB used</p>
+                <p className="mgrstatvalue" style={{ color: "var(--amber)" }}>${waiverSummary.faabTotal}</p>
+                <p className="mgrstatsub">across {waiverSummary.faabLeagues} leagues tracking FAAB</p>
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{
+                  color: waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)",
+                  background: `color-mix(in srgb, ${waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)"} 16%, transparent)`,
+                }}
+              >
+                <IconStar width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Best waiver position</p>
+                <p className="mgrstatvalue">{waiverSummary.best?.waiverPosition ?? "—"}</p>
+                {waiverSummary.best && <p className="mgrstatsub">in {waiverSummary.best.leagueName}</p>}
+              </div>
+            </div>
+            <div className="mgrstat">
+              <div
+                className="mgrstaticon"
+                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
+              >
+                <IconUsers width={17} height={17} />
+              </div>
+              <div className="mgrstatbody">
+                <p className="mgrstatlabel">Avg waiver position</p>
+                <p className="mgrstatvalue">
+                  {waiverSummary.avgPosition != null ? waiverSummary.avgPosition.toFixed(1) : "—"}
+                </p>
+                <p className="mgrstatsub">{waiverSummary.positionLeagues} leagues on waivers</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="field" style={{ maxWidth: 360, marginTop: 16 }}>
           <input
             className="input"
             placeholder="Search a player to add…"

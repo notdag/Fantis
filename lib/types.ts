@@ -86,6 +86,7 @@ export interface SleeperTransaction {
   consenter_ids: number[] | null;
   adds: Record<string, number> | null;
   drops: Record<string, number> | null;
+  settings: { waiver_bid?: number } | null; // real FAAB bid for a waiver claim; null for trades/free agent
 }
 
 // Narrow shapes for Sleeper Manager's Phase 2 sync (lib/managerSync.ts) —
