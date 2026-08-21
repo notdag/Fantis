@@ -8,9 +8,15 @@ import {
   type ManagedLeague,
   type ManagedMatchup,
   type ManagedRoster,
+  type ManagedTransaction,
   formatUpcoming,
   statusChipStyle,
+  transactionTypeChipStyle,
+  transactionTypeLabel,
 } from "@/lib/manager";
+import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
+import { posChipStyle } from "@/lib/players";
+import { buildStartingSlots } from "@/lib/rosterSlots";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, computeStanding, sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import AlertRow from "./AlertRow";
@@ -19,12 +25,30 @@ import { IconCheck, IconStar, IconCalendar, IconShield } from "./MgrIcons";
 import { SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
+import type { PlayerMap } from "@/lib/types";
 
-// Real summary of a league — hero stats plus a short preview of each
-// detail tab (matchup/standings), each linking to its own full route.
-// This is the one page in the 8-way split that genuinely summarizes
-// rather than just relocating a section wholesale, per the "summarize
-// and link, don't cram everything on one page" ask.
+function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
+  const ring = pos ? posChipStyle(pos).color : "var(--line)";
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      className="mgravatar"
+      src={playerPhotoUrl(playerId)}
+      alt=""
+      style={{ width: size, height: size, borderColor: ring }}
+      onError={(e) => {
+        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+      }}
+    />
+  );
+}
+
+const ROSTER_PREVIEW_SLOTS = 5;
+
+// Real summary of a league — a 3-row grid (hero stats, then roster+matchup
+// side by side, then standings+recent activity side by side), each detail
+// linking to its own full route. This is the one page in the 8-way split
+// that genuinely summarizes rather than relocating a section wholesale.
 export default function LeagueOverview({
   league,
   roster,
@@ -32,6 +56,8 @@ export default function LeagueOverview({
   alerts,
   draft,
   leagueRosters,
+  recentTransactions,
+  rosterPositions,
 }: {
   league: ManagedLeague;
   roster: ManagedRoster | null;
@@ -39,10 +65,25 @@ export default function LeagueOverview({
   alerts: ManagedAlert[];
   draft: ManagedDraft | null;
   leagueRosters: LeagueRosterRow[];
+  recentTransactions: ManagedTransaction[];
+  rosterPositions: string[];
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  const [pmap, setPmap] = useState<PlayerMap | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getPlayers()
+      .then((m) => {
+        if (!cancelled) setPmap(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const seasonTotals = useSeasonTotals();
@@ -62,10 +103,16 @@ export default function LeagueOverview({
 
   const standingsPreview = useMemo(() => sortByStanding(leagueRosters).slice(0, 5), [leagueRosters]);
 
+  const rosterSlotsPreview = useMemo(() => {
+    if (!roster) return [];
+    return buildStartingSlots(rosterPositions).slice(0, ROSTER_PREVIEW_SLOTS);
+  }, [roster, rosterPositions]);
+
   return (
     <>
       <LeagueIdentityBar league={league} />
 
+      {/* Row 1 — hero stats */}
       {(roster || showDraftCard) && (
         <section className="sec">
           <StatCardGrid variant="grid">
@@ -74,21 +121,6 @@ export default function LeagueOverview({
                 icon={IconCheck}
                 label="Record"
                 value={`${roster.wins}-${roster.losses}${roster.ties > 0 ? `-${roster.ties}` : ""}`}
-                sub={
-                  roster.fpts != null && roster.fptsAgainst != null
-                    ? `PF ${roster.fpts.toFixed(1)} · PA ${roster.fptsAgainst.toFixed(1)}`
-                    : undefined
-                }
-              />
-            )}
-
-            {roster && leagueRank?.rank != null && (
-              <StatCard
-                icon={IconStar}
-                color={leagueRank.rank <= leagueRank.totalTeams / 2 ? "var(--mint)" : "var(--muted)"}
-                label="League rank"
-                value={`#${leagueRank.rank} of ${leagueRank.totalTeams}`}
-                sub={leagueRank.myValue != null ? `team value ${Math.round(leagueRank.myValue)} pts` : undefined}
               />
             )}
 
@@ -98,7 +130,24 @@ export default function LeagueOverview({
                 color={standing.standing <= standing.totalTeams / 2 ? "var(--mint)" : "var(--muted)"}
                 label="Standing"
                 value={`#${standing.standing} of ${standing.totalTeams}`}
-                sub={`real record · ${roster.wins}-${roster.losses}${roster.ties > 0 ? `-${roster.ties}` : ""}`}
+              />
+            )}
+
+            {roster && roster.fpts != null && (
+              <StatCard label="Points for" value={roster.fpts.toFixed(1)} />
+            )}
+
+            {roster && roster.fptsAgainst != null && (
+              <StatCard label="Points against" value={roster.fptsAgainst.toFixed(1)} />
+            )}
+
+            {roster && leagueRank?.rank != null && (
+              <StatCard
+                icon={IconStar}
+                color={leagueRank.rank <= leagueRank.totalTeams / 2 ? "var(--mint)" : "var(--muted)"}
+                label="League rank"
+                value={`#${leagueRank.rank} of ${leagueRank.totalTeams}`}
+                sub={leagueRank.myValue != null ? `team value ${Math.round(leagueRank.myValue)} pts` : undefined}
               />
             )}
 
@@ -134,90 +183,156 @@ export default function LeagueOverview({
         </section>
       )}
 
-      {matchup && (
+      {/* Row 2 — My Team (left) / Matchup (right) */}
+      {(roster || matchup) && (
         <section className="sec">
-          <SectionHead
-            title={<>This week&rsquo;s matchup</>}
-            right={
-              <Link href={`/manager/${league.id}/matchup`} className="link">
-                View full matchup →
-              </Link>
-            }
-          />
-          <div className="portoverview">
-            <div className="portoverviewrow" style={{ cursor: "default" }}>
-              <span className="tname">You</span>
-              <span className="portvalue">{matchup.myPoints.toFixed(1)}</span>
-            </div>
-            <div className="portoverviewrow" style={{ cursor: "default" }}>
-              <span className="tname">{matchup.opponentTeamName ?? "Opponent"}</span>
-              <span className="portvalue">
-                {matchup.opponentPoints != null ? matchup.opponentPoints.toFixed(1) : "—"}
-              </span>
-            </div>
-          </div>
-        </section>
-      )}
+          <div className="mgroverviewgrid">
+            {roster && (
+              <div>
+                <SectionHead
+                  title="My Team"
+                  right={
+                    <Link href={`/manager/${league.id}/team`} className="link">
+                      View full roster →
+                    </Link>
+                  }
+                />
+                <DataTable>
+                  {rosterSlotsPreview.map((slot, i) => {
+                    const playerId = roster.starters[i];
+                    const empty = !playerId || playerId === "0";
+                    const entry = empty ? null : pmap?.[playerId];
+                    return (
+                      <TableRow key={slot.key}>
+                        <span className="portmeta" style={{ minWidth: 44 }}>{slot.code}</span>
+                        {empty ? (
+                          <span className="tname" style={{ color: "var(--red)" }}>Empty slot</span>
+                        ) : (
+                          <>
+                            <Avatar playerId={playerId} pos={entry?.p} size={26} />
+                            <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
+                            {entry?.p && (
+                              <span className="pos" style={posChipStyle(entry.p)}>
+                                {entry.p}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </TableRow>
+                    );
+                  })}
+                </DataTable>
+              </div>
+            )}
 
-      {roster && leagueRosters.length > 0 && (
-        <section className="sec">
-          <SectionHead
-            title="Standings"
-            right={
-              <Link href={`/manager/${league.id}/standings`} className="link">
-                View full standings →
-              </Link>
-            }
-          />
-          <DataTable>
-            {standingsPreview.map((r, i) => {
-              const isMe = r.rosterId === roster.rosterId;
-              return (
-                <TableRow highlight={isMe} key={r.rosterId}>
-                  <span className="portmeta" style={{ minWidth: 24 }}>{i + 1}</span>
-                  <span className="tname" style={{ flex: 1 }}>{r.teamName ?? `Team ${r.rosterId}`}</span>
-                  {isMe && (
-                    <span
-                      className="pos"
-                      style={{
-                        color: "var(--amber)",
-                        background: "color-mix(in srgb, var(--amber) 16%, transparent)",
-                        borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
-                      }}
-                    >
-                      You
+            {matchup && (
+              <div>
+                <SectionHead
+                  title={<>This week&rsquo;s matchup</>}
+                  right={
+                    <Link href={`/manager/${league.id}/matchup`} className="link">
+                      View full →
+                    </Link>
+                  }
+                />
+                <div className="portoverview">
+                  <div className="portoverviewrow" style={{ cursor: "default" }}>
+                    <span className="tname">You</span>
+                    <span className="portvalue">{matchup.myPoints.toFixed(1)}</span>
+                  </div>
+                  <div className="portoverviewrow" style={{ cursor: "default" }}>
+                    <span className="tname">{matchup.opponentTeamName ?? "Opponent"}</span>
+                    <span className="portvalue">
+                      {matchup.opponentPoints != null ? matchup.opponentPoints.toFixed(1) : "—"}
                     </span>
-                  )}
-                  <span className="portmeta">
-                    {r.wins ?? 0}-{r.losses ?? 0}
-                    {(r.ties ?? 0) > 0 ? `-${r.ties}` : ""}
-                  </span>
-                  <span className="portvalue">{r.fpts != null ? `${r.fpts.toFixed(1)} pts` : "—"}</span>
-                </TableRow>
-              );
-            })}
-          </DataTable>
-        </section>
-      )}
-
-      {roster && (
-        <section className="sec">
-          <SectionHead
-            title="My Team"
-            right={
-              <Link href={`/manager/${league.id}/team`} className="link">
-                View full roster →
-              </Link>
-            }
-          />
-          <div className="hint">
-            {roster.wins}-{roster.losses}
-            {roster.ties > 0 ? `-${roster.ties}` : ""} ·{" "}
-            {roster.waiverPosition != null ? `waiver #${roster.waiverPosition} · ` : ""}
-            {roster.faabUsed != null ? `$${roster.faabUsed} FAAB used` : ""}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       )}
+
+      {/* Row 3 — Standings (left) / Recent activity (right) */}
+      {(roster && leagueRosters.length > 0) || recentTransactions.length > 0 ? (
+        <section className="sec">
+          <div className="mgroverviewgrid">
+            {roster && leagueRosters.length > 0 && (
+              <div>
+                <SectionHead
+                  title="Standings"
+                  right={
+                    <Link href={`/manager/${league.id}/standings`} className="link">
+                      View full standings →
+                    </Link>
+                  }
+                />
+                <DataTable>
+                  {standingsPreview.map((r, i) => {
+                    const isMe = r.rosterId === roster.rosterId;
+                    return (
+                      <TableRow highlight={isMe} key={r.rosterId}>
+                        <span className="portmeta" style={{ minWidth: 24 }}>{i + 1}</span>
+                        <span className="tname" style={{ flex: 1 }}>{r.teamName ?? `Team ${r.rosterId}`}</span>
+                        {isMe && (
+                          <span
+                            className="pos"
+                            style={{
+                              color: "var(--amber)",
+                              background: "color-mix(in srgb, var(--amber) 16%, transparent)",
+                              borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                            }}
+                          >
+                            You
+                          </span>
+                        )}
+                        <span className="portmeta">
+                          {r.wins ?? 0}-{r.losses ?? 0}
+                          {(r.ties ?? 0) > 0 ? `-${r.ties}` : ""}
+                        </span>
+                        <span className="portvalue">{r.fpts != null ? `${r.fpts.toFixed(1)} pts` : "—"}</span>
+                      </TableRow>
+                    );
+                  })}
+                </DataTable>
+              </div>
+            )}
+
+            <div>
+              <SectionHead
+                title="Recent activity"
+                right={
+                  <Link href={`/manager/${league.id}/transactions`} className="link">
+                    View all →
+                  </Link>
+                }
+              />
+              {recentTransactions.length === 0 ? (
+                <p className="hint">No transactions synced yet for this league.</p>
+              ) : (
+                <DataTable>
+                  {recentTransactions.map((t) => (
+                    <TableRow key={t.id}>
+                      <span className="pos" style={transactionTypeChipStyle(t.type)}>
+                        {transactionTypeLabel(t.type)}
+                      </span>
+                      <span className="portmeta" style={{ flex: 1 }}>
+                        {t.adds && t.adds.length > 0 && (
+                          <span style={{ color: "var(--mint)" }}>+ {t.adds.map((p) => p.playerName).join(", ")}</span>
+                        )}
+                        {t.adds && t.adds.length > 0 && t.drops && t.drops.length > 0 && " · "}
+                        {t.drops && t.drops.length > 0 && (
+                          <span style={{ color: "var(--red)" }}>− {t.drops.map((p) => p.playerName).join(", ")}</span>
+                        )}
+                      </span>
+                    </TableRow>
+                  ))}
+                </DataTable>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
     </>
   );
 }

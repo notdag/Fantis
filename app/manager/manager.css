@@ -180,6 +180,10 @@
 
 .mgrnavgroup-league{border-top:1px solid var(--line-soft);padding-top:14px}
 
+/* League Overview's row 2/3 two-column layout (2026-08) — collapses to a
+   single column under the shared 860px breakpoint below. */
+.mgroverviewgrid{display:grid;grid-template-columns:2fr 1fr;gap:20px;align-items:start}
+
 /* Mobile bottom nav (2026-08) — 4 fixed destinations, ≤860px only (see
    media query below); .mgrmain > .wrap gets extra bottom padding there so
    content never sits under the fixed bar. */
@@ -197,6 +201,7 @@
   .mgrshell{display:block}
   .mgrsidebar{display:none}
   .mgrherorow{grid-template-columns:1fr}
+  .mgroverviewgrid{grid-template-columns:1fr}
   .mgrheader{display:none}
   .mgrsubnav{display:none}
   .mgrtopbar{display:flex;align-items:center;gap:12px;padding:14px 16px;
