@@ -7,6 +7,8 @@ import { posChipStyle } from "@/lib/players";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import LeagueIdentityBar from "./LeagueIdentityBar";
+import { SectionHead } from "./PageHead";
+import { DataTable, TableRow } from "./DataRow";
 import type { PlayerMap } from "@/lib/types";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
@@ -91,39 +93,37 @@ export default function LeagueRosters({
           });
           return (
             <section className="sec" key={team.rosterId}>
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>
-                  {team.teamName ?? `Team ${team.rosterId}`}
-                  {team.rosterId === myRosterId && (
-                    <span
-                      className="pos"
-                      style={{
-                        marginLeft: 8,
-                        color: "var(--amber)",
-                        background: "color-mix(in srgb, var(--amber) 16%, transparent)",
-                        borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
-                      }}
-                    >
-                      You
-                    </span>
-                  )}
-                </h2>
-                <span className="rt">
-                  {team.wins ?? 0}-{team.losses ?? 0}
-                  {(team.ties ?? 0) > 0 ? `-${team.ties}` : ""} ·{" "}
-                  {team.fpts != null ? `${team.fpts.toFixed(1)} pts` : "—"}
-                </span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead
+                title={
+                  <>
+                    {team.teamName ?? `Team ${team.rosterId}`}
+                    {team.rosterId === myRosterId && (
+                      <span
+                        className="pos"
+                        style={{
+                          marginLeft: 8,
+                          color: "var(--amber)",
+                          background: "color-mix(in srgb, var(--amber) 16%, transparent)",
+                          borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
+                        }}
+                      >
+                        You
+                      </span>
+                    )}
+                  </>
+                }
+                right={`${team.wins ?? 0}-${team.losses ?? 0}${(team.ties ?? 0) > 0 ? `-${team.ties}` : ""} · ${team.fpts != null ? `${team.fpts.toFixed(1)} pts` : "—"}`}
+              />
+              <DataTable>
                 {players.length === 0 ? (
-                  <div className="mgrrow static">
+                  <TableRow>
                     <span className="hint">No real roster data synced for this team yet.</span>
-                  </div>
+                  </TableRow>
                 ) : (
                   players.map((id) => {
                     const entry = pmap?.[id];
                     return (
-                      <div className="mgrrow static" key={id}>
+                      <TableRow key={id}>
                         <Avatar playerId={id} pos={entry?.p} size={26} />
                         <span className="tname" style={{ flex: 1 }}>{entry?.n ?? id}</span>
                         {entry?.p && (
@@ -132,11 +132,11 @@ export default function LeagueRosters({
                           </span>
                         )}
                         <span className="portmeta">{entry?.t ?? ""}</span>
-                      </div>
+                      </TableRow>
                     );
                   })
                 )}
-              </div>
+              </DataTable>
             </section>
           );
         })
@@ -144,21 +144,18 @@ export default function LeagueRosters({
 
       {bestAvailable.length > 0 && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Best available in this league</h2>
-            <span className="rt">real season points · not on any roster here</span>
-          </div>
-          <div className="mgrtable">
+          <SectionHead title="Best available in this league" right="real season points · not on any roster here" />
+          <DataTable>
             {bestAvailable.map((p) => (
-              <div className="mgrrow static" key={p.id}>
+              <TableRow key={p.id}>
                 <Avatar playerId={p.id} pos={p.pos} size={26} />
                 <span className="tname" style={{ flex: 1 }}>{p.name}</span>
                 <span className="pos" style={posChipStyle(p.pos)}>{p.pos}</span>
                 <span className="portmeta">{p.team}</span>
                 <span className="portvalue">{Math.round(p.pts)} pts</span>
-              </div>
+              </TableRow>
             ))}
-          </div>
+          </DataTable>
         </section>
       )}
     </>

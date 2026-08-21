@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import { alertSeverityChipStyle, formatRelative, type ManagedHistoryAlert } from "@/lib/manager";
 import { IconCalendar, IconCheck, IconFlag } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 type Classification = "active" | "resolved" | "snoozed";
 
@@ -68,59 +71,28 @@ export default function AlertHistory({ alerts }: { alerts: ManagedHistoryAlert[]
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Alert history</h1>
-          <p>
-            The most recent 150 alerts across every synced league — active, resolved, and
-            snoozed. Resolved means a later sync no longer found the condition true; nothing here
-            is ever silently deleted.
-          </p>
-        </div>
+        <PageHead
+          title="Alert history"
+          description={
+            <>
+              The most recent 150 alerts across every synced league — active, resolved, and
+              snoozed. Resolved means a later sync no longer found the condition true; nothing
+              here is ever silently deleted.
+            </>
+          }
+        />
         {alerts.length > 0 && (
-          <div className="mgrherorow">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: summary.active > 0 ? "var(--red)" : "var(--mint)",
-                  background: `color-mix(in srgb, ${summary.active > 0 ? "var(--red)" : "var(--mint)"} 16%, transparent)`,
-                }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Active</p>
-                <p className="mgrstatvalue" style={{ color: summary.active > 0 ? "var(--red)" : undefined }}>
-                  {summary.active}
-                </p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
-              >
-                <IconCheck width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Resolved</p>
-                <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{summary.resolved}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-              >
-                <IconCalendar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Snoozed</p>
-                <p className="mgrstatvalue">{summary.snoozed}</p>
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="hero">
+            <StatCard
+              icon={IconFlag}
+              color={summary.active > 0 ? "var(--red)" : "var(--mint)"}
+              label="Active"
+              value={summary.active}
+              valueColor={summary.active > 0 ? "var(--red)" : undefined}
+            />
+            <StatCard icon={IconCheck} color="var(--mint)" label="Resolved" value={summary.resolved} valueColor="var(--mint)" />
+            <StatCard icon={IconCalendar} color="var(--muted)" label="Snoozed" value={summary.snoozed} />
+          </StatCardGrid>
         )}
       </section>
 
@@ -156,15 +128,12 @@ export default function AlertHistory({ alerts }: { alerts: ManagedHistoryAlert[]
               const now = new Date();
               return (
                 <section className="sec" key={day}>
-                  <div className="sechead">
-                    <h2 style={{ fontSize: 18 }}>{day}</h2>
-                    <span className="rt">{rows.length} alerts</span>
-                  </div>
-                  <div className="mgrtable">
+                  <SectionHead title={day} right={`${rows.length} alerts`} />
+                  <DataTable>
                     {rows.map((a) => {
                       const status = statusDisplay(a, now);
                       return (
-                        <div className="mgrrow static" key={a.id}>
+                        <TableRow key={a.id}>
                           <span className="portmeta" style={{ minWidth: 60 }}>
                             {new Date(a.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                           </span>
@@ -175,10 +144,10 @@ export default function AlertHistory({ alerts }: { alerts: ManagedHistoryAlert[]
                           ) : (
                             <span className="portmeta" style={{ color: "var(--dim)" }}>{status.label}</span>
                           )}
-                        </div>
+                        </TableRow>
                       );
                     })}
-                  </div>
+                  </DataTable>
                 </section>
               );
             })

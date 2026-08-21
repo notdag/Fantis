@@ -4,6 +4,8 @@ import { type ManagedLeague } from "@/lib/manager";
 import { transactionTypeChipStyle, transactionTypeLabel, type ManagedTransaction } from "@/lib/manager";
 import { posChipStyle } from "@/lib/players";
 import LeagueIdentityBar from "./LeagueIdentityBar";
+import { SectionHead } from "./PageHead";
+import { DataTable, TableRow } from "./DataRow";
 
 function PlayerList({
   players,
@@ -46,16 +48,13 @@ export default function LeagueTransactionsTab({
     <>
       <LeagueIdentityBar league={league} />
       <section className="sec">
-        <div className="sechead">
-          <h2 style={{ fontSize: 18 }}>Transactions</h2>
-          <span className="rt">most recent first</span>
-        </div>
+        <SectionHead title="Transactions" right="most recent first" />
         {transactions.length === 0 ? (
           <p className="hint">No transactions synced yet for this league.</p>
         ) : (
-          <div className="mgrtable">
+          <DataTable>
             {transactions.map((t) => (
-              <div className="mgrrow static" key={t.id}>
+              <TableRow key={t.id}>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                 </span>
@@ -71,9 +70,9 @@ export default function LeagueTransactionsTab({
                   <span className="portmeta" style={{ color: "var(--amber)" }}>${t.waiverBid}</span>
                 )}
                 {t.creatorTeamName && <span className="portmeta">{t.creatorTeamName}</span>}
-              </div>
+              </TableRow>
             ))}
-          </div>
+          </DataTable>
         )}
       </section>
     </>

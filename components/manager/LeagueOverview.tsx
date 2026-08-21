@@ -16,6 +16,9 @@ import { computeLeagueRank, computeStanding, sortByStanding, type LeagueRosterRo
 import AlertRow from "./AlertRow";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { IconCheck, IconStar, IconCalendar, IconShield } from "./MgrIcons";
+import { SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 // Real summary of a league — hero stats plus a short preview of each
 // detail tab (matchup/standings), each linking to its own full route.
@@ -65,113 +68,62 @@ export default function LeagueOverview({
 
       {(roster || showDraftCard) && (
         <section className="sec">
-          <div className="mgrstats">
+          <StatCardGrid variant="grid">
             {roster && (
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--bone)", background: "color-mix(in srgb, var(--bone) 12%, transparent)" }}
-                >
-                  <IconCheck width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Record</p>
-                  <p className="mgrstatvalue">
-                    {roster.wins}-{roster.losses}
-                    {roster.ties > 0 ? `-${roster.ties}` : ""}
-                  </p>
-                  {roster.fpts != null && roster.fptsAgainst != null && (
-                    <p className="mgrstatsub">
-                      PF {roster.fpts.toFixed(1)} · PA {roster.fptsAgainst.toFixed(1)}
-                    </p>
-                  )}
-                </div>
-              </div>
+              <StatCard
+                icon={IconCheck}
+                label="Record"
+                value={`${roster.wins}-${roster.losses}${roster.ties > 0 ? `-${roster.ties}` : ""}`}
+                sub={
+                  roster.fpts != null && roster.fptsAgainst != null
+                    ? `PF ${roster.fpts.toFixed(1)} · PA ${roster.fptsAgainst.toFixed(1)}`
+                    : undefined
+                }
+              />
             )}
 
             {roster && leagueRank?.rank != null && (
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{
-                    color: leagueRank.rank <= leagueRank.totalTeams / 2 ? "var(--mint)" : "var(--muted)",
-                    background:
-                      leagueRank.rank <= leagueRank.totalTeams / 2
-                        ? "color-mix(in srgb, var(--mint) 16%, transparent)"
-                        : "color-mix(in srgb, var(--muted) 16%, transparent)",
-                  }}
-                >
-                  <IconStar width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">League rank</p>
-                  <p className="mgrstatvalue">
-                    #{leagueRank.rank} of {leagueRank.totalTeams}
-                  </p>
-                  {leagueRank.myValue != null && (
-                    <p className="mgrstatsub">team value {Math.round(leagueRank.myValue)} pts</p>
-                  )}
-                </div>
-              </div>
+              <StatCard
+                icon={IconStar}
+                color={leagueRank.rank <= leagueRank.totalTeams / 2 ? "var(--mint)" : "var(--muted)"}
+                label="League rank"
+                value={`#${leagueRank.rank} of ${leagueRank.totalTeams}`}
+                sub={leagueRank.myValue != null ? `team value ${Math.round(leagueRank.myValue)} pts` : undefined}
+              />
             )}
 
             {roster && standing?.standing != null && (
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{
-                    color: standing.standing <= standing.totalTeams / 2 ? "var(--mint)" : "var(--muted)",
-                    background:
-                      standing.standing <= standing.totalTeams / 2
-                        ? "color-mix(in srgb, var(--mint) 16%, transparent)"
-                        : "color-mix(in srgb, var(--muted) 16%, transparent)",
-                  }}
-                >
-                  <IconShield width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Standing</p>
-                  <p className="mgrstatvalue">
-                    #{standing.standing} of {standing.totalTeams}
-                  </p>
-                  <p className="mgrstatsub">
-                    real record · {roster.wins}-{roster.losses}
-                    {roster.ties > 0 ? `-${roster.ties}` : ""}
-                  </p>
-                </div>
-              </div>
+              <StatCard
+                icon={IconShield}
+                color={standing.standing <= standing.totalTeams / 2 ? "var(--mint)" : "var(--muted)"}
+                label="Standing"
+                value={`#${standing.standing} of ${standing.totalTeams}`}
+                sub={`real record · ${roster.wins}-${roster.losses}${roster.ties > 0 ? `-${roster.ties}` : ""}`}
+              />
             )}
 
             {showDraftCard && draft && (
-              <div className="mgrstat">
-                <div className="mgrstaticon" style={statusChipStyle(league.status)}>
-                  <IconCalendar width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Draft</p>
-                  <p className="mgrstatvalue">
-                    {mounted ? (draft.status === "drafting" ? "Drafting now" : formatUpcoming(draft.startTime)) : "—"}
-                  </p>
-                  {typeof draftIdRaw === "string" && (
-                    <p className="mgrstatsub">
-                      <Link href={`/manager/${league.id}/draft`} className="link">
-                        View draft →
-                      </Link>
-                    </p>
-                  )}
-                </div>
-              </div>
+              <StatCard
+                icon={IconCalendar}
+                color={statusChipStyle(league.status).color}
+                label="Draft"
+                value={mounted ? (draft.status === "drafting" ? "Drafting now" : formatUpcoming(draft.startTime)) : "—"}
+                sub={
+                  typeof draftIdRaw === "string" ? (
+                    <Link href={`/manager/${league.id}/draft`} className="link">
+                      View draft →
+                    </Link>
+                  ) : undefined
+                }
+              />
             )}
-          </div>
+          </StatCardGrid>
         </section>
       )}
 
       {alerts.length > 0 && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Alerts</h2>
-            <span className="rt">{alerts.length} from the last sync</span>
-          </div>
+          <SectionHead title="Alerts" right={`${alerts.length} from the last sync`} />
           <div className="tradeinbox">
             {[...alerts]
               .sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "action_required" ? -1 : 1))
@@ -184,12 +136,14 @@ export default function LeagueOverview({
 
       {matchup && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>This week&rsquo;s matchup</h2>
-            <Link href={`/manager/${league.id}/matchup`} className="link">
-              View full matchup →
-            </Link>
-          </div>
+          <SectionHead
+            title={<>This week&rsquo;s matchup</>}
+            right={
+              <Link href={`/manager/${league.id}/matchup`} className="link">
+                View full matchup →
+              </Link>
+            }
+          />
           <div className="portoverview">
             <div className="portoverviewrow" style={{ cursor: "default" }}>
               <span className="tname">You</span>
@@ -207,21 +161,19 @@ export default function LeagueOverview({
 
       {roster && leagueRosters.length > 0 && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Standings</h2>
-            <Link href={`/manager/${league.id}/standings`} className="link">
-              View full standings →
-            </Link>
-          </div>
-          <div className="mgrtable">
+          <SectionHead
+            title="Standings"
+            right={
+              <Link href={`/manager/${league.id}/standings`} className="link">
+                View full standings →
+              </Link>
+            }
+          />
+          <DataTable>
             {standingsPreview.map((r, i) => {
               const isMe = r.rosterId === roster.rosterId;
               return (
-                <div
-                  className="mgrrow static"
-                  key={r.rosterId}
-                  style={isMe ? { background: "color-mix(in srgb, var(--amber) 10%, transparent)" } : undefined}
-                >
+                <TableRow highlight={isMe} key={r.rosterId}>
                   <span className="portmeta" style={{ minWidth: 24 }}>{i + 1}</span>
                   <span className="tname" style={{ flex: 1 }}>{r.teamName ?? `Team ${r.rosterId}`}</span>
                   {isMe && (
@@ -241,21 +193,23 @@ export default function LeagueOverview({
                     {(r.ties ?? 0) > 0 ? `-${r.ties}` : ""}
                   </span>
                   <span className="portvalue">{r.fpts != null ? `${r.fpts.toFixed(1)} pts` : "—"}</span>
-                </div>
+                </TableRow>
               );
             })}
-          </div>
+          </DataTable>
         </section>
       )}
 
       {roster && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>My Team</h2>
-            <Link href={`/manager/${league.id}/team`} className="link">
-              View full roster →
-            </Link>
-          </div>
+          <SectionHead
+            title="My Team"
+            right={
+              <Link href={`/manager/${league.id}/team`} className="link">
+                View full roster →
+              </Link>
+            }
+          />
           <div className="hint">
             {roster.wins}-{roster.losses}
             {roster.ties > 0 ? `-${roster.ties}` : ""} ·{" "}

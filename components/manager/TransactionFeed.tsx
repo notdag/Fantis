@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
 import { posChipStyle } from "@/lib/players";
 import {
   transactionTypeChipStyle,
@@ -9,6 +8,9 @@ import {
   type ManagedTransaction,
 } from "@/lib/manager";
 import { IconCheck, IconDollar, IconUsers } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 function PlayerList({
   players,
@@ -72,61 +74,39 @@ export default function TransactionFeed({
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Transactions</h1>
-          <p>
-            Real trades, waiver claims, and free-agent pickups across every synced league — filed
-            under whichever week they happened, current week{currentWeek != null ? ` (${currentWeek})` : ""}{" "}
-            shown in the summary below.
-          </p>
-        </div>
-        <div className="mgrherorow">
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{ color: "var(--bone)", background: "color-mix(in srgb, var(--bone) 12%, transparent)" }}
-            >
-              <IconCheck width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Moves this week</p>
-              <p className="mgrstatvalue">{summary.complete.length}</p>
-              <p className="mgrstatsub">
-                {summary.trades} trades · {summary.waiver} waiver · {summary.freeAgent} free agent
-              </p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-            >
-              <IconDollar width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">FAAB spent</p>
-              <p className="mgrstatvalue" style={{ color: "var(--amber)" }}>${summary.faabSpent}</p>
-              <p className="mgrstatsub">across {summary.waiverClaims} claims</p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{
-                color: summary.activeLeagues * 2 >= inSeasonLeagueCount ? "var(--mint)" : "var(--muted)",
-                background: `color-mix(in srgb, ${summary.activeLeagues * 2 >= inSeasonLeagueCount ? "var(--mint)" : "var(--muted)"} 16%, transparent)`,
-              }}
-            >
-              <IconUsers width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Leagues active</p>
-              <p className="mgrstatvalue">{summary.activeLeagues}</p>
-              <p className="mgrstatsub">of {inSeasonLeagueCount} in-season leagues</p>
-            </div>
-          </div>
-        </div>
+        <PageHead
+          title="Transactions"
+          description={
+            <>
+              Real trades, waiver claims, and free-agent pickups across every synced league —
+              filed under whichever week they happened, current week
+              {currentWeek != null ? ` (${currentWeek})` : ""} shown in the summary below.
+            </>
+          }
+        />
+        <StatCardGrid variant="hero">
+          <StatCard
+            icon={IconCheck}
+            label="Moves this week"
+            value={summary.complete.length}
+            sub={`${summary.trades} trades · ${summary.waiver} waiver · ${summary.freeAgent} free agent`}
+          />
+          <StatCard
+            icon={IconDollar}
+            color="var(--amber)"
+            label="FAAB spent"
+            value={`$${summary.faabSpent}`}
+            valueColor="var(--amber)"
+            sub={`across ${summary.waiverClaims} claims`}
+          />
+          <StatCard
+            icon={IconUsers}
+            color={summary.activeLeagues * 2 >= inSeasonLeagueCount ? "var(--mint)" : "var(--muted)"}
+            label="Leagues active"
+            value={summary.activeLeagues}
+            sub={`of ${inSeasonLeagueCount} in-season leagues`}
+          />
+        </StatCardGrid>
       </section>
 
       {recent.length === 0 ? (
@@ -138,13 +118,10 @@ export default function TransactionFeed({
       ) : (
         Array.from(groups.entries()).map(([day, rows]) => (
           <section className="sec" key={day}>
-            <div className="sechead">
-              <h2 style={{ fontSize: 18 }}>{day}</h2>
-              <span className="rt">{rows.length} moves</span>
-            </div>
-            <div className="mgrtable">
+            <SectionHead title={day} right={`${rows.length} moves`} />
+            <DataTable>
               {rows.map((t) => (
-                <Link href={`/manager/${t.leagueId}`} className="mgrrow" key={t.id}>
+                <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.id}>
                   <span className="portmeta" style={{ minWidth: 60 }}>
                     {new Date(t.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                   </span>
@@ -163,9 +140,9 @@ export default function TransactionFeed({
                   {t.creatorTeamName && (
                     <span className="portmeta">{t.creatorTeamName}</span>
                   )}
-                </Link>
+                </TableRow>
               ))}
-            </div>
+            </DataTable>
           </section>
         ))
       )}

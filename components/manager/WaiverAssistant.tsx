@@ -6,6 +6,9 @@ import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
 import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
@@ -188,63 +191,42 @@ export default function WaiverAssistant({
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Waiver Assistant</h1>
-          <p>
-            Search a free-agent target, see which of your leagues don&rsquo;t already have him, and
-            get a real season-points drop suggestion per league. This only opens Sleeper&rsquo;s real
-            page for you to review — it never submits a claim on its own.
-          </p>
-        </div>
+        <PageHead
+          title="Waiver Assistant"
+          description={
+            <>
+              Search a free-agent target, see which of your leagues don&rsquo;t already have him,
+              and get a real season-points drop suggestion per league. This only opens
+              Sleeper&rsquo;s real page for you to review — it never submits a claim on its own.
+            </>
+          }
+        />
 
         {!selectedId && (waiverSummary.faabLeagues > 0 || waiverSummary.positionLeagues > 0) && (
-          <div className="mgrherorow">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-              >
-                <IconDollar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Total FAAB used</p>
-                <p className="mgrstatvalue" style={{ color: "var(--amber)" }}>${waiverSummary.faabTotal}</p>
-                <p className="mgrstatsub">across {waiverSummary.faabLeagues} leagues tracking FAAB</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)",
-                  background: `color-mix(in srgb, ${waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)"} 16%, transparent)`,
-                }}
-              >
-                <IconStar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Best waiver position</p>
-                <p className="mgrstatvalue">{waiverSummary.best?.waiverPosition ?? "—"}</p>
-                {waiverSummary.best && <p className="mgrstatsub">in {waiverSummary.best.leagueName}</p>}
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-              >
-                <IconUsers width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Avg waiver position</p>
-                <p className="mgrstatvalue">
-                  {waiverSummary.avgPosition != null ? waiverSummary.avgPosition.toFixed(1) : "—"}
-                </p>
-                <p className="mgrstatsub">{waiverSummary.positionLeagues} leagues on waivers</p>
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="hero">
+            <StatCard
+              icon={IconDollar}
+              color="var(--amber)"
+              label="Total FAAB used"
+              value={`$${waiverSummary.faabTotal}`}
+              valueColor="var(--amber)"
+              sub={`across ${waiverSummary.faabLeagues} leagues tracking FAAB`}
+            />
+            <StatCard
+              icon={IconStar}
+              color={waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)"}
+              label="Best waiver position"
+              value={waiverSummary.best?.waiverPosition ?? "—"}
+              sub={waiverSummary.best ? `in ${waiverSummary.best.leagueName}` : undefined}
+            />
+            <StatCard
+              icon={IconUsers}
+              color="var(--muted)"
+              label="Avg waiver position"
+              value={waiverSummary.avgPosition != null ? waiverSummary.avgPosition.toFixed(1) : "—"}
+              sub={`${waiverSummary.positionLeagues} leagues on waivers`}
+            />
+          </StatCardGrid>
         )}
 
         <div className="field" style={{ maxWidth: 360, marginTop: 16 }}>
@@ -260,25 +242,26 @@ export default function WaiverAssistant({
         </div>
 
         {!selectedId && searchResults.length > 0 && (
-          <div className="mgrtable" style={{ marginTop: 8, maxWidth: 400 }}>
-            {searchResults.map(([id, p]) => (
-              <button
-                key={id}
-                className="mgrrow"
-                style={{ border: "none" }}
-                onClick={() => {
-                  setSelectedId(id);
-                  setQuery(p.n);
-                }}
-              >
-                <Avatar playerId={id} pos={p.p} size={28} />
-                <span className="tname" style={{ flex: 1 }}>{p.n}</span>
-                <span className="pos" style={posChipStyle(p.p)}>
-                  {p.p}
-                </span>
-                <span className="portmeta">{p.t}</span>
-              </button>
-            ))}
+          <div style={{ marginTop: 8, maxWidth: 400 }}>
+            <DataTable>
+              {searchResults.map(([id, p]) => (
+                <TableRow
+                  as="button"
+                  key={id}
+                  onClick={() => {
+                    setSelectedId(id);
+                    setQuery(p.n);
+                  }}
+                >
+                  <Avatar playerId={id} pos={p.p} size={28} />
+                  <span className="tname" style={{ flex: 1 }}>{p.n}</span>
+                  <span className="pos" style={posChipStyle(p.p)}>
+                    {p.p}
+                  </span>
+                  <span className="portmeta">{p.t}</span>
+                </TableRow>
+              ))}
+            </DataTable>
           </div>
         )}
         {!selectedId && query.trim().length >= 2 && searchResults.length === 0 && (
@@ -304,21 +287,20 @@ export default function WaiverAssistant({
 
       {selectedId && (
         <section className="sec">
-          <div className="sechead">
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Avatar playerId={selectedId} pos={pmap?.[selectedId]?.p} size={40} />
-              <div>
-                <h2 style={{ fontSize: 18, margin: 0 }}>{pmap?.[selectedId]?.n ?? selectedId}</h2>
-                <span className="portmeta">
-                  {selectedSeasonPts != null ? `${Math.round(selectedSeasonPts)} proj season pts` : "no season projection"}
+          <SectionHead
+            title={
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <Avatar playerId={selectedId} pos={pmap?.[selectedId]?.p} size={40} />
+                <span>
+                  <span style={{ display: "block" }}>{pmap?.[selectedId]?.n ?? selectedId}</span>
+                  <span className="portmeta">
+                    {selectedSeasonPts != null ? `${Math.round(selectedSeasonPts)} proj season pts` : "no season projection"}
+                  </span>
                 </span>
-              </div>
-            </div>
-            <span className="rt">
-              {candidateLeagues.filter((c) => !c.takenByOther).length} of {candidateLeagues.length} league
-              {candidateLeagues.length === 1 ? "" : "s"} without him actually available
-            </span>
-          </div>
+              </span>
+            }
+            right={`${candidateLeagues.filter((c) => !c.takenByOther).length} of ${candidateLeagues.length} league${candidateLeagues.length === 1 ? "" : "s"} without him actually available`}
+          />
 
           {mounted && !connected && (
             <p className="hint" style={{ color: "var(--dim)" }}>
@@ -331,15 +313,15 @@ export default function WaiverAssistant({
             <p className="hint">Every league already has this player on your roster.</p>
           ) : (
             <>
-              <div className="mgrtable">
+              <DataTable>
                 {candidateLeagues.map(({ leagueId, leagueName, drop, takenByOther }) => {
                   const label = drop ? pmap?.[drop.playerId] : null;
                   const diff =
                     selectedSeasonPts != null && drop ? selectedSeasonPts - drop.value : null;
                   return (
-                    <label
+                    <TableRow
+                      as="label"
                       key={leagueId}
-                      className="mgrrow"
                       style={{ cursor: takenByOther ? "default" : "pointer", opacity: takenByOther ? 0.55 : 1 }}
                     >
                       <input
@@ -376,10 +358,10 @@ export default function WaiverAssistant({
                         <span className="portmeta">suggest drop: —</span>
                       )}
                       {!takenByOther && <Diff value={diff} />}
-                    </label>
+                    </TableRow>
                   );
                 })}
-              </div>
+              </DataTable>
 
               <p className="hint" style={{ marginTop: 10 }}>
                 Leagues where another team already has him are shown greyed out and can&rsquo;t be

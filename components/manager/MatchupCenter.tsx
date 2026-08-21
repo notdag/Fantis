@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { IconArrowUp, IconArrowDown, IconFlag, IconCheck, IconUsers } from "./MgrIcons";
+import { PageHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 export interface MatchupCenterRow {
   leagueId: string;
@@ -86,53 +88,21 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Matchups</h1>
-          <p>
-            Every league&rsquo;s current matchup in one place, sorted closest-first by default —
-            instead of clicking into each league to see how close it is. Scores are live, in-progress
-            totals as of the last sync, not a prediction of who wins.
-          </p>
-        </div>
-        <div className="mgrstats">
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
-            >
-              <IconCheck width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Leading</p>
-              <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{summary.leading}</p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-            >
-              <IconFlag width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Trailing</p>
-              <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{summary.trailing}</p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div
-              className="mgrstaticon"
-              style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-            >
-              <IconUsers width={17} height={17} />
-            </div>
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Tied</p>
-              <p className="mgrstatvalue">{summary.tied}</p>
-            </div>
-          </div>
-        </div>
+        <PageHead
+          title="Matchups"
+          description={
+            <>
+              Every league&rsquo;s current matchup in one place, sorted closest-first by default —
+              instead of clicking into each league to see how close it is. Scores are live,
+              in-progress totals as of the last sync, not a prediction of who wins.
+            </>
+          }
+        />
+        <StatCardGrid variant="grid">
+          <StatCard icon={IconCheck} color="var(--mint)" label="Leading" value={summary.leading} valueColor="var(--mint)" />
+          <StatCard icon={IconFlag} color="var(--red)" label="Trailing" value={summary.trailing} valueColor="var(--red)" />
+          <StatCard icon={IconUsers} color="var(--muted)" label="Tied" value={summary.tied} />
+        </StatCardGrid>
       </section>
 
       <section className="sec">
@@ -165,9 +135,9 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
           ))}
         </div>
 
-        <div className="mgrtable">
+        <DataTable>
           {sorted.map((r) => (
-            <Link href={`/manager/${r.leagueId}/matchup`} className="mgrrow" key={r.leagueId}>
+            <TableRow as="link" href={`/manager/${r.leagueId}/matchup`} key={r.leagueId}>
               <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
               <span className="portmeta" style={{ minWidth: 130, textAlign: "right" }}>
                 {r.myPoints.toFixed(1)} vs{" "}
@@ -175,7 +145,7 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
                 {r.opponentTeamName ? ` (${r.opponentTeamName})` : ""}
               </span>
               <Margin value={r.margin} />
-            </Link>
+            </TableRow>
           ))}
           {sorted.length === 0 && (
             <p className="hint" style={{ padding: "16px 0" }}>
@@ -184,7 +154,7 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
                 : "No trailing matchups right now."}
             </p>
           )}
-        </div>
+        </DataTable>
         {sorted.length > 0 && (
           <div className="hint" style={{ marginTop: 8 }}>
             {sorted.length} matchup{sorted.length === 1 ? "" : "s"} shown

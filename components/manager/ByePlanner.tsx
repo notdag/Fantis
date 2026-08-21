@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { getPlayers, getState, currentProjectionWeek, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import type { PlayerMap } from "@/lib/types";
 import { IconCalendar, IconFlag, IconUsers } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 export interface ByeLeagueRow {
   leagueId: string;
@@ -81,60 +83,39 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Bye Week Planner</h1>
-          <p>
-            Every rostered player&rsquo;s upcoming bye, across every in-season league — bench
-            players included, so you can plan a waiver pickup before it&rsquo;s a scramble.
-          </p>
-        </div>
+        <PageHead
+          title="Bye Week Planner"
+          description={
+            <>
+              Every rostered player&rsquo;s upcoming bye, across every in-season league — bench
+              players included, so you can plan a waiver pickup before it&rsquo;s a scramble.
+            </>
+          }
+        />
         {!loading && (
-          <div className="mgrherorow">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: thisWeekCount > 0 ? "var(--amber)" : "var(--mint)",
-                  background: `color-mix(in srgb, ${thisWeekCount > 0 ? "var(--amber)" : "var(--mint)"} 16%, transparent)`,
-                }}
-              >
-                <IconCalendar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">On bye this week</p>
-                <p className="mgrstatvalue" style={{ color: thisWeekCount > 0 ? "var(--amber)" : undefined }}>
-                  {thisWeekCount}
-                </p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-              >
-                <IconUsers width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Upcoming this season</p>
-                <p className="mgrstatvalue">{totalUpcoming}</p>
-                <p className="mgrstatsub">across {weeks.length} week{weeks.length === 1 ? "" : "s"} ahead</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Next bye week</p>
-                <p className="mgrstatvalue">{nextWeek != null ? `Week ${nextWeek}` : "—"}</p>
-                {nextWeek != null && <p className="mgrstatsub">{nextWeekCount} player{nextWeekCount === 1 ? "" : "s"}</p>}
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="hero">
+            <StatCard
+              icon={IconCalendar}
+              color={thisWeekCount > 0 ? "var(--amber)" : "var(--mint)"}
+              label="On bye this week"
+              value={thisWeekCount}
+              valueColor={thisWeekCount > 0 ? "var(--amber)" : undefined}
+            />
+            <StatCard
+              icon={IconUsers}
+              color="var(--muted)"
+              label="Upcoming this season"
+              value={totalUpcoming}
+              sub={`across ${weeks.length} week${weeks.length === 1 ? "" : "s"} ahead`}
+            />
+            <StatCard
+              icon={IconFlag}
+              color="var(--amber)"
+              label="Next bye week"
+              value={nextWeek != null ? `Week ${nextWeek}` : "—"}
+              sub={nextWeek != null ? `${nextWeekCount} player${nextWeekCount === 1 ? "" : "s"}` : undefined}
+            />
+          </StatCardGrid>
         )}
       </section>
 
@@ -151,18 +132,15 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
           const rows = byWeek.get(week)!;
           return (
             <section className="sec" key={week}>
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>Week {week}</h2>
-                <span className="rt">
-                  {rows.length} player{rows.length === 1 ? "" : "s"} on bye
-                  {week === currentWeek ? " · this week" : ""}
-                </span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead
+                title={`Week ${week}`}
+                right={`${rows.length} player${rows.length === 1 ? "" : "s"} on bye${week === currentWeek ? " · this week" : ""}`}
+              />
+              <DataTable>
                 {rows.map((r, i) => {
                   const entry = pmap![r.playerId];
                   return (
-                    <Link href={`/manager/${r.leagueId}`} className="mgrrow" key={`${r.leagueId}-${r.playerId}-${i}`}>
+                    <TableRow as="link" href={`/manager/${r.leagueId}`} key={`${r.leagueId}-${r.playerId}-${i}`}>
                       <Avatar playerId={r.playerId} pos={entry.p} size={26} />
                       <span className="mgrplayername">{entry.n}</span>
                       {entry.p && (
@@ -171,10 +149,10 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
                         </span>
                       )}
                       <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
-                    </Link>
+                    </TableRow>
                   );
                 })}
-              </div>
+              </DataTable>
             </section>
           );
         })

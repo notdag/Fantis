@@ -7,6 +7,8 @@ import { posChipStyle } from "@/lib/players";
 import { isSnoozed } from "@/lib/manager";
 import { useSeasonTotals, pickReplacementCandidate } from "@/lib/useDropCandidates";
 import AlertRow from "./AlertRow";
+import { PageHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
 import type { PlayerMap } from "@/lib/types";
 
 export interface ActionItem {
@@ -99,38 +101,27 @@ export default function ActionQueue({
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Action Queue</h1>
-          <p>
-            Every open alert across every league, in one linear list — snooze or dismiss from here
-            instead of hunting through each league. Where an alert is about one starting player
-            (injured, questionable, or on bye), the best real season-points bench player at the same
-            position is suggested as a replacement — confirm on Sleeper before making the swap.
-          </p>
-        </div>
-        <div className="mgrstats">
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Needs action</p>
-              <p className="mgrstatvalue" style={{ color: actionRequiredCount > 0 ? "var(--red)" : "var(--mint)" }}>
-                {actionRequiredCount}
-              </p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Review</p>
-              <p className="mgrstatvalue">{active.length - actionRequiredCount}</p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Snoozed</p>
-              <p className="mgrstatvalue">{snoozed.length}</p>
-            </div>
-          </div>
-        </div>
+        <PageHead
+          title="Action Queue"
+          description={
+            <>
+              Every open alert across every league, in one linear list — snooze or dismiss from
+              here instead of hunting through each league. Where an alert is about one starting
+              player (injured, questionable, or on bye), the best real season-points bench player
+              at the same position is suggested as a replacement — confirm on Sleeper before
+              making the swap.
+            </>
+          }
+        />
+        <StatCardGrid variant="grid">
+          <StatCard
+            label="Needs action"
+            value={actionRequiredCount}
+            valueColor={actionRequiredCount > 0 ? "var(--red)" : "var(--mint)"}
+          />
+          <StatCard label="Review" value={active.length - actionRequiredCount} />
+          <StatCard label="Snoozed" value={snoozed.length} />
+        </StatCardGrid>
       </section>
 
       <section className="sec">

@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { db } from "@/lib/db";
 import { alertSeverityChipStyle } from "@/lib/manager";
 import { IconFlag, IconUsers } from "@/components/manager/MgrIcons";
+import { PageHead } from "@/components/manager/PageHead";
+import { StatCard, StatCardGrid } from "@/components/manager/StatCard";
+import { DataTable, TableRow } from "@/components/manager/DataRow";
 
 export const metadata: Metadata = {
   title: "Fantis — Commissioner",
@@ -36,41 +38,20 @@ export default async function CommissionerPage() {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Commissioner</h1>
-          <p>
-            Real, derived signals only — Sleeper&rsquo;s API doesn&rsquo;t carry payment or
-            registration data, so the only commissioner-relevant check is an unclaimed team.
-          </p>
-        </div>
+        <PageHead
+          title="Commissioner"
+          description={
+            <>
+              Real, derived signals only — Sleeper&rsquo;s API doesn&rsquo;t carry payment or
+              registration data, so the only commissioner-relevant check is an unclaimed team.
+            </>
+          }
+        />
         {alerts.length > 0 && (
-          <div className="mgrstats">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Unclaimed teams</p>
-                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{alerts.length}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-              >
-                <IconUsers width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Leagues affected</p>
-                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{leaguesAffected}</p>
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="grid">
+            <StatCard icon={IconFlag} color="var(--red)" label="Unclaimed teams" value={alerts.length} valueColor="var(--red)" />
+            <StatCard icon={IconUsers} color="var(--red)" label="Leagues affected" value={leaguesAffected} valueColor="var(--red)" />
+          </StatCardGrid>
         )}
       </section>
 
@@ -78,15 +59,15 @@ export default async function CommissionerPage() {
         {alerts.length === 0 ? (
           <p className="hint">Every league has a full set of claimed teams.</p>
         ) : (
-          <div className="mgrtable">
+          <DataTable>
             {alerts.map((a) => (
-              <Link href={`/manager/${a.leagueId}`} className="mgrrow" key={a.id}>
+              <TableRow as="link" href={`/manager/${a.leagueId}`} key={a.id}>
                 <span className="tname" style={{ flex: 1 }}>{a.league.name}</span>
                 <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
                 <span className="portmeta">{a.message}</span>
-              </Link>
+              </TableRow>
             ))}
-          </div>
+          </DataTable>
         )}
       </section>
     </>

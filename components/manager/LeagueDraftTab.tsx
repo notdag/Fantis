@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { formatUpcoming, statusChipStyle, type ManagedDraft, type ManagedLeague } from "@/lib/manager";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { IconCalendar } from "./MgrIcons";
+import { SectionHead } from "./PageHead";
+import { DataTable, TableRow } from "./DataRow";
 
 function settingsField(settings: unknown, key: string): unknown {
   if (!settings || typeof settings !== "object") return undefined;
@@ -28,12 +30,10 @@ export default function LeagueDraftTab({
     <>
       <LeagueIdentityBar league={league} />
       <section className="sec">
-        <div className="sechead">
-          <h2 style={{ fontSize: 18 }}>Draft</h2>
-        </div>
+        <SectionHead title="Draft" />
         {draft ? (
-          <div className="mgrtable">
-            <div className="mgrrow static">
+          <DataTable>
+            <TableRow>
               <div className="mgrstaticon" style={statusChipStyle(league.status)}>
                 <IconCalendar width={17} height={17} />
               </div>
@@ -46,8 +46,8 @@ export default function LeagueDraftTab({
                   Open draft →
                 </a>
               )}
-            </div>
-          </div>
+            </TableRow>
+          </DataTable>
         ) : (
           <p className="hint">No draft synced yet for this league.</p>
         )}

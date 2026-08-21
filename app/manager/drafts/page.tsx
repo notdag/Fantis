@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { db } from "@/lib/db";
 import { formatUpcoming } from "@/lib/manager";
 import { IconCalendar, IconFlag, IconSearch } from "@/components/manager/MgrIcons";
+import { PageHead, SectionHead } from "@/components/manager/PageHead";
+import { StatCard, StatCardGrid } from "@/components/manager/StatCard";
+import { DataTable, TableRow } from "@/components/manager/DataRow";
 
 export const metadata: Metadata = {
   title: "Fantis — Drafts",
@@ -63,58 +65,27 @@ export default async function DraftsPage() {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Drafts</h1>
-          <p>{drafts.length} league{drafts.length === 1 ? "" : "s"} with a draft still ahead.</p>
-        </div>
+        <PageHead
+          title="Drafts"
+          description={`${drafts.length} league${drafts.length === 1 ? "" : "s"} with a draft still ahead.`}
+        />
         {drafts.length > 0 && (
-          <div className="mgrherorow">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: groups.today.length > 0 ? "var(--amber)" : "var(--muted)",
-                  background: `color-mix(in srgb, ${groups.today.length > 0 ? "var(--amber)" : "var(--muted)"} 16%, transparent)`,
-                }}
-              >
-                <IconCalendar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Today</p>
-                <p className="mgrstatvalue" style={{ color: groups.today.length > 0 ? "var(--amber)" : undefined }}>
-                  {groups.today.length}
-                </p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: groups.tomorrow.length + groups.thisWeek.length > 0 ? "var(--amber)" : "var(--muted)",
-                  background: `color-mix(in srgb, ${groups.tomorrow.length + groups.thisWeek.length > 0 ? "var(--amber)" : "var(--muted)"} 16%, transparent)`,
-                }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">This week</p>
-                <p className="mgrstatvalue">{groups.tomorrow.length + groups.thisWeek.length}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-              >
-                <IconSearch width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Unscheduled</p>
-                <p className="mgrstatvalue">{groups.unscheduled.length}</p>
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="hero">
+            <StatCard
+              icon={IconCalendar}
+              color={groups.today.length > 0 ? "var(--amber)" : "var(--muted)"}
+              label="Today"
+              value={groups.today.length}
+              valueColor={groups.today.length > 0 ? "var(--amber)" : undefined}
+            />
+            <StatCard
+              icon={IconFlag}
+              color={groups.tomorrow.length + groups.thisWeek.length > 0 ? "var(--amber)" : "var(--muted)"}
+              label="This week"
+              value={groups.tomorrow.length + groups.thisWeek.length}
+            />
+            <StatCard icon={IconSearch} color="var(--muted)" label="Unscheduled" value={groups.unscheduled.length} />
+          </StatCardGrid>
         )}
       </section>
 
@@ -127,20 +98,17 @@ export default async function DraftsPage() {
           .filter((s) => s.rows.length > 0)
           .map((s) => (
             <section className="sec" key={s.label}>
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>{s.label}</h2>
-                <span className="rt">{s.rows.length} leagues</span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead title={s.label} right={`${s.rows.length} leagues`} />
+              <DataTable>
                 {s.rows.map((d) => (
-                  <Link href={`/manager/${d.leagueId}`} className="mgrrow" key={d.id}>
+                  <TableRow as="link" href={`/manager/${d.leagueId}`} key={d.id}>
                     <span className="tname" style={{ flex: 1 }}>{d.league.name}</span>
                     <span className="portvalue">
                       {d.startTime ? formatUpcoming(d.startTime.toISOString()) : "no date set"}
                     </span>
-                  </Link>
+                  </TableRow>
                 ))}
-              </div>
+              </DataTable>
             </section>
           ))
       )}

@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
 import { IconFlag, IconCheck, IconUsers, IconSearch } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
 
 export interface PlayerLeagueRow {
@@ -136,18 +138,18 @@ export default function PlayerLeagues({
   }, [leagues, pmap]);
 
   const renderRows = (list: typeof rows, severity: "action_required" | "review" | "clear" | null) => (
-    <div className="mgrtable">
+    <DataTable>
       {list.map((r) => (
-        <Link href={`/manager/${r.leagueId}`} className="mgrrow" key={r.leagueId}>
+        <TableRow as="link" href={`/manager/${r.leagueId}`} key={r.leagueId}>
           <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
           {severity && (
             <span className="pos" style={alertSeverityChipStyle(severity)}>
               {severity === "action_required" ? "needs attention" : severity === "review" ? "review" : "clear"}
             </span>
           )}
-        </Link>
+        </TableRow>
       ))}
-    </div>
+    </DataTable>
   );
 
   const selected = selectedId ? pmap?.[selectedId] : null;
@@ -155,14 +157,10 @@ export default function PlayerLeagues({
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Player search</h1>
-          <p>
-            Search any player to see where he stands across every synced league — starting, bench,
-            not rostered, and which leagues have a real alert tied to him.
-          </p>
-        </div>
+        <PageHead
+          title="Player search"
+          description="Search any player to see where he stands across every synced league — starting, bench, not rostered, and which leagues have a real alert tied to him."
+        />
 
         <div className="field" style={{ maxWidth: 360 }}>
           <input
@@ -177,25 +175,26 @@ export default function PlayerLeagues({
         </div>
 
         {!selectedId && searchResults.length > 0 && (
-          <div className="mgrtable" style={{ marginTop: 8, maxWidth: 400 }}>
-            {searchResults.map(([id, p]) => (
-              <button
-                key={id}
-                className="mgrrow"
-                style={{ border: "none" }}
-                onClick={() => {
-                  setSelectedId(id);
-                  setQuery(p.n);
-                }}
-              >
-                <Avatar playerId={id} pos={p.p} size={28} />
-                <span className="tname" style={{ flex: 1 }}>{p.n}</span>
-                <span className="pos" style={posChipStyle(p.p)}>
-                  {p.p}
-                </span>
-                <span className="portmeta">{p.t}</span>
-              </button>
-            ))}
+          <div style={{ marginTop: 8, maxWidth: 400 }}>
+            <DataTable>
+              {searchResults.map(([id, p]) => (
+                <TableRow
+                  as="button"
+                  key={id}
+                  onClick={() => {
+                    setSelectedId(id);
+                    setQuery(p.n);
+                  }}
+                >
+                  <Avatar playerId={id} pos={p.p} size={28} />
+                  <span className="tname" style={{ flex: 1 }}>{p.n}</span>
+                  <span className="pos" style={posChipStyle(p.p)}>
+                    {p.p}
+                  </span>
+                  <span className="portmeta">{p.t}</span>
+                </TableRow>
+              ))}
+            </DataTable>
           </div>
         )}
         {!selectedId && query.trim().length >= 2 && searchResults.length === 0 && (
@@ -221,10 +220,7 @@ export default function PlayerLeagues({
 
       {!selectedId && exposure && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Position exposure</h2>
-            <span className="rt">across {leagues.length} synced leagues</span>
-          </div>
+          <SectionHead title="Position exposure" right={`across ${leagues.length} synced leagues`} />
           <p className="hint" style={{ marginBottom: 12 }}>
             Real ownership counts across every rostered player — no search needed.
           </p>
@@ -232,20 +228,19 @@ export default function PlayerLeagues({
             {(["QB", "RB", "WR", "TE"] as const).map((pos) => (
               <div key={pos}>
                 <p className="mgrstatlabel" style={{ marginBottom: 6 }}>{pos}</p>
-                <div className="mgrtable">
+                <DataTable>
                   {exposure[pos].length === 0 && (
-                    <div className="mgrrow static">
+                    <TableRow>
                       <span className="hint" style={{ margin: 0 }}>No data yet.</span>
-                    </div>
+                    </TableRow>
                   )}
                   {exposure[pos].map(({ playerId, count }) => {
                     const entry = pmap?.[playerId];
                     const pct = leagues.length > 0 ? Math.round((count / leagues.length) * 100) : 0;
                     return (
-                      <button
+                      <TableRow
+                        as="button"
                         key={playerId}
-                        className="mgrrow"
-                        style={{ border: "none" }}
                         onClick={() => {
                           setSelectedId(playerId);
                           setQuery(entry?.n ?? "");
@@ -254,10 +249,10 @@ export default function PlayerLeagues({
                         <Avatar playerId={playerId} pos={entry?.p} size={22} />
                         <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
                         <span className="portvalue">{pct}%</span>
-                      </button>
+                      </TableRow>
                     );
                   })}
-                </div>
+                </DataTable>
               </div>
             ))}
           </div>
@@ -267,127 +262,74 @@ export default function PlayerLeagues({
       {selectedId && (
         <>
           <section className="sec">
-            <div className="sechead">
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Avatar playerId={selectedId} pos={selected?.p} size={40} />
-                <h2 style={{ fontSize: 18, margin: 0 }}>{selected?.n ?? selectedId}</h2>
-              </div>
-              <span className="rt">
-                rostered in {starting.length + bench.length} of {leagues.length} leagues
-              </span>
-            </div>
-            <div className="mgrstats">
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-                >
-                  <IconFlag width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Starting, needs attention</p>
-                  <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{startingAttention.length}</p>
-                </div>
-              </div>
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--mint)", background: "color-mix(in srgb, var(--mint) 16%, transparent)" }}
-                >
-                  <IconCheck width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Starting, clear</p>
-                  <p className="mgrstatvalue" style={{ color: "var(--mint)" }}>{startingClear.length}</p>
-                </div>
-              </div>
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--muted)", background: "color-mix(in srgb, var(--muted) 16%, transparent)" }}
-                >
-                  <IconUsers width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Bench</p>
-                  <p className="mgrstatvalue">{bench.length}</p>
-                </div>
-              </div>
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-                >
-                  <IconUsers width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">IR</p>
-                  <p className="mgrstatvalue">{ir.length}</p>
-                </div>
-              </div>
-              <div className="mgrstat">
-                <div
-                  className="mgrstaticon"
-                  style={{ color: "var(--dim)", background: "color-mix(in srgb, var(--dim) 16%, transparent)" }}
-                >
-                  <IconUsers width={17} height={17} />
-                </div>
-                <div className="mgrstatbody">
-                  <p className="mgrstatlabel">Not rostered</p>
-                  <p className="mgrstatvalue">{notRostered.length}</p>
-                </div>
-              </div>
-            </div>
+            <SectionHead
+              title={
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <Avatar playerId={selectedId} pos={selected?.p} size={40} />
+                  {selected?.n ?? selectedId}
+                </span>
+              }
+              right={`rostered in ${starting.length + bench.length} of ${leagues.length} leagues`}
+            />
+            <StatCardGrid variant="grid">
+              <StatCard
+                icon={IconFlag}
+                color="var(--red)"
+                label="Starting, needs attention"
+                value={startingAttention.length}
+                valueColor="var(--red)"
+              />
+              <StatCard
+                icon={IconCheck}
+                color="var(--mint)"
+                label="Starting, clear"
+                value={startingClear.length}
+                valueColor="var(--mint)"
+              />
+              <StatCard icon={IconUsers} color="var(--muted)" label="Bench" value={bench.length} />
+              <StatCard icon={IconUsers} color="var(--amber)" label="IR" value={ir.length} />
+              <StatCard icon={IconUsers} color="var(--dim)" label="Not rostered" value={notRostered.length} />
+            </StatCardGrid>
           </section>
 
           {startingAttention.length > 0 && (
             <section className="sec">
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>Starting — needs attention</h2>
-                <span className="rt">{startingAttention.length} leagues</span>
-              </div>
+              <SectionHead title="Starting — needs attention" right={`${startingAttention.length} leagues`} />
               {renderRows(startingAttention, "action_required")}
             </section>
           )}
 
           {startingClear.length > 0 && (
             <section className="sec">
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>Starting — clear</h2>
-                <span className="rt">{startingClear.length} leagues</span>
-              </div>
+              <SectionHead title="Starting — clear" right={`${startingClear.length} leagues`} />
               {renderRows(startingClear, "clear")}
             </section>
           )}
 
           {bench.length > 0 && (
             <section className="sec">
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>Bench</h2>
-                <span className="rt">{bench.length} leagues</span>
-              </div>
+              <SectionHead title="Bench" right={`${bench.length} leagues`} />
               {renderRows(bench, null)}
             </section>
           )}
 
           {ir.length > 0 && (
             <section className="sec">
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>IR</h2>
-                <span className="rt">{ir.length} leagues</span>
-              </div>
+              <SectionHead title="IR" right={`${ir.length} leagues`} />
               {renderRows(ir, null)}
             </section>
           )}
 
           {notRostered.length > 0 && (
             <section className="sec">
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>Not rostered</h2>
-                <button className="chip-filter" onClick={() => setShowNotRostered((v) => !v)}>
-                  {showNotRostered ? "Hide" : `Show ${notRostered.length} leagues`}
-                </button>
-              </div>
+              <SectionHead
+                title="Not rostered"
+                right={
+                  <button className="chip-filter" onClick={() => setShowNotRostered((v) => !v)}>
+                    {showNotRostered ? "Hide" : `Show ${notRostered.length} leagues`}
+                  </button>
+                }
+              />
               {showNotRostered && renderRows(notRostered, null)}
             </section>
           )}

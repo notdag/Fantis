@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   statusChipStyle,
   statusLabel,
@@ -21,6 +20,9 @@ import { avatar } from "@/lib/sleeper";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
 import { IconFlag, IconCheck, IconStar, IconSearch } from "./MgrIcons";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
+import { SectionHead } from "./PageHead";
 
 // League settings is untyped JSON (see prisma/schema.prisma) — read
 // defensively, same pattern as LeagueDetail.tsx's settingsField().
@@ -441,13 +443,15 @@ export default function ManagerDashboard({
               </div>
             )}
             {lastRun?.errors && lastRun.errors.length > 0 && (
-              <div className="mgrtable" style={{ marginTop: 8 }}>
-                {lastRun.errors.map((e, i) => (
-                  <div className="mgrrow static" key={`${e.leagueId}-${i}`}>
-                    <span className="tname" style={{ flex: 1 }}>{e.leagueName ?? e.leagueId}</span>
-                    <span className="portmeta">{e.message}</span>
-                  </div>
-                ))}
+              <div style={{ marginTop: 8 }}>
+                <DataTable>
+                  {lastRun.errors.map((e, i) => (
+                    <TableRow key={`${e.leagueId}-${i}`}>
+                      <span className="tname" style={{ flex: 1 }}>{e.leagueName ?? e.leagueId}</span>
+                      <span className="portmeta">{e.message}</span>
+                    </TableRow>
+                  ))}
+                </DataTable>
               </div>
             )}
           </div>
@@ -456,21 +460,13 @@ export default function ManagerDashboard({
 
       {leagues.length > 0 && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Today</h2>
-            <span className="rt">what needs you right now</span>
-          </div>
-          <div className="mgrherorow">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--bone)", background: "color-mix(in srgb, var(--bone) 12%, transparent)" }}
-              >
-                <IconCheck width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Record</p>
-                <p className="mgrstatvalue">
+          <SectionHead title="Today" right="what needs you right now" />
+          <StatCardGrid variant="hero">
+            <StatCard
+              icon={IconCheck}
+              label="Record"
+              value={
+                <>
                   {portfolio.wins}-{portfolio.losses}
                   {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
                   {portfolio.winPct != null && (
@@ -478,52 +474,30 @@ export default function ManagerDashboard({
                       {portfolio.winPct.toFixed(0)}%
                     </span>
                   )}
-                </p>
-                <p className="mgrstatsub">
-                  {portfolio.winningLeagues} winning · {portfolio.evenLeagues} .500 · {portfolio.losingLeagues} losing
-                </p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Need attention</p>
-                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{groups.actionRequired.length}</p>
-                <p className="mgrstatsub">
-                  {groups.actionRequired.length} action required · {groups.commissioner.length + groups.review.length} review
-                </p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color:
-                    rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
-                      ? "var(--mint)"
-                      : "var(--muted)",
-                  background:
-                    rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
-                      ? "color-mix(in srgb, var(--mint) 16%, transparent)"
-                      : "color-mix(in srgb, var(--muted) 16%, transparent)",
-                }}
-              >
-                <IconStar width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Top-half leagues</p>
-                <p className="mgrstatvalue">{rankSnapshot.ranked > 0 ? rankSnapshot.topHalf : "—"}</p>
-                <p className="mgrstatsub">
-                  {rankSnapshot.ranked > 0 ? `of ${rankSnapshot.ranked} ranked` : "no season data yet"}
-                </p>
-              </div>
-            </div>
-          </div>
+                </>
+              }
+              sub={`${portfolio.winningLeagues} winning · ${portfolio.evenLeagues} .500 · ${portfolio.losingLeagues} losing`}
+            />
+            <StatCard
+              icon={IconFlag}
+              color="var(--red)"
+              label="Need attention"
+              value={groups.actionRequired.length}
+              valueColor="var(--red)"
+              sub={`${groups.actionRequired.length} action required · ${groups.commissioner.length + groups.review.length} review`}
+            />
+            <StatCard
+              icon={IconStar}
+              color={
+                rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
+                  ? "var(--mint)"
+                  : "var(--muted)"
+              }
+              label="Top-half leagues"
+              value={rankSnapshot.ranked > 0 ? rankSnapshot.topHalf : "—"}
+              sub={rankSnapshot.ranked > 0 ? `of ${rankSnapshot.ranked} ranked` : "no season data yet"}
+            />
+          </StatCardGrid>
 
           <p className="hint" style={{ marginTop: 10 }}>
             {leagues.length} league{leagues.length === 1 ? "" : "s"} · {groups.draftsThisWeek} draft
@@ -533,13 +507,15 @@ export default function ManagerDashboard({
 
           {groups.actionRequired.length > 0 && (
             <div style={{ marginTop: 18 }}>
-              <div className="sechead" style={{ marginBottom: 8 }}>
-                <h3 style={{ fontSize: 14, margin: 0 }}>Your team</h3>
-                <span className="rt">{groups.actionRequired.length} leagues</span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead
+                level={3}
+                title="Your team"
+                right={`${groups.actionRequired.length} leagues`}
+                style={{ marginBottom: 8 }}
+              />
+              <DataTable>
                 {groups.actionRequired.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("action_required")}>
                       {alerts.length} issue{alerts.length === 1 ? "" : "s"}
@@ -548,51 +524,55 @@ export default function ManagerDashboard({
                       {alerts[0].message}
                       {alerts.length > 1 ? ` +${alerts.length - 1} more` : ""}
                     </span>
-                  </Link>
+                  </TableRow>
                 ))}
-              </div>
+              </DataTable>
             </div>
           )}
 
           {groups.commissioner.length > 0 && (
             <div style={{ marginTop: 18 }}>
-              <div className="sechead" style={{ marginBottom: 8 }}>
-                <h3 style={{ fontSize: 14, margin: 0 }}>Commissioner</h3>
-                <span className="rt">{groups.commissioner.length} leagues</span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead
+                level={3}
+                title="Commissioner"
+                right={`${groups.commissioner.length} leagues`}
+                style={{ marginBottom: 8 }}
+              />
+              <DataTable>
                 {groups.commissioner.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
                     <span className="portmeta">{alerts[0].message}</span>
-                  </Link>
+                  </TableRow>
                 ))}
-              </div>
+              </DataTable>
             </div>
           )}
 
           {(groups.upcomingDrafts.length > 0 || groups.review.length > 0) && (
             <div style={{ marginTop: 18 }}>
-              <div className="sechead" style={{ marginBottom: 8 }}>
-                <h3 style={{ fontSize: 14, margin: 0 }}>Drafts & deadlines</h3>
-                <span className="rt">{groups.upcomingDrafts.length + groups.review.length} leagues</span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead
+                level={3}
+                title="Drafts & deadlines"
+                right={`${groups.upcomingDrafts.length + groups.review.length} leagues`}
+                style={{ marginBottom: 8 }}
+              />
+              <DataTable>
                 {groups.upcomingDrafts.map(({ league, draft }) => (
-                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
-                  </Link>
+                  </TableRow>
                 ))}
                 {groups.review.map(({ league, alerts }) => (
-                  <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                     <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
                     <span className="portmeta">{alerts[0].message}</span>
-                  </Link>
+                  </TableRow>
                 ))}
-              </div>
+              </DataTable>
             </div>
           )}
 
@@ -607,21 +587,23 @@ export default function ManagerDashboard({
 
       {groups.allClear.length > 0 && (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>All clear</h2>
-            <button className="chip-filter" onClick={() => setShowAllClear((v) => !v)}>
-              {showAllClear ? "Hide" : `Show ${groups.allClear.length} leagues`}
-            </button>
-          </div>
+          <SectionHead
+            title="All clear"
+            right={
+              <button className="chip-filter" onClick={() => setShowAllClear((v) => !v)}>
+                {showAllClear ? "Hide" : `Show ${groups.allClear.length} leagues`}
+              </button>
+            }
+          />
           {showAllClear && (
-            <div className="mgrtable">
+            <DataTable>
               {groups.allClear.map((league) => (
-                <Link href={`/manager/${league.id}`} className="mgrrow" key={league.id}>
+                <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                   <span className="tname" style={{ flex: 1 }}>{league.name}</span>
                   <span className="pos" style={alertSeverityChipStyle("clear")}>clear</span>
-                </Link>
+                </TableRow>
               ))}
-            </div>
+            </DataTable>
           )}
         </section>
       )}
@@ -634,10 +616,7 @@ export default function ManagerDashboard({
         </section>
       ) : (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>All leagues</h2>
-            <span className="rt">browse everything, not just exceptions</span>
-          </div>
+          <SectionHead title="All leagues" right="browse everything, not just exceptions" />
           <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
             <input
               className="input"
@@ -712,9 +691,9 @@ export default function ManagerDashboard({
             ))}
           </div>
 
-          <div className="mgrtable">
+          <DataTable>
             {sorted.map((lg) => (
-              <Link href={`/manager/${lg.id}`} className="mgrrow" key={lg.id}>
+              <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
                 <LeagueAvatar league={lg} />
                 <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
                 {lg.group && (
@@ -741,7 +720,7 @@ export default function ManagerDashboard({
                   {statusLabel(lg.status)}
                 </span>
                 <span className="portmeta">synced {mounted ? formatRelative(lg.lastSyncedAt) : "—"}</span>
-              </Link>
+              </TableRow>
             ))}
             {sorted.length === 0 && (
               <div
@@ -759,7 +738,7 @@ export default function ManagerDashboard({
                 <span className="hint" style={{ margin: 0 }}>Try a different search or status filter.</span>
               </div>
             )}
-          </div>
+          </DataTable>
           {sorted.length > 0 && (
             <div className="hint" style={{ marginTop: 8, display: "flex", justifyContent: "space-between" }}>
               <span>

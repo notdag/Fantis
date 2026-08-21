@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
 import type { PlayerMap } from "@/lib/types";
 import { IconFlag, IconShield, IconUsers } from "./MgrIcons";
+import { PageHead, SectionHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 export interface InjuryLeagueRow {
   leagueId: string;
@@ -86,73 +88,24 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>Injury Report</h1>
-          <p>
-            Every rostered player listed Out, Doubtful, or IR across every in-season league —
-            bench included, not just the starters the existing alerts already cover.
-          </p>
-        </div>
+        <PageHead
+          title="Injury Report"
+          description="Every rostered player listed Out, Doubtful, or IR across every in-season league — bench included, not just the starters the existing alerts already cover."
+        />
         {!loading && (outCount + doubtfulCount + irCount) > 0 && (
-          <div className="mgrstats">
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Out</p>
-                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{outCount}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--amber)", background: "color-mix(in srgb, var(--amber) 16%, transparent)" }}
-              >
-                <IconFlag width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Doubtful</p>
-                <p className="mgrstatvalue" style={{ color: "var(--amber)" }}>{doubtfulCount}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{ color: "var(--red)", background: "color-mix(in srgb, var(--red) 16%, transparent)" }}
-              >
-                <IconShield width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">IR</p>
-                <p className="mgrstatvalue" style={{ color: "var(--red)" }}>{irCount}</p>
-              </div>
-            </div>
-            <div className="mgrstat">
-              <div
-                className="mgrstaticon"
-                style={{
-                  color: totalStarting > 0 ? "var(--red)" : "var(--mint)",
-                  background: `color-mix(in srgb, ${totalStarting > 0 ? "var(--red)" : "var(--mint)"} 16%, transparent)`,
-                }}
-              >
-                <IconUsers width={17} height={17} />
-              </div>
-              <div className="mgrstatbody">
-                <p className="mgrstatlabel">Starting while injured</p>
-                <p className="mgrstatvalue" style={{ color: totalStarting > 0 ? "var(--red)" : undefined }}>
-                  {totalStarting}
-                </p>
-                {totalStarting > 0 && (
-                  <p className="mgrstatsub">already have a real alert on Today</p>
-                )}
-              </div>
-            </div>
-          </div>
+          <StatCardGrid variant="grid">
+            <StatCard icon={IconFlag} color="var(--red)" label="Out" value={outCount} valueColor="var(--red)" />
+            <StatCard icon={IconFlag} color="var(--amber)" label="Doubtful" value={doubtfulCount} valueColor="var(--amber)" />
+            <StatCard icon={IconShield} color="var(--red)" label="IR" value={irCount} valueColor="var(--red)" />
+            <StatCard
+              icon={IconUsers}
+              color={totalStarting > 0 ? "var(--red)" : "var(--mint)"}
+              label="Starting while injured"
+              value={totalStarting}
+              valueColor={totalStarting > 0 ? "var(--red)" : undefined}
+              sub={totalStarting > 0 ? "already have a real alert on Today" : undefined}
+            />
+          </StatCardGrid>
         )}
       </section>
 
@@ -169,15 +122,12 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
           const rows = byStatus.get(status)!;
           return (
             <section className="sec" key={status}>
-              <div className="sechead">
-                <h2 style={{ fontSize: 18 }}>{status}</h2>
-                <span className="rt">{rows.length} rostered</span>
-              </div>
-              <div className="mgrtable">
+              <SectionHead title={status} right={`${rows.length} rostered`} />
+              <DataTable>
                 {rows.map((r, i) => {
                   const entry = pmap![r.playerId];
                   return (
-                    <Link href={`/manager/${r.leagueId}`} className="mgrrow" key={`${r.leagueId}-${r.playerId}-${i}`}>
+                    <TableRow as="link" href={`/manager/${r.leagueId}`} key={`${r.leagueId}-${r.playerId}-${i}`}>
                       <Avatar playerId={r.playerId} pos={entry.p} size={26} />
                       <span className="mgrplayername">{entry.n}</span>
                       {entry.p && (
@@ -191,10 +141,10 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
                           starting
                         </span>
                       )}
-                    </Link>
+                    </TableRow>
                   );
                 })}
-              </div>
+              </DataTable>
             </section>
           );
         })

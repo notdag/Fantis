@@ -6,6 +6,8 @@ import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import LeagueIdentityBar from "./LeagueIdentityBar";
+import { SectionHead } from "./PageHead";
+import { DataTable, TableRow } from "./DataRow";
 import type { PlayerMap } from "@/lib/types";
 
 function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
@@ -46,13 +48,13 @@ function RosterSection({
   );
 
   return (
-    <div className="mgrtable">
+    <DataTable>
       {slots.map((slot, i) => {
         const playerId = roster.starters[i];
         const empty = !playerId || playerId === "0";
         const label = empty ? null : playerLabel(pmap, playerId);
         return (
-          <div className="mgrrow static" key={slot.key}>
+          <TableRow key={slot.key}>
             <span className="portmeta" style={{ minWidth: 44 }}>
               {slot.code}
             </span>
@@ -76,26 +78,26 @@ function RosterSection({
                 )}
               </>
             )}
-          </div>
+          </TableRow>
         );
       })}
       {bench.length > 0 && (
-        <div className="mgrrow static" style={{ opacity: 0.85 }}>
+        <TableRow style={{ opacity: 0.85 }}>
           <span className="tname">Bench</span>
           <span className="portmeta">
             {bench.map((id) => playerLabel(pmap, id).name).join(", ")}
           </span>
-        </div>
+        </TableRow>
       )}
       {ir.length > 0 && (
-        <div className="mgrrow static" style={{ opacity: 0.85 }}>
+        <TableRow style={{ opacity: 0.85 }}>
           <span className="tname">IR</span>
           <span className="portmeta">
             {ir.map((id) => playerLabel(pmap, id).name).join(", ")}
           </span>
-        </div>
+        </TableRow>
       )}
-    </div>
+    </DataTable>
   );
 }
 
@@ -131,14 +133,10 @@ export default function LeagueTeam({
       <LeagueIdentityBar league={league} />
       {roster ? (
         <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>My roster</h2>
-            <span className="rt">
-              {roster.waiverPosition != null ? `waiver #${roster.waiverPosition} · ` : ""}
-              {roster.faabUsed != null ? `$${roster.faabUsed} FAAB used · ` : ""}synced{" "}
-              {mounted ? formatRelative(roster.lastSyncedAt) : "—"}
-            </span>
-          </div>
+          <SectionHead
+            title="My roster"
+            right={`${roster.waiverPosition != null ? `waiver #${roster.waiverPosition} · ` : ""}${roster.faabUsed != null ? `$${roster.faabUsed} FAAB used · ` : ""}synced ${mounted ? formatRelative(roster.lastSyncedAt) : "—"}`}
+          />
           <RosterSection roster={roster} pmap={pmap} rosterPositions={rosterPositions} />
         </section>
       ) : (

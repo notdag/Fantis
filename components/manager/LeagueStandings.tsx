@@ -3,6 +3,8 @@
 import { type ManagedLeague } from "@/lib/manager";
 import { sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import LeagueIdentityBar from "./LeagueIdentityBar";
+import { SectionHead } from "./PageHead";
+import { DataTable, TableRow } from "./DataRow";
 
 export default function LeagueStandings({
   league,
@@ -17,22 +19,15 @@ export default function LeagueStandings({
     <>
       <LeagueIdentityBar league={league} />
       <section className="sec">
-        <div className="sechead">
-          <h2 style={{ fontSize: 18 }}>Standings</h2>
-          <span className="rt">real record · synced with your rosters</span>
-        </div>
+        <SectionHead title="Standings" right="real record · synced with your rosters" />
         {leagueRosters.length === 0 ? (
           <p className="hint">No standings synced yet for this league.</p>
         ) : (
-          <div className="mgrtable">
+          <DataTable>
             {sortByStanding(leagueRosters).map((r, i) => {
               const isMe = r.rosterId === myRosterId;
               return (
-                <div
-                  className="mgrrow static"
-                  key={r.rosterId}
-                  style={isMe ? { background: "color-mix(in srgb, var(--amber) 10%, transparent)" } : undefined}
-                >
+                <TableRow highlight={isMe} key={r.rosterId}>
                   <span className="portmeta" style={{ minWidth: 24 }}>{i + 1}</span>
                   <span className="tname" style={{ flex: 1 }}>
                     {r.teamName ?? `Team ${r.rosterId}`}
@@ -54,10 +49,10 @@ export default function LeagueStandings({
                     {(r.ties ?? 0) > 0 ? `-${r.ties}` : ""}
                   </span>
                   <span className="portvalue">{r.fpts != null ? `${r.fpts.toFixed(1)} pts` : "—"}</span>
-                </div>
+                </TableRow>
               );
             })}
-          </div>
+          </DataTable>
         )}
       </section>
     </>

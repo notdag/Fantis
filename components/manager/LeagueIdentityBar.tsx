@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { statusChipStyle, statusLabel, type ManagedLeague } from "@/lib/manager";
+import { PageHead } from "./PageHead";
 
 // Sleeper's league `settings` blob is untyped JSON here (see prisma/schema.prisma
 // — deliberately not normalized). Every field below is read defensively;
@@ -98,11 +99,10 @@ export default function LeagueIdentityBar({ league }: { league: ManagedLeague })
 
   return (
     <section className="sec" style={{ paddingBottom: 0 }}>
-      <div className="mgrhead">
-        <div className="mgraccentbar" />
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <h1>{league.name}</h1>
-          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <PageHead
+        title={league.name}
+        right={
+          <>
             <span className="pos" style={statusChipStyle(league.status)}>
               {statusLabel(league.status)}
             </span>
@@ -152,9 +152,9 @@ export default function LeagueIdentityBar({ league }: { league: ManagedLeague })
                 {league.group ?? "+ Add group"}
               </button>
             )}
-          </span>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <a className="btn" href={`https://sleeper.com/leagues/${league.id}`} target="_blank" rel="noreferrer">

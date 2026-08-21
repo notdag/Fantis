@@ -1,11 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { statusChipStyle, statusLabel } from "@/lib/manager";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
 import { IconSearch } from "./MgrIcons";
+import { PageHead } from "./PageHead";
+import { StatCard, StatCardGrid } from "./StatCard";
+import { DataTable, TableRow } from "./DataRow";
 
 export interface MyTeamRow {
   leagueId: string;
@@ -117,52 +119,40 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <div className="mgrhead">
-          <div className="mgraccentbar" />
-          <h1>My Leagues</h1>
-          <p>
-            Every league&rsquo;s roster in one table — record, this week&rsquo;s matchup, and how
-            many real alerts are open — instead of clicking into each one.
-          </p>
-        </div>
-        <div className="mgrstats">
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Combined record</p>
-              <p className="mgrstatvalue">
-                {totals.wins}-{totals.losses}
-                {totals.ties > 0 ? `-${totals.ties}` : ""}
-              </p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">In season</p>
-              <p className="mgrstatvalue">{totals.inSeason}</p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Teams need attention</p>
-              <p className="mgrstatvalue" style={{ color: totals.needAttention > 0 ? "var(--red)" : "var(--mint)" }}>
-                {totals.needAttention}
-              </p>
-            </div>
-          </div>
-          <div className="mgrstat">
-            <div className="mgrstatbody">
-              <p className="mgrstatlabel">Top-half leagues</p>
-              <p className="mgrstatvalue">
+        <PageHead
+          title="My Leagues"
+          description={
+            <>
+              Every league&rsquo;s roster in one table — record, this week&rsquo;s matchup, and
+              how many real alerts are open — instead of clicking into each one.
+            </>
+          }
+        />
+        <StatCardGrid variant="grid">
+          <StatCard
+            label="Combined record"
+            value={`${totals.wins}-${totals.losses}${totals.ties > 0 ? `-${totals.ties}` : ""}`}
+          />
+          <StatCard label="In season" value={totals.inSeason} />
+          <StatCard
+            label="Teams need attention"
+            value={totals.needAttention}
+            valueColor={totals.needAttention > 0 ? "var(--red)" : "var(--mint)"}
+          />
+          <StatCard
+            label="Top-half leagues"
+            value={
+              <>
                 {totals.topHalf}
                 {totals.ranked > 0 && (
                   <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
                     of {totals.ranked} ranked
                   </span>
                 )}
-              </p>
-            </div>
-          </div>
-        </div>
+              </>
+            }
+          />
+        </StatCardGrid>
       </section>
 
       <section className="sec">
@@ -195,13 +185,13 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           ))}
         </div>
 
-        <div className="mgrtable">
+        <DataTable>
           {sorted.map((t) => {
             const hasRecord = t.wins != null;
             const hasMatchup = t.myPoints != null;
             const rank = rankByLeague.get(t.leagueId);
             return (
-              <Link href={`/manager/${t.leagueId}`} className="mgrrow" key={t.leagueId}>
+              <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.leagueId}>
                 <span className="tname" style={{ flex: 1 }}>{t.leagueName}</span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {hasRecord ? `${t.wins}-${t.losses}${(t.ties ?? 0) > 0 ? `-${t.ties}` : ""}` : "—"}
@@ -228,7 +218,7 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
                 ) : (
                   <span className="portmeta" style={{ color: "var(--mint)" }}>clear</span>
                 )}
-              </Link>
+              </TableRow>
             );
           })}
           {sorted.length === 0 && (
@@ -238,7 +228,7 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
               <span className="hint" style={{ margin: 0 }}>Try a different search.</span>
             </div>
           )}
-        </div>
+        </DataTable>
         {sorted.length > 0 && (
           <div className="hint" style={{ marginTop: 8 }}>
             {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
