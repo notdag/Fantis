@@ -188,12 +188,29 @@ export default function LeagueDetail({
   };
 
   const draftId = settingsField(league.settings, "draft_id");
-  const avatar = settingsField(league.settings, "avatar");
   const previousLeagueId = settingsField(league.settings, "previous_league_id");
-  const settingsBlob = settingsField(league.settings, "settings");
   const scoringSettings = settingsField(league.settings, "scoring_settings");
   const rosterPositions = settingsField(league.settings, "roster_positions");
   const rosterPositionsArr = Array.isArray(rosterPositions) ? (rosterPositions as string[]) : [];
+
+  // Real reception-point value from Sleeper's own scoring_settings — the
+  // one thing worth surfacing from that whole settings blob at a glance.
+  // rec: 1 = full PPR, 0.5 = half-PPR, 0 = standard; anything else is a
+  // real but non-standard league (shown as-is rather than mislabeled).
+  const scoringRec =
+    scoringSettings && typeof scoringSettings === "object"
+      ? (scoringSettings as Record<string, unknown>).rec
+      : undefined;
+  const formatLabel =
+    typeof scoringRec === "number"
+      ? scoringRec === 1
+        ? "PPR"
+        : scoringRec === 0.5
+          ? "Half-PPR"
+          : scoringRec === 0
+            ? "Standard"
+            : `${scoringRec} pt/rec`
+      : null;
 
   return (
     <>
@@ -205,6 +222,9 @@ export default function LeagueDetail({
             <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span className="pos" style={statusChipStyle(league.status)}>
                 {statusLabel(league.status)}
+              </span>
+              <span className="portmeta">
+                {league.totalRosters} team{formatLabel ? ` ${formatLabel}` : ""}
               </span>
               {editingGroup ? (
                 <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -418,22 +438,6 @@ export default function LeagueDetail({
         </section>
       )}
 
-      {(Boolean(rosterPositions) || Boolean(scoringSettings) || Boolean(settingsBlob)) && (
-        <section className="sec">
-          <div className="sechead">
-            <h2 style={{ fontSize: 18 }}>Raw league settings</h2>
-            <span className="rt">from Sleeper's own /league response</span>
-          </div>
-          <p className="hint">
-            Sleeper doesn&rsquo;t document every field in this payload — shown as-is rather than
-            guessed at. Format/scoring detail (PPR, dynasty/keeper flags, etc.) lives in here once
-            you know which keys matter for your leagues.
-          </p>
-          <pre className="hint" style={{ overflow: "auto", maxHeight: 320, marginTop: 10 }}>
-            {JSON.stringify({ settingsBlob, scoringSettings, rosterPositions, avatar }, null, 2)}
-          </pre>
-        </section>
-      )}
     </>
   );
 }
