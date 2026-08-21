@@ -160,6 +160,7 @@ model League {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   roster       Roster?
+  leagueRosters LeagueRoster[]
   matchups     Matchup[]
   drafts       Draft[]
   alerts       Alert[]
@@ -193,10 +194,14 @@ model SyncRun {
   @@index([startedAt])
 }
 
-// My own roster only, per league — this is the input to lineup alerts,
-// not a league-standings mirror (every other team's roster is out of
-// scope). leagueId is the primary key (1:1); Sleeper's own roster_id is
-// only unique *within* a league, so it can't be the PK on its own.
+// My own roster only, per league — this is the input to lineup alerts, plus
+// the extra owner-specific stats (wins/losses/fpts/waiver position/FAAB)
+// Sleeper only reports for a roster you're looking at directly. Every other
+// team's roster in the league is separately covered by LeagueRoster below
+// (added 2026-08) — this model stays focused on "my" fields rather than
+// duplicating what that one already has for everyone including me.
+// leagueId is the primary key (1:1); Sleeper's own roster_id is only
+// unique *within* a league, so it can't be the PK on its own.
 model Roster {
   leagueId       String    @id
   league         League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
@@ -212,6 +217,28 @@ model Roster {
   fpts           Float?
   fptsAgainst    Float?
   lastSyncedAt   DateTime?
+}
+
+// Every team's roster in a league, mine included — not a new Sleeper fetch:
+// getRosters(leagueId) already returns every roster in one call and the
+// sync loop was only keeping mine (Roster above) and discarding the rest.
+// This is what makes league-wide rank, team value, and a real (not just
+// "not on my roster") best-available-FA check possible without adding a
+// single extra Sleeper API call. A save is a full per-league replace
+// (delete + createMany in one transaction), same reasoning as
+// RankedPlayer's save — the sync loop always has the complete current
+// roster list for a league, never a partial diff.
+model LeagueRoster {
+  id       String  @id @default(cuid())
+  leagueId String
+  league   League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId Int // Sleeper's roster_id within this league
+  ownerId  String? // null = unclaimed team, same meaning as elsewhere
+  players  String[]
+  starters String[]
+
+  @@unique([leagueId, rosterId])
+  @@index([leagueId])
 }
 
 // One row per league per week — my side + resolved opponent. Only synced

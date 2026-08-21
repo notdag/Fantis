@@ -13,6 +13,9 @@ export interface WaiverLeague {
   leagueName: string;
   players: string[];
   starters: string[];
+  // Every real player rostered by ANY team in this league — a true
+  // "is he actually available" check, not just "not on my roster."
+  allRosteredPlayers: string[];
 }
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -105,19 +108,26 @@ export default function WaiverAssistant({
         leagueId: lg.leagueId,
         leagueName: lg.leagueName,
         drop: pickDropCandidate(lg.players, lg.starters, seasonTotals),
+        // Real league-wide check, not just "not on my roster" — every
+        // other team's roster in this league is real data now too (see
+        // LeagueRoster in prisma/schema.prisma), so this is honest about
+        // whether a claim could actually go through.
+        takenByOther: lg.allRosteredPlayers.includes(selectedId),
       }));
   }, [leagues, selectedId, seasonTotals]);
 
-  // Reset selection to "everything checked" whenever the target player
-  // changes — candidate-league membership only depends on `leagues` (a
-  // stable server prop) and `selectedId`, never on seasonTotals, so this
-  // doesn't need to react to the async season-projection fetch.
+  // Reset selection to "every league where he's a true free agent" whenever
+  // the target player changes — leagues where another team already has him
+  // start unchecked (and disabled below), since queuing those would open a
+  // waiver page for a claim that can't go through.
   useEffect(() => {
     if (!selectedId) {
       setCheckedIds(new Set());
       return;
     }
-    const ids = leagues.filter((lg) => !lg.players.includes(selectedId)).map((lg) => lg.leagueId);
+    const ids = leagues
+      .filter((lg) => !lg.players.includes(selectedId) && !lg.allRosteredPlayers.includes(selectedId))
+      .map((lg) => lg.leagueId);
     setCheckedIds(new Set(ids));
     setQueueResult("");
   }, [selectedId, leagues]);
@@ -239,7 +249,8 @@ export default function WaiverAssistant({
               </div>
             </div>
             <span className="rt">
-              {candidateLeagues.length} league{candidateLeagues.length === 1 ? "" : "s"} without him
+              {candidateLeagues.filter((c) => !c.takenByOther).length} of {candidateLeagues.length} league
+              {candidateLeagues.length === 1 ? "" : "s"} without him actually available
             </span>
           </div>
 
@@ -255,21 +266,30 @@ export default function WaiverAssistant({
           ) : (
             <>
               <div className="mgrtable">
-                {candidateLeagues.map(({ leagueId, leagueName, drop }) => {
+                {candidateLeagues.map(({ leagueId, leagueName, drop, takenByOther }) => {
                   const label = drop ? pmap?.[drop.playerId] : null;
                   const diff =
                     selectedSeasonPts != null && drop ? selectedSeasonPts - drop.value : null;
                   return (
-                    <label key={leagueId} className="mgrrow" style={{ cursor: "pointer" }}>
+                    <label
+                      key={leagueId}
+                      className="mgrrow"
+                      style={{ cursor: takenByOther ? "default" : "pointer", opacity: takenByOther ? 0.55 : 1 }}
+                    >
                       <input
                         type="checkbox"
                         checked={checkedIds.has(leagueId)}
+                        disabled={takenByOther}
                         onChange={() => toggle(leagueId)}
                       />
                       <span className="tname" style={{ flex: 1 }}>
                         {leagueName}
                       </span>
-                      {drop ? (
+                      {takenByOther ? (
+                        <span className="portmeta" style={{ color: "var(--red)" }}>
+                          already rostered by another team in this league
+                        </span>
+                      ) : drop ? (
                         <div className="mgrplayer">
                           <Avatar playerId={drop.playerId} pos={label?.p} size={26} />
                           <div>
@@ -289,18 +309,19 @@ export default function WaiverAssistant({
                       ) : (
                         <span className="portmeta">suggest drop: —</span>
                       )}
-                      <Diff value={diff} />
+                      {!takenByOther && <Diff value={diff} />}
                     </label>
                   );
                 })}
               </div>
 
               <p className="hint" style={{ marginTop: 10 }}>
-                This shows leagues where you don&rsquo;t already have this player — it doesn&rsquo;t
-                confirm he&rsquo;s actually available league-wide. The drop suggestion and the Diff
-                column (both real season-projected points, the same numbers Rankings and Trade
-                Calculator use) rank purely on projected points, with no position-scarcity or
-                roster-rule awareness. Confirm both on Sleeper&rsquo;s real page before submitting.
+                Leagues where another team already has him are shown greyed out and can&rsquo;t be
+                queued — a real check against every roster in that league, not just yours. The drop
+                suggestion and the Diff column (both real season-projected points, the same numbers
+                Rankings and Trade Calculator use) rank purely on projected points, with no
+                position-scarcity or roster-rule awareness. Confirm both on Sleeper&rsquo;s real page
+                before submitting.
               </p>
 
               <button

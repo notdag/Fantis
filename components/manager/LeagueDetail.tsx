@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -16,6 +16,8 @@ import {
 import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
+import { useSeasonTotals } from "@/lib/useDropCandidates";
+import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
 import AlertRow from "./AlertRow";
 import type { PlayerMap } from "@/lib/types";
 
@@ -49,12 +51,14 @@ export default function LeagueDetail({
   matchup,
   alerts,
   draft,
+  leagueRosters,
 }: {
   league: ManagedLeague;
   roster: ManagedRoster | null;
   matchup: ManagedMatchup | null;
   alerts: ManagedAlert[];
   draft: ManagedDraft | null;
+  leagueRosters: LeagueRosterRow[];
 }) {
   // formatRelative() depends on Date.now(), which differs between the
   // server render and the client hydration pass a moment later — rendering
@@ -107,6 +111,38 @@ export default function LeagueDetail({
       cancelled = true;
     };
   }, []);
+
+  // Real league-wide rank + team value from every roster in this league
+  // (LeagueRoster — zero extra Sleeper calls, see prisma/schema.prisma) and
+  // the same real season-projection data Trade/Waiver already use.
+  const seasonTotals = useSeasonTotals();
+  const leagueRank = useMemo(
+    () => (roster ? computeLeagueRank(leagueRosters, roster.rosterId, seasonTotals) : null),
+    [leagueRosters, roster, seasonTotals]
+  );
+
+  // Real, league-wide best-available: every real Sleeper player (with a
+  // current NFL team and a real season projection) who isn't on ANY
+  // roster in this league — not curated-list matching, just pmap directly,
+  // since this only needs "is he rostered here," not name-fuzzy-matched
+  // trade value. Zero extra Sleeper calls: leagueRosters + pmap + season
+  // totals are all already fetched elsewhere on this page.
+  const OFFENSE_POS = useMemo(() => new Set(["QB", "RB", "WR", "TE"]), []);
+  const bestAvailable = useMemo(() => {
+    if (!pmap || !seasonTotals || leagueRosters.length === 0) return [];
+    const rostered = new Set(leagueRosters.flatMap((r) => r.players));
+    const rows: { id: string; name: string; pos: string; team: string; pts: number }[] = [];
+    for (const id in pmap) {
+      if (rostered.has(id)) continue;
+      const p = pmap[id];
+      if (!OFFENSE_POS.has(p.p) || !p.t) continue;
+      const pts = seasonTotals[id]?.pts;
+      if (!pts || pts <= 0) continue;
+      rows.push({ id, name: p.n, pos: p.p, team: p.t, pts });
+    }
+    rows.sort((a, b) => b.pts - a.pts);
+    return rows.slice(0, 10);
+  }, [pmap, seasonTotals, leagueRosters, OFFENSE_POS]);
 
   // "Open via automation": queues a real Action row, then polls its status
   // for up to ~15s. The plain "Open in Sleeper" link below never depends
@@ -352,12 +388,33 @@ export default function LeagueDetail({
             <span className="rt">
               {roster.wins}-{roster.losses}
               {roster.ties > 0 ? `-${roster.ties}` : ""}
+              {leagueRank?.rank != null ? ` · rank ${leagueRank.rank} of ${leagueRank.totalTeams}` : ""}
               {roster.waiverPosition != null ? ` · waiver #${roster.waiverPosition}` : ""}
               {roster.faabUsed != null ? ` · $${roster.faabUsed} FAAB used` : ""} · synced{" "}
               {mounted ? formatRelative(roster.lastSyncedAt) : "—"}
             </span>
           </div>
           <RosterSection roster={roster} pmap={pmap} rosterPositions={rosterPositionsArr} />
+        </section>
+      )}
+
+      {bestAvailable.length > 0 && (
+        <section className="sec">
+          <div className="sechead">
+            <h2 style={{ fontSize: 18 }}>Best available in this league</h2>
+            <span className="rt">real season points · not on any roster here</span>
+          </div>
+          <div className="mgrtable">
+            {bestAvailable.map((p) => (
+              <div className="mgrrow static" key={p.id}>
+                <Avatar playerId={p.id} pos={p.pos} size={26} />
+                <span className="tname" style={{ flex: 1 }}>{p.name}</span>
+                <span className="pos" style={posChipStyle(p.pos)}>{p.pos}</span>
+                <span className="portmeta">{p.team}</span>
+                <span className="portvalue">{Math.round(p.pts)} pts</span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

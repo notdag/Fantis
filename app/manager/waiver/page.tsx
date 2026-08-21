@@ -21,13 +21,26 @@ export default async function WaiverPage() {
     );
   }
 
-  const [leagueRows, rosterRows, pingRow] = await Promise.all([
+  const [leagueRows, rosterRows, leagueRosterRows, pingRow] = await Promise.all([
     db.league.findMany({ orderBy: { name: "asc" } }),
     db.roster.findMany(),
+    db.leagueRoster.findMany({ select: { leagueId: true, players: true } }),
     db.automationPing.findUnique({ where: { id: "singleton" } }),
   ]);
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
+
+  // Every real player rostered by ANY team in the league — not just mine —
+  // so "is this player actually available" is a true league-wide check
+  // instead of only "not on my roster." Zero extra Sleeper calls: this is
+  // the same LeagueRoster data the sync loop already gets for free from
+  // getRosters().
+  const rosteredByLeague = new Map<string, Set<string>>();
+  for (const r of leagueRosterRows) {
+    const set = rosteredByLeague.get(r.leagueId) ?? new Set<string>();
+    for (const id of r.players) set.add(id);
+    rosteredByLeague.set(r.leagueId, set);
+  }
 
   // Only leagues with a synced roster can suggest a drop candidate — a
   // league that hasn't rostered anything yet (e.g. still pre_draft) has
@@ -41,6 +54,7 @@ export default async function WaiverPage() {
         leagueName: lg.name,
         players: roster.players,
         starters: roster.starters,
+        allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
       };
     });
 

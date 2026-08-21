@@ -140,6 +140,24 @@ export async function syncAccount(
         const rosters = await getRosters(lg.league_id);
         const myRoster = rosters.find((r) => r.owner_id === accountId) ?? null;
 
+        // Every roster in the league, not just mine — getRosters() above
+        // already returned all of them in this one call, so this is zero
+        // additional Sleeper API calls. Full per-league replace (delete +
+        // createMany) since `rosters` is always the complete current list,
+        // never a partial diff — same reasoning as RankedPlayer's save.
+        await db.$transaction([
+          db.leagueRoster.deleteMany({ where: { leagueId: lg.league_id } }),
+          db.leagueRoster.createMany({
+            data: rosters.map((r) => ({
+              leagueId: lg.league_id,
+              rosterId: r.roster_id,
+              ownerId: r.owner_id ?? null,
+              players: r.players ?? [],
+              starters: r.starters ?? [],
+            })),
+          }),
+        ]);
+
         if (myRoster) {
           const settings = myRoster.settings ?? {};
           await db.roster.upsert({

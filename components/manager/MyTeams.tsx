@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { statusChipStyle, statusLabel } from "@/lib/manager";
+import { useSeasonTotals } from "@/lib/useDropCandidates";
+import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
 import { IconSearch } from "./MgrIcons";
 
 export interface MyTeamRow {
@@ -19,9 +21,11 @@ export interface MyTeamRow {
   alertCount: number;
   waiverPosition: number | null;
   faabUsed: number | null;
+  rosterId: number | null;
+  leagueRosters: LeagueRosterRow[];
 }
 
-type SortKey = "name" | "record" | "week" | "alerts";
+type SortKey = "name" | "record" | "week" | "alerts" | "rank";
 type SortDir = "asc" | "desc";
 
 function winPct(t: MyTeamRow): number {
@@ -34,12 +38,26 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
   const [sortBy, setSortBy] = useState<SortKey>("alerts");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
+  // Real league-wide rank per team, from every roster in that league
+  // (LeagueRoster — zero extra Sleeper calls) and the same season
+  // projection data Trade/Waiver already use. Computed per league since
+  // rank only makes sense within a league, never portfolio-wide.
+  const seasonTotals = useSeasonTotals();
+  const rankByLeague = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof computeLeagueRank>>();
+    for (const t of teams) {
+      if (t.rosterId == null) continue;
+      map.set(t.leagueId, computeLeagueRank(t.leagueRosters, t.rosterId, seasonTotals));
+    }
+    return map;
+  }, [teams, seasonTotals]);
+
   const toggleSort = (key: SortKey) => {
     if (sortBy === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortBy(key);
-      setSortDir(key === "name" ? "asc" : "desc");
+      setSortDir(key === "name" || key === "rank" ? "asc" : "desc");
     }
   };
 
@@ -62,24 +80,39 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           return ((a.myPoints ?? -1) - (b.myPoints ?? -1)) * dir;
         case "alerts":
           return (a.alertCount - b.alertCount) * dir;
+        case "rank": {
+          // Lower rank number = better team; unranked (no season data yet
+          // or no roster) sorts to the bottom regardless of direction.
+          const ar = rankByLeague.get(a.leagueId)?.rank;
+          const br = rankByLeague.get(b.leagueId)?.rank;
+          if (ar == null && br == null) return 0;
+          if (ar == null) return 1;
+          if (br == null) return -1;
+          return (ar - br) * dir;
+        }
         default:
           return 0;
       }
     });
     return rows;
-  }, [filtered, sortBy, sortDir]);
+  }, [filtered, sortBy, sortDir, rankByLeague]);
 
   const totals = useMemo(() => {
-    let wins = 0, losses = 0, ties = 0, needAttention = 0, inSeason = 0;
+    let wins = 0, losses = 0, ties = 0, needAttention = 0, inSeason = 0, topHalf = 0, ranked = 0;
     for (const t of teams) {
       wins += t.wins ?? 0;
       losses += t.losses ?? 0;
       ties += t.ties ?? 0;
       if (t.alertCount > 0) needAttention += 1;
       if (t.status === "in_season") inSeason += 1;
+      const rank = rankByLeague.get(t.leagueId);
+      if (rank?.rank != null) {
+        ranked += 1;
+        if (rank.rank <= rank.totalTeams / 2) topHalf += 1;
+      }
     }
-    return { wins, losses, ties, needAttention, inSeason };
-  }, [teams]);
+    return { wins, losses, ties, needAttention, inSeason, topHalf, ranked };
+  }, [teams, rankByLeague]);
 
   return (
     <>
@@ -116,6 +149,19 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
               </p>
             </div>
           </div>
+          <div className="mgrstat">
+            <div className="mgrstatbody">
+              <p className="mgrstatlabel">Top-half leagues</p>
+              <p className="mgrstatvalue">
+                {totals.topHalf}
+                {totals.ranked > 0 && (
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
+                    of {totals.ranked} ranked
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -133,9 +179,17 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           className="field"
           style={{ marginBottom: 0, gap: 12, position: "sticky", top: 0, zIndex: 1, background: "var(--ink)", padding: "8px 0" }}
         >
-          {(["name", "record", "week", "alerts"] as SortKey[]).map((k) => (
+          {(["name", "record", "rank", "week", "alerts"] as SortKey[]).map((k) => (
             <button key={k} className={`sorth ${sortBy === k ? "on" : ""}`} onClick={() => toggleSort(k)}>
-              {k === "name" ? "League" : k === "record" ? "Record" : k === "week" ? "This week" : "Alerts"}
+              {k === "name"
+                ? "League"
+                : k === "record"
+                  ? "Record"
+                  : k === "rank"
+                    ? "Rank"
+                    : k === "week"
+                      ? "This week"
+                      : "Alerts"}
               {sortBy === k && <span className="arrow">{sortDir === "asc" ? "↑" : "↓"}</span>}
             </button>
           ))}
@@ -145,11 +199,15 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           {sorted.map((t) => {
             const hasRecord = t.wins != null;
             const hasMatchup = t.myPoints != null;
+            const rank = rankByLeague.get(t.leagueId);
             return (
               <Link href={`/manager/${t.leagueId}`} className="mgrrow" key={t.leagueId}>
                 <span className="tname" style={{ flex: 1 }}>{t.leagueName}</span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {hasRecord ? `${t.wins}-${t.losses}${(t.ties ?? 0) > 0 ? `-${t.ties}` : ""}` : "—"}
+                </span>
+                <span className="portmeta" style={{ minWidth: 60 }}>
+                  {rank?.rank != null ? `#${rank.rank} of ${rank.totalTeams}` : "—"}
                 </span>
                 <span className="portmeta" style={{ minWidth: 70 }}>
                   {t.waiverPosition != null ? `waiver #${t.waiverPosition}` : ""}

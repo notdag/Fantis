@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import MyTeams from "@/components/manager/MyTeams";
 import { db } from "@/lib/db";
 import type { MyTeamRow } from "@/components/manager/MyTeams";
+import type { LeagueRosterRow } from "@/lib/leagueRank";
 
 export const metadata: Metadata = {
   title: "Fantis — My Teams",
@@ -21,16 +22,24 @@ export default async function TeamsPage() {
     );
   }
 
-  const [leagueRows, rosterRows, matchupRows, alertRows] = await Promise.all([
+  const [leagueRows, rosterRows, matchupRows, alertRows, leagueRosterRows] = await Promise.all([
     db.league.findMany({ orderBy: { name: "asc" } }),
     db.roster.findMany(),
     // Latest week's matchup per league, fetched once and reduced in JS —
     // cheaper than 80 individual findFirst({orderBy}) round-trips.
     db.matchup.findMany({ orderBy: { week: "desc" } }),
     db.alert.findMany({ where: { resolvedAt: null }, select: { leagueId: true, snoozedUntil: true } }),
+    db.leagueRoster.findMany({ select: { leagueId: true, rosterId: true, ownerId: true, players: true } }),
   ]);
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
+
+  const leagueRostersByLeague = new Map<string, LeagueRosterRow[]>();
+  for (const r of leagueRosterRows) {
+    const list = leagueRostersByLeague.get(r.leagueId) ?? [];
+    list.push({ rosterId: r.rosterId, ownerId: r.ownerId, players: r.players });
+    leagueRostersByLeague.set(r.leagueId, list);
+  }
 
   const latestMatchupByLeague = new Map<string, (typeof matchupRows)[number]>();
   for (const m of matchupRows) {
@@ -63,6 +72,8 @@ export default async function TeamsPage() {
       alertCount: alertCountByLeague.get(lg.id) ?? 0,
       waiverPosition: roster?.waiverPosition ?? null,
       faabUsed: roster?.faabUsed ?? null,
+      rosterId: roster?.rosterId ?? null,
+      leagueRosters: leagueRostersByLeague.get(lg.id) ?? [],
     };
   });
 
