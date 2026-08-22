@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { getState, currentProjectionWeek } from "@/lib/sleeper";
 import type {
   ManagedAccount,
-  ManagedAlert,
   ManagedDraft,
   ManagedLeague,
   ManagedSyncRun,
@@ -31,7 +30,7 @@ export default async function ManagerPage() {
     );
   }
 
-  const [accountRows, leagueRows, lastRunRow, alertRows, draftRows, pingRow, rosterRows, leagueRosterRows] =
+  const [accountRows, leagueRows, lastRunRow, draftRows, pingRow, rosterRows, leagueRosterRows] =
     await Promise.all([
       db.sleeperAccount.findMany({ orderBy: { connectedAt: "asc" } }),
       db.league.findMany({
@@ -50,7 +49,6 @@ export default async function ManagerPage() {
         orderBy: { name: "asc" },
       }),
       db.syncRun.findFirst({ orderBy: { startedAt: "desc" } }),
-      db.alert.findMany({ where: { resolvedAt: null }, orderBy: { createdAt: "asc" } }),
       db.draft.findMany({
         select: { id: true, leagueId: true, status: true, type: true, startTime: true },
       }),
@@ -124,22 +122,6 @@ export default async function ManagerPage() {
       }
     : null;
 
-  const alertsByLeague: Record<string, ManagedAlert[]> = {};
-  for (const a of alertRows) {
-    const alert: ManagedAlert = {
-      id: a.id,
-      type: a.type,
-      severity: a.severity as "action_required" | "review",
-      message: a.message,
-      playerId: a.playerId,
-      week: a.week,
-      createdAt: a.createdAt.toISOString(),
-      resolvedAt: a.resolvedAt?.toISOString() ?? null,
-      snoozedUntil: a.snoozedUntil?.toISOString() ?? null,
-    };
-    (alertsByLeague[a.leagueId] ??= []).push(alert);
-  }
-
   const draftsByLeague: Record<string, ManagedDraft> = {};
   for (const d of draftRows) {
     draftsByLeague[d.leagueId] = {
@@ -161,7 +143,6 @@ export default async function ManagerPage() {
       accounts={accounts}
       leagues={leagues}
       lastRun={lastRun}
-      alertsByLeague={alertsByLeague}
       draftsByLeague={draftsByLeague}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       rosters={rosterRows}

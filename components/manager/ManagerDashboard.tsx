@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   playoffFormat,
   formatRelative,
-  alertSeverityChipStyle,
   automationConnected,
-  isSnoozed,
   type ManagedAccount,
-  type ManagedAlert,
   type ManagedDraft,
   type ManagedLeague,
   type ManagedSyncRun,
@@ -85,7 +82,6 @@ export default function ManagerDashboard({
   accounts,
   leagues,
   lastRun,
-  alertsByLeague,
   draftsByLeague,
   automationLastPingAt,
   rosters,
@@ -95,7 +91,6 @@ export default function ManagerDashboard({
   accounts: ManagedAccount[];
   leagues: ManagedLeague[];
   lastRun: ManagedSyncRun | null;
-  alertsByLeague: Record<string, ManagedAlert[]>;
   draftsByLeague: Record<string, ManagedDraft>;
   automationLastPingAt: string | null;
   rosters: {
@@ -141,7 +136,6 @@ export default function ManagerDashboard({
   const tradeValues = useTradeValues();
   const fcValues = useFantasyCalcValues();
 
-  const [showAllClear, setShowAllClear] = useState(false);
   const [breakdownTierFilter, setBreakdownTierFilter] = useState<"ALL" | PlayoffTierKey>("ALL");
   const [showAllBreakdown, setShowAllBreakdown] = useState(false);
   const [exposureView, setExposureView] = useState<"map" | "table">("map");
@@ -441,22 +435,6 @@ export default function ManagerDashboard({
     }
     return counts;
   }, [exposure]);
-
-  // Real Alert rows only — a league with zero rows genuinely means "synced,
-  // nothing found," not "not checked yet."
-  const groups = useMemo(() => {
-    const allClear: ManagedLeague[] = [];
-
-    for (const lg of leagues) {
-      // Snoozed alerts are real/active (still counted toward "All clear"
-      // being false), but don't clutter the exception groups — same
-      // filtering as the Commissioner/Player search server pages.
-      const alerts = (alertsByLeague[lg.id] ?? []).filter((a) => !isSnoozed(a));
-      if (alerts.length === 0) allClear.push(lg);
-    }
-
-    return { allClear };
-  }, [leagues, alertsByLeague]);
 
   const mostRecentSync = leagues.reduce<string | null>((latest, lg) => {
     if (!lg.lastSyncedAt) return latest;
@@ -870,29 +848,6 @@ export default function ManagerDashboard({
               </div>
             )}
           </div>
-        </section>
-      )}
-
-      {groups.allClear.length > 0 && (
-        <section className="sec">
-          <SectionHead
-            title="All clear"
-            right={
-              <button className="chip-filter" onClick={() => setShowAllClear((v) => !v)}>
-                {showAllClear ? "Hide" : `Show ${groups.allClear.length} leagues`}
-              </button>
-            }
-          />
-          {showAllClear && (
-            <DataTable>
-              {groups.allClear.map((league) => (
-                <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                  <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                  <Badge tone={alertSeverityChipStyle("clear")}>clear</Badge>
-                </TableRow>
-              ))}
-            </DataTable>
-          )}
         </section>
       )}
 
