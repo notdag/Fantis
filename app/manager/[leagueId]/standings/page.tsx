@@ -33,6 +33,7 @@ export default async function LeagueStandingsPage({
       league={data.league}
       leagueRosters={data.leagueRosters}
       myRosterId={data.roster?.rosterId ?? null}
+      streaksByRoster={data.streaksByRoster}
     />
   );
 }

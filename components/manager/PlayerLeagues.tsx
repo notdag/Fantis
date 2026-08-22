@@ -131,10 +131,7 @@ export default function PlayerLeagues({
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <PageHead
-          title="Player search"
-          description="Search any player to see where he stands across every synced league — starting, bench, not rostered, and which leagues have a real alert tied to him."
-        />
+        <PageHead description="Search any player to see where he stands across every synced league — starting, bench, not rostered, and which leagues have a real alert tied to him." />
 
         <div className="field" style={{ maxWidth: 360 }}>
           <input
@@ -193,7 +190,7 @@ export default function PlayerLeagues({
               marginTop: 8,
               maxWidth: 400,
               border: "1px solid var(--line)",
-              borderRadius: 12,
+              borderRadius: 8,
             }}
           >
             <IconSearch width={20} height={20} style={{ color: "var(--dim)" }} />

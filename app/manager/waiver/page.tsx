@@ -21,12 +21,25 @@ export default async function WaiverPage() {
     );
   }
 
-  const [leagueRows, rosterRows, leagueRosterRows, pingRow] = await Promise.all([
+  const [leagueRows, rosterRows, leagueRosterRows, pingRow, waiverHistoryRows] = await Promise.all([
     db.league.findMany({ orderBy: { name: "asc" } }),
     db.roster.findMany(),
     db.leagueRoster.findMany({ select: { leagueId: true, players: true } }),
     db.automationPing.findUnique({ where: { id: "singleton" } }),
+    db.waiverHistory.findMany({ orderBy: [{ season: "desc" }, { leagueName: "asc" }] }),
   ]);
+
+  // Grouped by season for display — a real, on-demand sync (see the
+  // Waivers page's own "Sync waiver history" action), not the main Refresh
+  // button; empty until that's run at least once.
+  const waiverHistoryBySeason: Record<string, { leagueName: string; waiverPosition: number | null; faabUsed: number | null }[]> = {};
+  for (const w of waiverHistoryRows) {
+    (waiverHistoryBySeason[w.season] ??= []).push({
+      leagueName: w.leagueName,
+      waiverPosition: w.waiverPosition,
+      faabUsed: w.faabUsed,
+    });
+  }
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
 
@@ -64,6 +77,7 @@ export default async function WaiverPage() {
     <WaiverAssistant
       leagues={leagues}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
+      waiverHistoryBySeason={waiverHistoryBySeason}
     />
   );
 }

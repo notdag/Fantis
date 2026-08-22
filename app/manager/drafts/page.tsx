@@ -65,10 +65,7 @@ export default async function DraftsPage() {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <PageHead
-          title="Drafts"
-          description={`${drafts.length} league${drafts.length === 1 ? "" : "s"} with a draft still ahead.`}
-        />
+        <PageHead description={`${drafts.length} league${drafts.length === 1 ? "" : "s"} with a draft still ahead.`} />
         {drafts.length > 0 && (
           <StatCardGrid variant="hero">
             <StatCard

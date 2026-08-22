@@ -217,6 +217,24 @@ export function statusLabel(status: string): string {
   }
 }
 
+// Sleeper's league `settings` blob is untyped JSON — read defensively.
+// Extracted from LeagueIdentityBar.tsx (2026-08b) so the same PPR/Half-PPR/
+// Standard label logic isn't duplicated for Command Center's Scoring
+// column.
+export function scoringFormatLabel(settings: unknown): string | null {
+  if (!settings || typeof settings !== "object") return null;
+  const scoringSettings = (settings as Record<string, unknown>).scoring_settings;
+  const rec =
+    scoringSettings && typeof scoringSettings === "object"
+      ? (scoringSettings as Record<string, unknown>).rec
+      : undefined;
+  if (typeof rec !== "number") return null;
+  if (rec === 1) return "PPR";
+  if (rec === 0.5) return "Half-PPR";
+  if (rec === 0) return "Standard";
+  return `${rec} pt/rec`;
+}
+
 export function formatRelative(iso: string | null | undefined): string {
   if (!iso) return "never";
   const date = new Date(iso);

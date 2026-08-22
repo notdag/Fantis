@@ -1,32 +1,18 @@
 import type { CSSProperties, ReactNode } from "react";
 
-// Componentized .mgrhead (page-top) and .sechead (per-section) — real CSS
-// unchanged. Two real .mgrhead shapes found in the audit: plain
-// title+description (most pages), and title+inline-right-slot with no
-// description (LeagueIdentityBar's status chip/group editor, sitting on
-// the h1's own line) — `right` selects between them rather than always
-// rendering both slots.
-export function PageHead({
-  title,
-  description,
-  right,
-}: {
-  title: ReactNode;
-  description?: ReactNode;
-  right?: ReactNode;
-}) {
+// Page intro strip: description text only (2026-08b UI reset). Used to
+// render a duplicate <h1> here — the real page title now lives once, in
+// ManagerHeader's breadcrumb (promoted to a real <h1> there) — so this
+// component no longer takes or renders a title at all. LeagueIdentityBar
+// (the one real caller that also needed a `right` slot: status chip, team
+// count, group editor) builds its own identity block directly instead of
+// going through this component, since it now needs an avatar + team name
+// too, not just a title-adjacent right-slot.
+export function PageHead({ description }: { description?: ReactNode }) {
+  if (description == null) return null;
   return (
     <div className="mgrhead">
-      <div className="mgraccentbar" />
-      {right ? (
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <h1>{title}</h1>
-          <span style={{ display: "flex", alignItems: "center", gap: 10 }}>{right}</span>
-        </div>
-      ) : (
-        <h1>{title}</h1>
-      )}
-      {description != null && <p>{description}</p>}
+      <p>{description}</p>
     </div>
   );
 }

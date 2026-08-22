@@ -39,7 +39,6 @@ export default async function CommissionerPage() {
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Commissioner"
           description={
             <>
               Real, derived signals only — Sleeper&rsquo;s API doesn&rsquo;t carry payment or

@@ -51,6 +51,13 @@ export function TableRow(props: TableRowProps) {
   );
 }
 
+// Real column-header row (2026-08b UI reset) — .mgrrow.head, no hover/
+// click affordance, small uppercase muted labels. Children are typically
+// plain <span>s matching the data row's own column widths/flex slots.
+export function TableHeaderRow({ children }: { children: ReactNode }) {
+  return <div className="mgrrow head static">{children}</div>;
+}
+
 // Placeholder rows matching .mgrrow's real dimensions (avatar + one line),
 // shown while a client fetch (usePlayerMap, etc.) is in flight so layout
 // doesn't jump once the real content arrives.

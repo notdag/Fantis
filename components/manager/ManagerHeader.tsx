@@ -143,11 +143,11 @@ export default function ManagerHeader({
             <span className="mgrbreadcrumbsep">/</span>
             <span className="mgrbreadcrumbcurrent">{currentLeague.name}</span>
             <span className="mgrbreadcrumbsep">/</span>
-            <span className="mgrbreadcrumbcurrent">{sectionLabel}</span>
+            <h1 className="mgrpagetitle">{sectionLabel}</h1>
           </div>
         ) : (
           <div className="mgrbreadcrumb">
-            <span className="mgrbreadcrumbcurrent">{portfolioPageLabel(pathname)}</span>
+            <h1 className="mgrpagetitle">{portfolioPageLabel(pathname)}</h1>
           </div>
         )}
       </div>

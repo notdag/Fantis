@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { statusChipStyle, statusLabel, type ManagedLeague } from "@/lib/manager";
-import { PageHead } from "./PageHead";
+import { LeagueAvatar } from "./Avatar";
+import { Badge } from "./Badge";
 
 // Sleeper's league `settings` blob is untyped JSON here (see prisma/schema.prisma
 // — deliberately not normalized). Every field below is read defensively;
@@ -21,7 +22,13 @@ function settingsField(settings: unknown, key: string): unknown {
 // league switcher and "League info" panel moved out of this block: the
 // switcher now lives in the shared ManagerHeader, and the info panel is
 // its own /info route.
-export default function LeagueIdentityBar({ league }: { league: ManagedLeague }) {
+export default function LeagueIdentityBar({
+  league,
+  myTeamName,
+}: {
+  league: ManagedLeague;
+  myTeamName?: string | null;
+}) {
   const router = useRouter();
   const [editingGroup, setEditingGroup] = useState(false);
   const [groupValue, setGroupValue] = useState(league.group ?? "");
@@ -99,13 +106,22 @@ export default function LeagueIdentityBar({ league }: { league: ManagedLeague })
 
   return (
     <section className="sec" style={{ paddingBottom: 0 }}>
-      <PageHead
-        title={league.name}
-        right={
-          <>
-            <span className="pos" style={statusChipStyle(league.status)}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <LeagueAvatar league={league} size={32} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: "var(--bone)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {league.name}
+            </div>
+            {myTeamName && (
+              <div className="portmeta" style={{ fontSize: 12 }}>{myTeamName}</div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <Badge tone={statusChipStyle(league.status)}>
               {statusLabel(league.status)}
-            </span>
+            </Badge>
             <span className="portmeta">
               {league.totalRosters} team{formatLabel ? ` ${formatLabel}` : ""}
             </span>
@@ -152,9 +168,8 @@ export default function LeagueIdentityBar({ league }: { league: ManagedLeague })
                 {league.group ?? "+ Add group"}
               </button>
             )}
-          </>
-        }
-      />
+        </div>
+      </div>
 
       <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <a className="btn" href={`https://sleeper.com/leagues/${league.id}`} target="_blank" rel="noreferrer">

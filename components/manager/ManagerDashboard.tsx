@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   statusChipStyle,
   statusLabel,
+  scoringFormatLabel,
   formatRelative,
   formatUpcoming,
   alertSeverityChipStyle,
@@ -16,59 +17,16 @@ import {
   type ManagedLeague,
   type ManagedSyncRun,
 } from "@/lib/manager";
-import { avatar } from "@/lib/sleeper";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
-import { IconFlag, IconCheck, IconStar, IconSearch, IconUsers, IconCalendar } from "./MgrIcons";
+import { IconFlag, IconCheck, IconSearch, IconUsers, IconCalendar, IconChevronRight } from "./MgrIcons";
 import { StatCard, StatCardGrid } from "./StatCard";
-import { DataTable, TableRow } from "./DataRow";
+import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { SectionHead } from "./PageHead";
+import { LeagueAvatar } from "./Avatar";
+import { Badge } from "./Badge";
 
-// League settings is untyped JSON (see prisma/schema.prisma) — read
-// defensively, same pattern as LeagueDetail.tsx's settingsField().
-function leagueAvatarId(settings: unknown): string | null {
-  if (!settings || typeof settings !== "object") return null;
-  const v = (settings as Record<string, unknown>).avatar;
-  return typeof v === "string" ? v : null;
-}
-
-function LeagueAvatar({ league }: { league: ManagedLeague }) {
-  const [failed, setFailed] = useState(false);
-  const id = leagueAvatarId(league.settings);
-  const url = avatar(id);
-  if (!url || failed) {
-    return (
-      <span
-        className="mgravatar"
-        style={{
-          width: 24,
-          height: 24,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 10,
-          fontWeight: 700,
-          color: "var(--dim)",
-          background: "var(--ink)",
-        }}
-      >
-        {league.name.slice(0, 1).toUpperCase()}
-      </span>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={url}
-      alt=""
-      style={{ width: 24, height: 24 }}
-      onError={() => setFailed(true)}
-    />
-  );
-}
-
-type SortKey = "name" | "season" | "teams" | "status" | "synced" | "record";
+type SortKey = "name" | "teams" | "status" | "synced" | "record" | "draftTime";
 type SortDir = "asc" | "desc";
 
 const STATUSES = ["pre_draft", "drafting", "in_season", "complete"] as const;
@@ -125,6 +83,7 @@ export default function ManagerDashboard({
 
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | (typeof STATUSES)[number]>("ALL");
+  const [draftFilter, setDraftFilter] = useState<"ALL" | "pre_draft" | "drafting" | "complete" | "none">("ALL");
   const [groupFilter, setGroupFilter] = useState("ALL");
   const [sortBy, setSortBy] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -200,19 +159,34 @@ export default function ManagerDashboard({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return leagues.filter(
-      (lg) =>
+    return leagues.filter((lg) => {
+      const draftStatus = draftsByLeague[lg.id]?.status ?? "none";
+      return (
         (statusFilter === "ALL" || lg.status === statusFilter) &&
+        (draftFilter === "ALL" || draftStatus === draftFilter) &&
         (groupFilter === "ALL" ||
           (groupFilter === UNGROUPED ? !lg.group : lg.group === groupFilter)) &&
         (!q || lg.name.toLowerCase().includes(q))
-    );
-  }, [leagues, query, statusFilter, groupFilter]);
+      );
+    });
+  }, [leagues, query, statusFilter, draftFilter, groupFilter, draftsByLeague]);
 
   // Per-league record lookup for the "All leagues" table's Record column
   // — same `rosters` prop already used for the portfolio aggregation
   // further down, just keyed for a single-row lookup instead of summed.
   const rosterByLeague = useMemo(() => new Map(rosters.map((r) => [r.leagueId, r])), [rosters]);
+
+  // My real team name per league — leagueRostersByLeague already has every
+  // team in every league (fetched for league-wide rank above), just keyed
+  // by rosterId; find the one row matching my own rosterId per league.
+  const myTeamNameByLeague = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const r of rosters) {
+      const mine = (leagueRostersByLeague[r.leagueId] ?? []).find((lr) => lr.rosterId === r.rosterId);
+      map.set(r.leagueId, mine?.teamName ?? null);
+    }
+    return map;
+  }, [rosters, leagueRostersByLeague]);
 
   // Real distinct group values the owner has actually set, sorted by how
   // many leagues use each — freeform text, so this is a dropdown (unbounded
@@ -235,14 +209,22 @@ export default function ManagerDashboard({
       switch (sortBy) {
         case "name":
           return a.name.localeCompare(b.name) * dir;
-        case "season":
-          return a.season.localeCompare(b.season) * dir;
         case "teams":
           return (a.totalRosters - b.totalRosters) * dir;
         case "status":
           return a.status.localeCompare(b.status) * dir;
         case "synced":
           return ((a.lastSyncedAt ?? "").localeCompare(b.lastSyncedAt ?? "")) * dir;
+        case "draftTime": {
+          // Same "unresolved sorts last" spirit as record/rank below —
+          // a league with no synced draft or no start time isn't "earliest."
+          const ta = draftsByLeague[a.id]?.startTime;
+          const tb = draftsByLeague[b.id]?.startTime;
+          if (ta == null && tb == null) return 0;
+          if (ta == null) return 1;
+          if (tb == null) return -1;
+          return ta.localeCompare(tb) * dir;
+        }
         case "record": {
           // Unrecorded (no synced roster yet) sorts to the bottom
           // regardless of direction — same "unranked sorts last" spirit
@@ -261,7 +243,7 @@ export default function ManagerDashboard({
       }
     });
     return rows;
-  }, [filtered, sortBy, sortDir, rosterByLeague]);
+  }, [filtered, sortBy, sortDir, rosterByLeague, draftsByLeague]);
 
   // Real per-status counts (unfiltered by the search box, since the chips
   // themselves are the status filter) — shown on each chip so you know
@@ -496,48 +478,26 @@ export default function ManagerDashboard({
 
       {leagues.length > 0 && (
         <section className="sec">
-          <SectionHead title="Today" right="what needs you right now" />
-          <StatCardGrid variant="hero">
-            <StatCard
-              icon={IconCheck}
-              label="Record"
-              value={
-                <>
-                  {portfolio.wins}-{portfolio.losses}
-                  {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
-                  {portfolio.winPct != null && (
-                    <span style={{ fontSize: 13, fontWeight: 500, color: "var(--muted)", marginLeft: 6 }}>
-                      {portfolio.winPct.toFixed(0)}%
-                    </span>
-                  )}
-                </>
-              }
-              sub={`${portfolio.winningLeagues} winning · ${portfolio.evenLeagues} .500 · ${portfolio.losingLeagues} losing`}
-            />
-            <StatCard
-              icon={IconFlag}
-              color="var(--red)"
-              label="Need attention"
-              value={groups.actionRequired.length}
-              valueColor="var(--red)"
-              sub={`${groups.actionRequired.length} action required · ${groups.commissioner.length + groups.review.length} review`}
-            />
-            <StatCard
-              icon={IconStar}
-              color={
-                rankSnapshot.ranked > 0 && rankSnapshot.topHalf * 2 >= rankSnapshot.ranked
-                  ? "var(--mint)"
-                  : "var(--muted)"
-              }
-              label="Top-half leagues"
-              value={rankSnapshot.ranked > 0 ? rankSnapshot.topHalf : "—"}
-              sub={rankSnapshot.ranked > 0 ? `of ${rankSnapshot.ranked} ranked` : "no season data yet"}
-            />
+          <StatCardGrid variant="grid">
+            <StatCard icon={IconUsers} color="var(--muted)" label="Total leagues" value={portfolioComposition.totalLeagues} />
+            <StatCard icon={IconCheck} color="var(--mint)" label="Active leagues" value={portfolioComposition.activeLeagues} />
+            <StatCard icon={IconCalendar} color="var(--amber)" label="Upcoming drafts" value={portfolioComposition.upcomingDrafts} />
+            <StatCard icon={IconFlag} color="var(--muted)" label="Drafted" value={portfolioComposition.completedDrafts} />
           </StatCardGrid>
+        </section>
+      )}
 
-          <p className="hint" style={{ marginTop: 10 }}>
-            {leagues.length} league{leagues.length === 1 ? "" : "s"} · {groups.draftsThisWeek} draft
-            {groups.draftsThisWeek === 1 ? "" : "s"} this week · avg{" "}
+      {leagues.length > 0 && (
+        <section className="sec">
+          <SectionHead title="Today" right="what needs you right now" />
+
+          <p className="hint">
+            Record {portfolio.wins}-{portfolio.losses}
+            {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
+            {portfolio.winPct != null ? ` (${portfolio.winPct.toFixed(0)}%)` : ""} overall ·{" "}
+            {rankSnapshot.ranked > 0 ? `${rankSnapshot.topHalf} of ${rankSnapshot.ranked} top-half leagues` : "no season data yet"}
+            {" · "}
+            {groups.draftsThisWeek} draft{groups.draftsThisWeek === 1 ? "" : "s"} this week · avg{" "}
             {portfolio.avgPts != null ? portfolio.avgPts.toFixed(1) : "—"} pts/league
           </p>
 
@@ -553,9 +513,9 @@ export default function ManagerDashboard({
                 {groups.actionRequired.map(({ league, alerts }) => (
                   <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <span className="pos" style={alertSeverityChipStyle("action_required")}>
+                    <Badge tone={alertSeverityChipStyle("action_required")}>
                       {alerts.length} issue{alerts.length === 1 ? "" : "s"}
-                    </span>
+                    </Badge>
                     <span className="portmeta">
                       {alerts[0].message}
                       {alerts.length > 1 ? ` +${alerts.length - 1} more` : ""}
@@ -578,7 +538,7 @@ export default function ManagerDashboard({
                 {groups.commissioner.map(({ league, alerts }) => (
                   <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
+                    <Badge tone={alertSeverityChipStyle("review")}>review</Badge>
                     <span className="portmeta">{alerts[0].message}</span>
                   </TableRow>
                 ))}
@@ -604,7 +564,7 @@ export default function ManagerDashboard({
                 {groups.review.map(({ league, alerts }) => (
                   <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                     <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <span className="pos" style={alertSeverityChipStyle("review")}>review</span>
+                    <Badge tone={alertSeverityChipStyle("review")}>review</Badge>
                     <span className="portmeta">{alerts[0].message}</span>
                   </TableRow>
                 ))}
@@ -636,7 +596,7 @@ export default function ManagerDashboard({
               {groups.allClear.map((league) => (
                 <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
                   <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                  <span className="pos" style={alertSeverityChipStyle("clear")}>clear</span>
+                  <Badge tone={alertSeverityChipStyle("clear")}>clear</Badge>
                 </TableRow>
               ))}
             </DataTable>
@@ -653,13 +613,8 @@ export default function ManagerDashboard({
       ) : (
         <section className="sec">
           <SectionHead title="All leagues" right="browse everything, not just exceptions" />
-          <StatCardGrid variant="grid">
-            <StatCard icon={IconUsers} color="var(--muted)" label="Total leagues" value={portfolioComposition.totalLeagues} />
-            <StatCard icon={IconCheck} color="var(--mint)" label="Active leagues" value={portfolioComposition.activeLeagues} />
-            <StatCard icon={IconCalendar} color="var(--amber)" label="Upcoming drafts" value={portfolioComposition.upcomingDrafts} />
-            <StatCard icon={IconFlag} color="var(--muted)" label="Completed drafts" value={portfolioComposition.completedDrafts} />
-          </StatCardGrid>
-          <div className="field" style={{ marginTop: 20, marginBottom: 12, alignItems: "center" }}>
+
+          <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
             <input
               className="input"
               placeholder="Search leagues…"
@@ -682,6 +637,17 @@ export default function ManagerDashboard({
                 {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
               </button>
             ))}
+            <select
+              className="select sm"
+              value={draftFilter}
+              onChange={(e) => setDraftFilter(e.target.value as typeof draftFilter)}
+            >
+              <option value="ALL">Any draft status</option>
+              <option value="pre_draft">Pre-draft</option>
+              <option value="drafting">Drafting</option>
+              <option value="complete">Drafted</option>
+              <option value="none">No draft synced</option>
+            </select>
             {(groupOptions.named.length > 0 || groupOptions.ungrouped > 0) && (
               <select
                 className="select sm"
@@ -699,21 +665,8 @@ export default function ManagerDashboard({
                 )}
               </select>
             )}
-          </div>
-
-          <div
-            className="field"
-            style={{
-              marginBottom: 0,
-              gap: 12,
-              position: "sticky",
-              top: 0,
-              zIndex: 1,
-              background: "var(--ink)",
-              padding: "8px 0",
-            }}
-          >
-            {(["name", "season", "teams", "record", "status", "synced"] as SortKey[]).map((k) => (
+            <span style={{ flex: 1 }} />
+            {(["name", "teams", "record", "draftTime", "status", "synced"] as SortKey[]).map((k) => (
               <button
                 key={k}
                 className={`sorth ${sortBy === k ? "on" : ""}`}
@@ -721,12 +674,12 @@ export default function ManagerDashboard({
               >
                 {k === "name"
                   ? "Name"
-                  : k === "season"
-                    ? "Season"
-                    : k === "teams"
-                      ? "Teams"
-                      : k === "record"
-                        ? "Record"
+                  : k === "teams"
+                    ? "Teams"
+                    : k === "record"
+                      ? "Record"
+                      : k === "draftTime"
+                        ? "Draft"
                         : k === "status"
                           ? "Status"
                           : "Synced"}
@@ -736,42 +689,39 @@ export default function ManagerDashboard({
           </div>
 
           <DataTable>
-            {sorted.map((lg) => (
-              <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
-                <LeagueAvatar league={lg} />
-                <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
-                {lg.group && (
-                  <span
-                    className="pos"
-                    style={{
-                      color: "var(--amber)",
-                      background: "color-mix(in srgb, var(--amber) 16%, transparent)",
-                      borderColor: "color-mix(in srgb, var(--amber) 45%, transparent)",
-                    }}
-                  >
-                    {lg.group}
+            <TableHeaderRow>
+              <span style={{ flex: 1, marginLeft: 34 }}>League</span>
+              <span style={{ minWidth: 110 }}>My team</span>
+              <span style={{ minWidth: 76 }}>Status</span>
+              <span style={{ minWidth: 100 }}>Draft time</span>
+              <span style={{ minWidth: 50 }}>Teams</span>
+              <span style={{ minWidth: 70 }}>Scoring</span>
+              <span style={{ minWidth: 50 }}>Record</span>
+              <span style={{ width: 16 }} />
+            </TableHeaderRow>
+            {sorted.map((lg) => {
+              const draft = draftsByLeague[lg.id];
+              const record = rosterByLeague.get(lg.id);
+              const myTeamName = myTeamNameByLeague.get(lg.id);
+              const scoring = scoringFormatLabel(lg.settings);
+              return (
+                <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
+                  <LeagueAvatar league={lg} />
+                  <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
+                  <span className="portmeta" style={{ minWidth: 110 }}>{myTeamName ?? "—"}</span>
+                  <Badge tone={statusChipStyle(lg.status)}>{statusLabel(lg.status)}</Badge>
+                  <span className="portmeta" style={{ minWidth: 100 }}>
+                    {draft?.startTime ? (mounted ? formatUpcoming(draft.startTime) : "—") : "—"}
                   </span>
-                )}
-                <span className="portmeta">{lg.totalRosters} teams</span>
-                <span className="portmeta">{lg.season}</span>
-                <span className="portmeta" style={{ minWidth: 50 }}>
-                  {(() => {
-                    const r = rosterByLeague.get(lg.id);
-                    return r ? `${r.wins}-${r.losses}${r.ties > 0 ? `-${r.ties}` : ""}` : "—";
-                  })()}
-                </span>
-                <span className="portmeta" style={{ minWidth: 60 }}>
-                  {(() => {
-                    const r = rankByLeague.get(lg.id);
-                    return r?.rank != null ? `#${r.rank} of ${r.totalTeams}` : "—";
-                  })()}
-                </span>
-                <span className="pos" style={statusChipStyle(lg.status)}>
-                  {statusLabel(lg.status)}
-                </span>
-                <span className="portmeta">synced {mounted ? formatRelative(lg.lastSyncedAt) : "—"}</span>
-              </TableRow>
-            ))}
+                  <span className="portmeta" style={{ minWidth: 50 }}>{lg.totalRosters}</span>
+                  <span className="portmeta" style={{ minWidth: 70 }}>{scoring ?? "—"}</span>
+                  <span className="portmeta" style={{ minWidth: 50 }}>
+                    {record ? `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ""}` : "—"}
+                  </span>
+                  <IconChevronRight width={16} height={16} style={{ color: "var(--dim)", flex: "none" }} />
+                </TableRow>
+              );
+            })}
             {sorted.length === 0 && (
               <div
                 style={{

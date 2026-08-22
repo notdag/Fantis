@@ -72,7 +72,6 @@ export default function AlertHistory({ alerts }: { alerts: ManagedHistoryAlert[]
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Alert history"
           description={
             <>
               The most recent 150 alerts across every synced league — active, resolved, and

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
@@ -39,13 +40,46 @@ function Diff({ value }: { value: number | null }) {
   );
 }
 
+export interface WaiverHistoryEntry {
+  leagueName: string;
+  waiverPosition: number | null;
+  faabUsed: number | null;
+}
+
 export default function WaiverAssistant({
   leagues,
   automationLastPingAt,
+  waiverHistoryBySeason,
 }: {
   leagues: WaiverLeague[];
   automationLastPingAt: string | null;
+  waiverHistoryBySeason?: Record<string, WaiverHistoryEntry[]>;
 }) {
+  const router = useRouter();
+  const [syncingHistory, setSyncingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const syncWaiverHistory = async () => {
+    if (syncingHistory) return;
+    setSyncingHistory(true);
+    setHistoryError("");
+    try {
+      const res = await fetch("/api/manager/waiver-history/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setHistoryError(body.error || "Couldn't sync waiver history.");
+        return;
+      }
+      router.refresh();
+    } catch {
+      setHistoryError("Couldn't reach the server.");
+    } finally {
+      setSyncingHistory(false);
+    }
+  };
   // Same hydration-safety pattern as ManagerDashboard.tsx — automationConnected()
   // depends on Date.now(), so it's gated behind `mounted` to keep the server
   // render and the client's first hydration pass identical.
@@ -166,7 +200,6 @@ export default function WaiverAssistant({
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Waiver Assistant"
           description={
             <>
               Search a free-agent target, see which of your leagues don&rsquo;t already have him,
@@ -260,7 +293,7 @@ export default function WaiverAssistant({
               marginTop: 8,
               maxWidth: 400,
               border: "1px solid var(--line)",
-              borderRadius: 12,
+              borderRadius: 8,
             }}
           >
             <IconSearch width={20} height={20} style={{ color: "var(--dim)" }} />
@@ -370,6 +403,46 @@ export default function WaiverAssistant({
           )}
         </section>
       )}
+
+      <section className="sec">
+        <SectionHead
+          title="Waiver history"
+          right={
+            <button className="btn ghost sm" onClick={syncWaiverHistory} disabled={syncingHistory}>
+              {syncingHistory ? "Syncing…" : "Sync waiver history"}
+            </button>
+          }
+        />
+        {historyError && <div className="err">{historyError}</div>}
+        {!waiverHistoryBySeason || Object.keys(waiverHistoryBySeason).length === 0 ? (
+          <p className="hint">
+            No past-season waiver data synced yet — real FAAB/waiver-position usage from prior
+            seasons, not shown until you run a sync. This is a separate, on-demand sync (not part
+            of the main Refresh button) since it covers real past-season leagues too.
+          </p>
+        ) : (
+          Object.entries(waiverHistoryBySeason)
+            .sort(([a], [b]) => b.localeCompare(a))
+            .map(([season, entries]) => (
+              <div key={season} style={{ marginTop: 12 }}>
+                <SectionHead level={3} title={season} right={`${entries.length} leagues`} style={{ marginBottom: 8 }} />
+                <DataTable>
+                  {entries.map((e, i) => (
+                    <TableRow key={`${e.leagueName}-${i}`}>
+                      <span className="tname" style={{ flex: 1 }}>{e.leagueName}</span>
+                      <span className="portmeta">
+                        {e.waiverPosition != null ? `waiver #${e.waiverPosition}` : "—"}
+                      </span>
+                      <span className="portmeta">
+                        {e.faabUsed != null ? `$${e.faabUsed} FAAB used` : "—"}
+                      </span>
+                    </TableRow>
+                  ))}
+                </DataTable>
+              </div>
+            ))
+        )}
+      </section>
     </>
   );
 }

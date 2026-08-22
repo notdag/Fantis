@@ -121,7 +121,6 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="My Leagues"
           description={
             <>
               Every league&rsquo;s roster in one table — record, this week&rsquo;s matchup, and

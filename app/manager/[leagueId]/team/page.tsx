@@ -36,5 +36,12 @@ export default async function LeagueTeamPage({
   const rosterPositions = settingsField(data.league.settings, "roster_positions");
   const rosterPositionsArr = Array.isArray(rosterPositions) ? (rosterPositions as string[]) : [];
 
-  return <LeagueTeam league={data.league} roster={data.roster} rosterPositions={rosterPositionsArr} />;
+  return (
+    <LeagueTeam
+      league={data.league}
+      roster={data.roster}
+      leagueRosters={data.leagueRosters}
+      rosterPositions={rosterPositionsArr}
+    />
+  );
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatRelative, type ManagedLeague, type ManagedRoster } from "@/lib/manager";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
+import type { LeagueRosterRow } from "@/lib/leagueRank";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useFantasyCalcValues, fantasyCalcValue, type FantasyCalcMaps } from "@/lib/fantasyCalc";
 import { PlayerAvatar } from "./Avatar";
@@ -100,10 +101,12 @@ function RosterSection({
 export default function LeagueTeam({
   league,
   roster,
+  leagueRosters,
   rosterPositions,
 }: {
   league: ManagedLeague;
   roster: ManagedRoster | null;
+  leagueRosters?: LeagueRosterRow[];
   rosterPositions: string[];
 }) {
   const [mounted, setMounted] = useState(false);
@@ -113,10 +116,13 @@ export default function LeagueTeam({
 
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
   const fcValues = useFantasyCalcValues();
+  const myTeamName = roster
+    ? (leagueRosters ?? []).find((r) => r.rosterId === roster.rosterId)?.teamName ?? null
+    : null;
 
   return (
     <>
-      <LeagueIdentityBar league={league} />
+      <LeagueIdentityBar league={league} myTeamName={myTeamName} />
       {roster ? (
         <section className="sec">
           <SectionHead

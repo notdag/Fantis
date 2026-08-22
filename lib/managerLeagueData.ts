@@ -5,7 +5,7 @@
 // reads only — no Sleeper calls here (that's sync's job).
 import { db } from "./db";
 import type { ManagedAlert, ManagedDraft, ManagedLeague, ManagedMatchup, ManagedRoster } from "./manager";
-import type { LeagueRosterRow } from "./leagueRank";
+import { computeStreak, type LeagueRosterRow } from "./leagueRank";
 
 export interface LeagueDetailData {
   league: ManagedLeague;
@@ -14,6 +14,7 @@ export interface LeagueDetailData {
   alerts: ManagedAlert[];
   draft: ManagedDraft | null;
   leagueRosters: LeagueRosterRow[];
+  streaksByRoster: Record<number, string>;
 }
 
 export async function getLeagueDetailData(leagueId: string): Promise<LeagueDetailData | null> {
@@ -36,7 +37,7 @@ export async function getLeagueDetailData(leagueId: string): Promise<LeagueDetai
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
   };
 
-  const [rosterRow, matchupRow, alertRows, draftRow, leagueRosterRows] = await Promise.all([
+  const [rosterRow, matchupRow, alertRows, draftRow, leagueRosterRows, weeklyResultRows] = await Promise.all([
     db.roster.findUnique({ where: { leagueId } }),
     db.matchup.findFirst({ where: { leagueId }, orderBy: { week: "desc" } }),
     db.alert.findMany({ where: { leagueId, resolvedAt: null }, orderBy: { createdAt: "asc" } }),
@@ -55,7 +56,20 @@ export async function getLeagueDetailData(leagueId: string): Promise<LeagueDetai
         teamName: true,
       },
     }),
+    db.weeklyResult.findMany({ where: { leagueId }, select: { rosterId: true, week: true, won: true } }),
   ]);
+
+  const streaksByRoster: Record<number, string> = {};
+  const resultsByRoster = new Map<number, { week: number; won: boolean | null }[]>();
+  for (const r of weeklyResultRows) {
+    const list = resultsByRoster.get(r.rosterId) ?? [];
+    list.push({ week: r.week, won: r.won });
+    resultsByRoster.set(r.rosterId, list);
+  }
+  for (const [rosterId, results] of resultsByRoster) {
+    const streak = computeStreak(results);
+    if (streak) streaksByRoster[rosterId] = streak;
+  }
 
   const roster: ManagedRoster | null = rosterRow
     ? {
@@ -113,5 +127,5 @@ export async function getLeagueDetailData(leagueId: string): Promise<LeagueDetai
       }
     : null;
 
-  return { league, roster, matchup, alerts, draft, leagueRosters: leagueRosterRows };
+  return { league, roster, matchup, alerts, draft, leagueRosters: leagueRosterRows, streaksByRoster };
 }

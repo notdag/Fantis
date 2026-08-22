@@ -60,10 +60,7 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <PageHead
-          title="Injury Report"
-          description="Every rostered player listed Out, Doubtful, or IR across every in-season league — bench included, not just the starters the existing alerts already cover."
-        />
+        <PageHead description="Every rostered player listed Out, Doubtful, or IR across every in-season league — bench included, not just the starters the existing alerts already cover." />
         {!loading && (outCount + doubtfulCount + irCount) > 0 && (
           <StatCardGrid variant="grid">
             <StatCard icon={IconFlag} color="var(--red)" label="Out" value={outCount} valueColor="var(--red)" />

@@ -92,7 +92,6 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Matchups"
           description={
             <>
               Every league&rsquo;s current matchup in one place, sorted closest-first by default —

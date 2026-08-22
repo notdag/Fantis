@@ -75,7 +75,6 @@ export default function TransactionFeed({
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Transactions"
           description={
             <>
               Real trades, waiver claims, and free-agent pickups across every synced league —

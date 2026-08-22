@@ -74,7 +74,6 @@ export default function ActionQueue({
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Action Queue"
           description={
             <>
               Every open alert across every league, in one linear list — snooze or dismiss from

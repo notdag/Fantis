@@ -29,10 +29,65 @@ import type { PlayerMap, ProjectionMap, SleeperMatchupRow, SleeperDraftRaw } fro
 // is a conservative, explicit, tunable constant, not a measured number.
 const DETAIL_BATCH_SIZE = 10;
 
+// Real per-team weekly-result history (Standings' Streak column) backfills
+// past weeks of the current season incrementally — capped per sync call so
+// a league's first sync after this shipped can't push the route past its
+// time budget. Subsequent syncs pick up where the last one left off; once
+// every week is backfilled this drops to zero extra Sleeper calls, same as
+// steady state today.
+const BACKFILL_WEEKS_PER_SYNC = 4;
+
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+// Real per-roster result for one league/week, derived from the full
+// getMatchups() response (every roster, not just "mine"/opponent) — `won`
+// is null for a tie or an unresolved pairing (bye, odd roster count), never
+// guessed. Shared by both the current-week sync and the incremental
+// backfill below so the win/loss logic isn't duplicated.
+async function persistWeeklyResults(leagueId: string, week: number, matchupRows: SleeperMatchupRow[]) {
+  const byMatchupId = new Map<number, SleeperMatchupRow[]>();
+  for (const row of matchupRows) {
+    if (row.matchup_id == null) continue;
+    const list = byMatchupId.get(row.matchup_id) ?? [];
+    list.push(row);
+    byMatchupId.set(row.matchup_id, list);
+  }
+
+  const rows: { rosterId: number; points: number; won: boolean | null }[] = [];
+  for (const pair of byMatchupId.values()) {
+    for (const row of pair) {
+      const opponent = pair.find((r) => r.roster_id !== row.roster_id);
+      const points = row.points ?? 0;
+      const won =
+        pair.length === 2 && opponent
+          ? points > (opponent.points ?? 0)
+            ? true
+            : points < (opponent.points ?? 0)
+              ? false
+              : null // tied
+          : null; // bye / unresolved
+      rows.push({ rosterId: row.roster_id, points, won });
+    }
+  }
+  if (rows.length === 0) return;
+
+  await db.$transaction([
+    db.weeklyResult.deleteMany({ where: { leagueId, week } }),
+    db.weeklyResult.createMany({
+      data: rows.map((r) => ({
+        leagueId,
+        week,
+        rosterId: r.rosterId,
+        points: r.points,
+        won: r.won,
+        lastSyncedAt: new Date(),
+      })),
+    }),
+  ]);
 }
 
 export interface SyncError {
@@ -249,6 +304,11 @@ export async function syncAccount(
           const rawMatchups = await getMatchups(lg.league_id, week).catch(() => null);
           if (rawMatchups) {
             const matchupRows = rawMatchups as unknown as SleeperMatchupRow[];
+            // Independent write from the Matchup upsert below (different
+            // table, no shared data) — run concurrently rather than
+            // serially blocking on it, so this doesn't add its own round
+            // trip to every league's critical path.
+            const weeklyResultsWrite = persistWeeklyResults(lg.league_id, week, matchupRows);
             const mine = matchupRows.find((r) => r.roster_id === myRoster.roster_id);
             if (mine && mine.matchup_id != null) {
               const opponentRow = matchupRows.find(
@@ -276,47 +336,80 @@ export async function syncAccount(
                 ? opponentStartersProjPoints.reduce((a, b) => a + b, 0)
                 : null;
 
-              await db.matchup.upsert({
-                where: { leagueId_week: { leagueId: lg.league_id, week } },
-                create: {
-                  leagueId: lg.league_id,
-                  week,
-                  myRosterId: mine.roster_id,
-                  myMatchupId: mine.matchup_id,
-                  myPoints: mine.points ?? 0,
-                  myStarters: mine.starters ?? [],
-                  myStartersPoints: mine.starters_points ?? [],
-                  myProjPoints,
-                  myStartersProjPoints,
-                  opponentRosterId: opponentRow?.roster_id ?? null,
-                  opponentTeamName,
-                  opponentPoints: opponentRow?.points ?? null,
-                  opponentStarters: opponentRow?.starters ?? [],
-                  opponentStartersPoints: opponentRow?.starters_points ?? [],
-                  opponentProjPoints,
-                  opponentStartersProjPoints,
-                  lastSyncedAt: new Date(),
-                },
-                update: {
-                  myRosterId: mine.roster_id,
-                  myMatchupId: mine.matchup_id,
-                  myPoints: mine.points ?? 0,
-                  myStarters: mine.starters ?? [],
-                  myStartersPoints: mine.starters_points ?? [],
-                  myProjPoints,
-                  myStartersProjPoints,
-                  opponentRosterId: opponentRow?.roster_id ?? null,
-                  opponentTeamName,
-                  opponentPoints: opponentRow?.points ?? null,
-                  opponentStarters: opponentRow?.starters ?? [],
-                  opponentStartersPoints: opponentRow?.starters_points ?? [],
-                  opponentProjPoints,
-                  opponentStartersProjPoints,
-                  lastSyncedAt: new Date(),
-                },
-              });
+              await Promise.all([
+                weeklyResultsWrite,
+                db.matchup.upsert({
+                  where: { leagueId_week: { leagueId: lg.league_id, week } },
+                  create: {
+                    leagueId: lg.league_id,
+                    week,
+                    myRosterId: mine.roster_id,
+                    myMatchupId: mine.matchup_id,
+                    myPoints: mine.points ?? 0,
+                    myStarters: mine.starters ?? [],
+                    myStartersPoints: mine.starters_points ?? [],
+                    myProjPoints,
+                    myStartersProjPoints,
+                    opponentRosterId: opponentRow?.roster_id ?? null,
+                    opponentTeamName,
+                    opponentPoints: opponentRow?.points ?? null,
+                    opponentStarters: opponentRow?.starters ?? [],
+                    opponentStartersPoints: opponentRow?.starters_points ?? [],
+                    opponentProjPoints,
+                    opponentStartersProjPoints,
+                    lastSyncedAt: new Date(),
+                  },
+                  update: {
+                    myRosterId: mine.roster_id,
+                    myMatchupId: mine.matchup_id,
+                    myPoints: mine.points ?? 0,
+                    myStarters: mine.starters ?? [],
+                    myStartersPoints: mine.starters_points ?? [],
+                    myProjPoints,
+                    myStartersProjPoints,
+                    opponentRosterId: opponentRow?.roster_id ?? null,
+                    opponentTeamName,
+                    opponentPoints: opponentRow?.points ?? null,
+                    opponentStarters: opponentRow?.starters ?? [],
+                    opponentStartersPoints: opponentRow?.starters_points ?? [],
+                    opponentProjPoints,
+                    opponentStartersProjPoints,
+                    lastSyncedAt: new Date(),
+                  },
+                }),
+              ]);
               matchupsOk += 1;
+            } else {
+              await weeklyResultsWrite;
             }
+          }
+
+          // Incremental backfill of past weeks' real results (Streak needs
+          // more than just this week) — only weeks not already in
+          // WeeklyResult, capped per sync call. A Postgres read, not a
+          // Sleeper call, so cheap to check every league every sync; the
+          // real Sleeper fetch only happens for genuinely missing weeks.
+          if (week > 1) {
+            const existingWeeks = await db.weeklyResult.findMany({
+              where: { leagueId: lg.league_id },
+              select: { week: true },
+              distinct: ["week"],
+            });
+            const existing = new Set(existingWeeks.map((w) => w.week));
+            const missing: number[] = [];
+            for (let w = 1; w < week; w++) {
+              if (!existing.has(w)) missing.push(w);
+            }
+            // Independent weeks — fetch/persist concurrently rather than
+            // one round trip at a time.
+            await Promise.all(
+              missing.slice(0, BACKFILL_WEEKS_PER_SYNC).map(async (w) => {
+                const rawPastWeek = await getMatchups(lg.league_id, w).catch(() => null);
+                if (rawPastWeek) {
+                  await persistWeeklyResults(lg.league_id, w, rawPastWeek as unknown as SleeperMatchupRow[]);
+                }
+              })
+            );
           }
 
           // Real trade/waiver/free-agent activity for this league's CURRENT

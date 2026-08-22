@@ -83,3 +83,26 @@ export function computeStanding(rosters: LeagueRosterRow[], myRosterId: number):
     totalTeams: rosters.length,
   };
 }
+
+export interface WeeklyResultRow {
+  week: number;
+  won: boolean | null;
+}
+
+// Real consecutive-result streak ("W3"/"L2") from WeeklyResult rows (every
+// team's real per-week outcome — see prisma/schema.prisma) — counts back
+// from the most recent week, stopping at the first tie/bye (won: null) or
+// a change in direction. Returns null rather than "W0" when there's
+// nothing to count yet (no synced weeks, or the most recent week was
+// unresolved).
+export function computeStreak(results: WeeklyResultRow[]): string | null {
+  const sorted = [...results].sort((a, b) => b.week - a.week);
+  if (sorted.length === 0 || sorted[0].won == null) return null;
+  const direction = sorted[0].won;
+  let count = 0;
+  for (const r of sorted) {
+    if (r.won !== direction) break;
+    count += 1;
+  }
+  return `${direction ? "W" : "L"}${count}`;
+}

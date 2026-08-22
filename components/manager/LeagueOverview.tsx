@@ -81,9 +81,11 @@ export default function LeagueOverview({
     return buildStartingSlots(rosterPositions).slice(0, ROSTER_PREVIEW_SLOTS);
   }, [roster, rosterPositions]);
 
+  const myTeamName = roster ? leagueRosters.find((r) => r.rosterId === roster.rosterId)?.teamName ?? null : null;
+
   return (
     <>
-      <LeagueIdentityBar league={league} />
+      <LeagueIdentityBar league={league} myTeamName={myTeamName} />
 
       {/* Row 1 — hero stats */}
       {(roster || showDraftCard) && (

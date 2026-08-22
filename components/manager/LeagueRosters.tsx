@@ -50,10 +50,11 @@ export default function LeagueRosters({
   }, [pmap, seasonTotals, leagueRosters, OFFENSE_POS]);
 
   const orderedTeams = useMemo(() => sortByStanding(leagueRosters), [leagueRosters]);
+  const myTeamName = leagueRosters.find((r) => r.rosterId === myRosterId)?.teamName ?? null;
 
   return (
     <>
-      <LeagueIdentityBar league={league} />
+      <LeagueIdentityBar league={league} myTeamName={myTeamName} />
 
       {pmapError && (
         <section className="sec">

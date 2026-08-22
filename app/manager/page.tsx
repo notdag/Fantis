@@ -61,7 +61,9 @@ export default async function ManagerPage() {
       // Sleeper calls (see LeagueRoster in prisma/schema.prisma). Same fetch
       // app/manager/teams/page.tsx already does, reused here for real
       // league-wide rank on Today.
-      db.leagueRoster.findMany({ select: { leagueId: true, rosterId: true, ownerId: true, players: true } }),
+      db.leagueRoster.findMany({
+        select: { leagueId: true, rosterId: true, ownerId: true, players: true, teamName: true },
+      }),
     ]);
 
   const leagueRostersByLeague: Record<string, LeagueRosterRow[]> = {};
@@ -70,6 +72,7 @@ export default async function ManagerPage() {
       rosterId: r.rosterId,
       ownerId: r.ownerId,
       players: r.players,
+      teamName: r.teamName,
     });
   }
 

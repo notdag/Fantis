@@ -176,6 +176,7 @@ function NavList({
               key={e.href}
               href={e.href}
               className={`mgrnavlink ${isActive(pathname, e.href) ? "on" : ""}`}
+              aria-label={collapsed ? e.label : undefined}
             >
               <Icon aria-hidden="true" />
               <NavLabel label={e.label} />
@@ -208,6 +209,22 @@ export default function ManagerShell({
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
+  // Tablet tier (2026-08b, 769-1100px): the rail-vs-expanded choice for
+  // NavGroup/CurrentLeagueNavGroup is a real branch in the component tree
+  // (the collapsed rail's icon button vs. the expanded label list — sub-
+  // links in the expanded branch have no icon to fall back to), so it has
+  // to be driven by an actual width check, not just CSS hiding labels.
+  // Independent of the manual `collapsed` cookie preference below.
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1100px)");
+    const update = () => setAutoCollapsed(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  const railMode = collapsed || autoCollapsed;
+
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
@@ -230,13 +247,13 @@ export default function ManagerShell({
   }
 
   return (
-    <div className={`mgrshell ${collapsed ? "mgrcollapsed" : ""}`}>
+    <div className={`mgrshell ${railMode ? "mgrcollapsed" : ""}`}>
       <aside className="mgrsidebar">
         <div className="mgrsidebarbrand">
           <div className="mark">F</div>
           <b>Fantis</b>
         </div>
-        <NavList pathname={pathname} collapsed={collapsed} leagues={leagues} />
+        <NavList pathname={pathname} collapsed={railMode} leagues={leagues} />
         <button
           type="button"
           className="mgrcollapsebtn"

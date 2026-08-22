@@ -67,7 +67,6 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <PageHead
-          title="Bye Week Planner"
           description={
             <>
               Every rostered player&rsquo;s upcoming bye, across every in-season league — bench
