@@ -138,6 +138,7 @@ export default function ManagerDashboard({
   const [breakdownTierFilter, setBreakdownTierFilter] = useState<"ALL" | PlayoffTierKey>("ALL");
   const [showAllBreakdown, setShowAllBreakdown] = useState(false);
   const [exposureView, setExposureView] = useState<"map" | "table">("map");
+  const [exposureQuery, setExposureQuery] = useState("");
   const [exposurePos, setExposurePos] = useState<"ALL" | "QB" | "RB" | "WR" | "TE">("ALL");
   const [exposureStatus, setExposureStatus] = useState<"ALL" | "INJURED" | "Questionable" | "Doubtful" | "Out" | "IR">("ALL");
   const [exposureLevel, setExposureLevel] = useState<"ALL" | "LOW" | "HIGH" | "OVER">("ALL");
@@ -434,7 +435,9 @@ export default function ManagerDashboard({
   // Documented, fixed thresholds, not fabricated significance.
   const exposureFiltered = useMemo(() => {
     const total = exposure.totalLeagues || 1;
+    const q = exposureQuery.trim().toLowerCase();
     return exposure.rows.filter((row) => {
+      if (q && !row.name.toLowerCase().includes(q)) return false;
       if (exposurePos !== "ALL" && row.pos !== exposurePos) return false;
       if (exposureStatus === "INJURED" && !row.inj) return false;
       if (exposureStatus !== "ALL" && exposureStatus !== "INJURED" && row.inj !== exposureStatus) return false;
@@ -444,7 +447,7 @@ export default function ManagerDashboard({
       if (exposureLevel === "OVER" && pct < 0.6) return false;
       return true;
     });
-  }, [exposure, exposurePos, exposureStatus, exposureLevel]);
+  }, [exposure, exposureQuery, exposurePos, exposureStatus, exposureLevel]);
 
   const exposureStatusCounts = useMemo(() => {
     const counts = { injured: 0, Questionable: 0, Doubtful: 0, Out: 0, IR: 0 } as Record<string, number>;
@@ -750,6 +753,13 @@ export default function ManagerDashboard({
               style={{ marginBottom: 8 }}
             />
             <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
+              <input
+                className="input"
+                placeholder="Search players…"
+                value={exposureQuery}
+                onChange={(e) => setExposureQuery(e.target.value)}
+                style={{ maxWidth: 220 }}
+              />
               <button
                 className={`chip-filter ${exposurePos === "ALL" ? "on" : ""}`}
                 onClick={() => setExposurePos("ALL")}
