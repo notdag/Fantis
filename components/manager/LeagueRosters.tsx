@@ -5,6 +5,7 @@ import { type ManagedLeague } from "@/lib/manager";
 import { posChipStyle } from "@/lib/players";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import { PlayerAvatar } from "./Avatar";
 import LeagueIdentityBar from "./LeagueIdentityBar";
@@ -27,6 +28,7 @@ export default function LeagueRosters({
   myRosterId: number | null;
 }) {
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
+  const fcValues = useFantasyCalcValues();
 
   const seasonTotals = useSeasonTotals();
   const OFFENSE_POS = useMemo(() => new Set(["QB", "RB", "WR", "TE"]), []);
@@ -108,6 +110,7 @@ export default function LeagueRosters({
                 ) : (
                   players.map((id) => {
                     const entry = pmap?.[id];
+                    const fc = entry && fcValues ? fantasyCalcValue(fcValues, { name: entry.n, pos: entry.p }) : 0;
                     return (
                       <TableRow key={id}>
                         <PlayerAvatar playerId={id} pos={entry?.p} size={26} />
@@ -118,6 +121,7 @@ export default function LeagueRosters({
                           </span>
                         )}
                         <span className="portmeta">{entry?.t ?? ""}</span>
+                        <span className="portmeta" title="FantasyCalc value">FC {fc > 0 ? Math.round(fc) : "—"}</span>
                       </TableRow>
                     );
                   })
@@ -132,15 +136,19 @@ export default function LeagueRosters({
         <section className="sec">
           <SectionHead title="Best available in this league" right="real season points · not on any roster here" />
           <DataTable>
-            {bestAvailable.map((p) => (
-              <TableRow key={p.id}>
-                <PlayerAvatar playerId={p.id} pos={p.pos} size={26} />
-                <span className="tname" style={{ flex: 1 }}>{p.name}</span>
-                <span className="pos" style={posChipStyle(p.pos)}>{p.pos}</span>
-                <span className="portmeta">{p.team}</span>
-                <span className="portvalue">{Math.round(p.pts)} pts</span>
-              </TableRow>
-            ))}
+            {bestAvailable.map((p) => {
+              const fc = fcValues ? fantasyCalcValue(fcValues, { name: p.name, pos: p.pos }) : 0;
+              return (
+                <TableRow key={p.id}>
+                  <PlayerAvatar playerId={p.id} pos={p.pos} size={26} />
+                  <span className="tname" style={{ flex: 1 }}>{p.name}</span>
+                  <span className="pos" style={posChipStyle(p.pos)}>{p.pos}</span>
+                  <span className="portmeta">{p.team}</span>
+                  <span className="portmeta" title="FantasyCalc value">FC {fc > 0 ? Math.round(fc) : "—"}</span>
+                  <span className="portvalue">{Math.round(p.pts)} pts</span>
+                </TableRow>
+              );
+            })}
           </DataTable>
         </section>
       )}

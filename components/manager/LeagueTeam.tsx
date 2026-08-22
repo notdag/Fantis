@@ -5,6 +5,7 @@ import { formatRelative, type ManagedLeague, type ManagedRoster } from "@/lib/ma
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { useFantasyCalcValues, fantasyCalcValue, type FantasyCalcMaps } from "@/lib/fantasyCalc";
 import { PlayerAvatar } from "./Avatar";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { SectionHead } from "./PageHead";
@@ -21,11 +22,13 @@ function RosterSection({
   roster,
   pmap,
   pmapLoading,
+  fcValues,
   rosterPositions,
 }: {
   roster: ManagedRoster;
   pmap: PlayerMap | null;
   pmapLoading: boolean;
+  fcValues: FantasyCalcMaps | null;
   rosterPositions: string[];
 }) {
   const slots = buildStartingSlots(rosterPositions);
@@ -44,6 +47,7 @@ function RosterSection({
         const playerId = roster.starters[i];
         const empty = !playerId || playerId === "0";
         const label = empty ? null : playerLabel(pmap, playerId);
+        const fc = label && fcValues ? fantasyCalcValue(fcValues, { name: label.name, pos: label.pos }) : 0;
         return (
           <TableRow key={slot.key}>
             <span className="portmeta" style={{ minWidth: 44 }}>
@@ -67,6 +71,7 @@ function RosterSection({
                     {label!.inj}
                   </span>
                 )}
+                <span className="portmeta" title="FantasyCalc value">FC {fc > 0 ? Math.round(fc) : "—"}</span>
               </>
             )}
           </TableRow>
@@ -107,6 +112,7 @@ export default function LeagueTeam({
   }, []);
 
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
+  const fcValues = useFantasyCalcValues();
 
   return (
     <>
@@ -125,7 +131,7 @@ export default function LeagueTeam({
               </button>
             </p>
           ) : (
-            <RosterSection roster={roster} pmap={pmap} pmapLoading={pmapLoading} rosterPositions={rosterPositions} />
+            <RosterSection roster={roster} pmap={pmap} pmapLoading={pmapLoading} fcValues={fcValues} rosterPositions={rosterPositions} />
           )}
         </section>
       ) : (

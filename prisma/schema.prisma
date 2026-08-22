@@ -70,8 +70,8 @@ model LinkedLeague {
   id         String   @id @default(cuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider   String   // "sleeper" | "yahoo" | "espn"
-  externalId String   // the league's id on that platform
+  provider   String // "sleeper" | "yahoo" | "espn"
+  externalId String // the league's id on that platform
   name       String
   season     String
   createdAt  DateTime @default(now())
@@ -87,7 +87,7 @@ model Subscription {
   stripeCustomerId     String?   @unique
   stripeSubscriptionId String?   @unique
   status               String    @default("inactive") // active | canceled | past_due | inactive
-  tier                 String    @default("free")      // free | premium
+  tier                 String    @default("free") // free | premium
   currentPeriodEnd     DateTime?
   updatedAt            DateTime  @updatedAt
 }
@@ -137,35 +137,35 @@ model SleeperAccount {
 
 // One Sleeper league, keyed by Sleeper's own league_id directly.
 model League {
-  id           String         @id // Sleeper league_id
-  accountId    String
-  account      SleeperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  name         String
-  season       String // current season only in Phase 1
-  totalRosters Int
-  status       String // Sleeper's own value verbatim: pre_draft | drafting | in_season | complete
-  sport        String         @default("nfl")
+  id            String              @id // Sleeper league_id
+  accountId     String
+  account       SleeperAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name          String
+  season        String // current season only in Phase 1
+  totalRosters  Int
+  status        String // Sleeper's own value verbatim: pre_draft | drafting | in_season | complete
+  sport         String              @default("nfl")
   // Full raw GET /league/{id} response (Sleeper's settings sub-object,
   // scoring_settings, roster_positions, draft_id, avatar, etc). Not
   // normalized into columns — large and variable; every reader accesses a
   // sub-field defensively. Null only transiently between the initial
   // "connect" summary upsert and that league's first detail-sync pass.
-  settings     Json?
+  settings      Json?
   // Fantis's own data, not Sleeper's — a free-text label the owner sets to
   // group leagues that share nothing Sleeper exposes (buy-in tier, which
   // friend group, dynasty vs redraft naming isn't a real field). Never
   // written by sync; only by the owner via the group-editing UI.
-  group        String?
-  lastSyncedAt DateTime?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  roster       Roster?
+  group         String?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  roster        Roster?
   leagueRosters LeagueRoster[]
-  matchups     Matchup[]
-  drafts       Draft[]
-  alerts       Alert[]
-  actions      Action[]
-  transactions LeagueTransaction[]
+  matchups      Matchup[]
+  drafts        Draft[]
+  alerts        Alert[]
+  actions       Action[]
+  transactions  LeagueTransaction[]
 
   @@index([accountId])
 }
@@ -173,24 +173,24 @@ model League {
 // One sync attempt (today: the manual "Sync now" button; same code path a
 // future cron would call). accountId null = ran across every account.
 model SyncRun {
-  id            String          @id @default(cuid())
-  accountId     String?
-  account       SleeperAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  startedAt     DateTime        @default(now())
-  finishedAt    DateTime?
-  status        String          @default("running") // running | success | partial_failure | failed
-  leaguesSeen   Int             @default(0)
-  leaguesOk     Int             @default(0)
-  leaguesFailed Int             @default(0)
+  id             String          @id @default(cuid())
+  accountId      String?
+  account        SleeperAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  startedAt      DateTime        @default(now())
+  finishedAt     DateTime?
+  status         String          @default("running") // running | success | partial_failure | failed
+  leaguesSeen    Int             @default(0)
+  leaguesOk      Int             @default(0)
+  leaguesFailed  Int             @default(0)
   // Per-step counts, not just per-league pass/fail — a league can succeed
   // overall while its matchup/draft sub-fetch was legitimately skipped
   // (pre-draft has no matchup; no draft_id means no draft). These make that
   // visible instead of collapsing everything into one ok/fail number.
-  rostersOk     Int             @default(0)
-  matchupsOk    Int             @default(0)
-  draftsOk      Int             @default(0)
-  transactionsOk Int            @default(0)
-  errors        Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
+  rostersOk      Int             @default(0)
+  matchupsOk     Int             @default(0)
+  draftsOk       Int             @default(0)
+  transactionsOk Int             @default(0)
+  errors         Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
 
   @@index([accountId])
   @@index([startedAt])
@@ -210,7 +210,7 @@ model Roster {
   rosterId       Int // Sleeper's roster_id within this league
   starters       String[] // "0" = Sleeper's real empty-slot placeholder
   players        String[]
-  reserve        String[] @default([]) // real Sleeper IR/reserve slot — confirmed real field, distinct from players/starters
+  reserve        String[]  @default([]) // real Sleeper IR/reserve slot — confirmed real field, distinct from players/starters
   waiverPosition Int?
   faabUsed       Int?
   wins           Int       @default(0)
@@ -240,16 +240,16 @@ model Roster {
 // put display names in the rosters response itself; null if unresolved,
 // never fabricated (LeagueDetail.tsx falls back to "Team {rosterId}").
 model LeagueRoster {
-  id          String  @id @default(cuid())
+  id          String   @id @default(cuid())
   leagueId    String
-  league      League  @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  league      League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
   rosterId    Int // Sleeper's roster_id within this league
   ownerId     String? // null = unclaimed team, same meaning as elsewhere
   players     String[]
   starters    String[]
-  wins        Int     @default(0)
-  losses      Int     @default(0)
-  ties        Int     @default(0)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  ties        Int      @default(0)
   fpts        Float?
   fptsAgainst Float?
   teamName    String?
@@ -262,21 +262,25 @@ model LeagueRoster {
 // for status "in_season" (pre_draft/drafting leagues have no real matchup
 // yet).
 model Matchup {
-  id                     String    @id @default(cuid())
-  leagueId               String
-  league                 League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
-  week                   Int
-  myRosterId             Int
-  myMatchupId            Int
-  myPoints               Float
-  myStarters             String[] @default([])
-  myStartersPoints       Float[]  @default([])
-  opponentRosterId       Int?
-  opponentTeamName       String?
-  opponentPoints         Float?
-  opponentStarters       String[] @default([])
-  opponentStartersPoints Float[]  @default([])
-  lastSyncedAt           DateTime?
+  id                         String    @id @default(cuid())
+  leagueId                   String
+  league                     League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week                       Int
+  myRosterId                 Int
+  myMatchupId                Int
+  myPoints                   Float
+  myStarters                 String[]  @default([])
+  myStartersPoints           Float[]   @default([])
+  myProjPoints               Float?
+  myStartersProjPoints       Float[]   @default([])
+  opponentRosterId           Int?
+  opponentTeamName           String?
+  opponentPoints             Float?
+  opponentStarters           String[]  @default([])
+  opponentStartersPoints     Float[]   @default([])
+  opponentProjPoints         Float?
+  opponentStartersProjPoints Float[]   @default([])
+  lastSyncedAt               DateTime?
 
   @@unique([leagueId, week])
   @@index([leagueId])

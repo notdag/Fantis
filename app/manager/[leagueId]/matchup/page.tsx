@@ -60,10 +60,14 @@ export default async function MatchupPage({
       myPoints={matchup.myPoints}
       myStarters={matchup.myStarters}
       myStartersPoints={matchup.myStartersPoints}
+      myProjPoints={matchup.myProjPoints}
+      myStartersProjPoints={matchup.myStartersProjPoints}
       opponentTeamName={matchup.opponentTeamName}
       opponentPoints={matchup.opponentPoints}
       opponentStarters={matchup.opponentStarters}
       opponentStartersPoints={matchup.opponentStartersPoints}
+      opponentProjPoints={matchup.opponentProjPoints}
+      opponentStartersProjPoints={matchup.opponentStartersProjPoints}
       rosterPositions={rosterPositionsArr}
     />
   );

@@ -7,6 +7,7 @@ import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
 import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
+import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { sleeperId, stripSuffix, useSleeperIdMaps } from "@/lib/playerIdMap";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { useGameContext } from "@/lib/useGameContext";
@@ -78,6 +79,7 @@ export default function Rankings() {
 
   const [mvpOdds, setMvpOdds] = useState<Record<string, MvpOddsEntry>>({});
   const [playerProps, setPlayerProps] = useState<Record<string, PropLine[]>>({});
+  const fcValues = useFantasyCalcValues();
 
   const {
     projections,
@@ -597,6 +599,12 @@ export default function Rankings() {
                 </div>
               </>
             )}
+            {fcValues && fantasyCalcValue(fcValues, selectedPlayer) > 0 && (
+              <div className="prow">
+                <span className="plabel">FantasyCalc Value</span>
+                <span className="pval">{Math.round(fantasyCalcValue(fcValues, selectedPlayer))}</span>
+              </div>
+            )}
             {selectedProps && selectedProps.length > 0 && (
               <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
                 <span className="plabel">Player Props</span>
@@ -624,7 +632,10 @@ export default function Rankings() {
               from the real moneyline, the same technique used for the Anytime TD prop).
               Scoring Environment is the team&rsquo;s own implied total (O/U &plusmn; spread,
               split in half) &mdash; standard sportsbook math on the same real numbers above,
-              not a new data source. Not investment or betting advice.
+              not a new data source. FantasyCalc Value is a real, independent trade-value
+              number from fantasycalc.com (redraft, 1QB, PPR), a second opinion alongside
+              Fantis&rsquo; own tier order, not a source we compute or control. Not investment
+              or betting advice.
             </div>
           </div>
           </>

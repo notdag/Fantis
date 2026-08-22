@@ -17,12 +17,13 @@ import {
   getDraft,
   getLeagueUsers,
   getPlayers,
+  getProjections,
   getTransactions,
 } from "./sleeper";
 import { computeAlerts } from "./managerAlerts";
 import { db } from "./db";
 import { Prisma } from "../generated/prisma/client";
-import type { PlayerMap, SleeperMatchupRow, SleeperDraftRaw } from "./types";
+import type { PlayerMap, ProjectionMap, SleeperMatchupRow, SleeperDraftRaw } from "./types";
 
 // No documented Sleeper rate limit exists anywhere to tune against — this
 // is a conservative, explicit, tunable constant, not a measured number.
@@ -111,6 +112,18 @@ export async function syncAccount(
     pmap = await getPlayers();
   } catch {
     pmap = null;
+  }
+
+  // Same reasoning as pmap above — fetched once per sync call, not per
+  // league, since Sleeper's weekly projections apply to every league
+  // equally (they're per-player, not per-league). A failure here doesn't
+  // fail the run; matchups just sync with real scores and no projections
+  // for this pass.
+  let projMap: ProjectionMap | null = null;
+  try {
+    projMap = await getProjections(season, week);
+  } catch {
+    projMap = null;
   }
 
   const errors: SyncError[] = [];
@@ -248,6 +261,21 @@ export async function syncAccount(
                   opponentTeamName = nameByOwnerId.get(opponentRoster.owner_id) ?? null;
                 }
               }
+
+              // Real Sleeper weekly projections (same endpoint/field used
+              // for season-total trade value elsewhere), aligned by index
+              // to each side's starters array — empty slots ("0"/missing)
+              // project as 0, same convention the roster UI already uses
+              // for empty-slot detection.
+              const projFor = (id: string | undefined) =>
+                !id || id === "0" ? 0 : (projMap?.[id]?.pts_ppr ?? 0);
+              const myStartersProjPoints = (mine.starters ?? []).map(projFor);
+              const myProjPoints = myStartersProjPoints.reduce((a, b) => a + b, 0);
+              const opponentStartersProjPoints = (opponentRow?.starters ?? []).map(projFor);
+              const opponentProjPoints = opponentRow
+                ? opponentStartersProjPoints.reduce((a, b) => a + b, 0)
+                : null;
+
               await db.matchup.upsert({
                 where: { leagueId_week: { leagueId: lg.league_id, week } },
                 create: {
@@ -258,11 +286,15 @@ export async function syncAccount(
                   myPoints: mine.points ?? 0,
                   myStarters: mine.starters ?? [],
                   myStartersPoints: mine.starters_points ?? [],
+                  myProjPoints,
+                  myStartersProjPoints,
                   opponentRosterId: opponentRow?.roster_id ?? null,
                   opponentTeamName,
                   opponentPoints: opponentRow?.points ?? null,
                   opponentStarters: opponentRow?.starters ?? [],
                   opponentStartersPoints: opponentRow?.starters_points ?? [],
+                  opponentProjPoints,
+                  opponentStartersProjPoints,
                   lastSyncedAt: new Date(),
                 },
                 update: {
@@ -271,11 +303,15 @@ export async function syncAccount(
                   myPoints: mine.points ?? 0,
                   myStarters: mine.starters ?? [],
                   myStartersPoints: mine.starters_points ?? [],
+                  myProjPoints,
+                  myStartersProjPoints,
                   opponentRosterId: opponentRow?.roster_id ?? null,
                   opponentTeamName,
                   opponentPoints: opponentRow?.points ?? null,
                   opponentStarters: opponentRow?.starters ?? [],
                   opponentStartersPoints: opponentRow?.starters_points ?? [],
+                  opponentProjPoints,
+                  opponentStartersProjPoints,
                   lastSyncedAt: new Date(),
                 },
               });

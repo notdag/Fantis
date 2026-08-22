@@ -109,7 +109,22 @@ not the final architecture.
   to tell them apart. Receptions is a defined stat in their taxonomy but
   wasn't populated as a live market in testing — don't wire it up assuming
   it's there without checking again.
-- All three are read-only informational data. Rankings values are still our
+- **FantasyCalc** (fantasycalc.com) — a real, independent trade-value number
+  per player, added at the user's explicit request. Genuinely public and
+  keyless (no `SHARPAPI_API_KEY`-style secret needed), but still routed
+  server-side via `app/api/fantasycalc-values/route.ts` (12h cache) rather
+  than called directly like Sleeper — to sidestep CORS and avoid hammering
+  a free, keyless endpoint. One fixed settings snapshot (redraft, 1 QB,
+  PPR, 12-team) is used everywhere regardless of a given league's actual
+  settings — a real, sourced number, just not custom-fit per league.
+  `lib/fantasyCalc.ts`'s `useFantasyCalcValues()`/`fantasyCalcValue()` are
+  the only way to read it; used as a second, clearly-labeled opinion
+  alongside Fantis's own numbers — never blended into them. Current
+  consumers: Portfolio's "FC power rank" (`lib/usePortfolio.ts`), Trade's
+  second-opinion values (`components/Trade.tsx`), the Rankings detail panel,
+  the player card's header badge + General tab, and the League
+  Rosters/Team pages under `/manager`.
+- All four are read-only informational data. Rankings values are still our
   own starter data — see "Known limitations" below.
 
 ## Trade value methodology

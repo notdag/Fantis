@@ -11,8 +11,10 @@ export interface MatchupCenterRow {
   leagueName: string;
   week: number;
   myPoints: number;
+  myProjPoints: number | null;
   opponentTeamName: string | null;
   opponentPoints: number | null;
+  opponentProjPoints: number | null;
 }
 
 type SortKey = "margin" | "name" | "myPoints" | "opponentPoints";
@@ -30,9 +32,10 @@ function Margin({ value }: { value: number | null }) {
   );
 }
 
-// Real, in-progress point totals only — never a win probability or
-// projection. "Leading"/"Trailing" describes the score as synced right
-// now, not a prediction of the final result.
+// Real, in-progress point totals, plus Sleeper's own real weekly
+// projection shown as a muted secondary line — never a Fantis-computed
+// win probability or prediction. "Leading"/"Trailing" describes the score
+// as synced right now, not a forecast of the final result.
 export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
   const [sortBy, setSortBy] = useState<SortKey>("margin");
   const [trailingOnly, setTrailingOnly] = useState(false);
@@ -94,7 +97,8 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
             <>
               Every league&rsquo;s current matchup in one place, sorted closest-first by default —
               instead of clicking into each league to see how close it is. Scores are live,
-              in-progress totals as of the last sync, not a prediction of who wins.
+              in-progress totals as of the last sync; the smaller proj line is Sleeper&rsquo;s own
+              weekly projection, not a Fantis-computed prediction of who wins.
             </>
           }
         />
@@ -139,10 +143,18 @@ export default function MatchupCenter({ rows }: { rows: MatchupCenterRow[] }) {
           {sorted.map((r) => (
             <TableRow as="link" href={`/manager/${r.leagueId}/matchup`} key={r.leagueId}>
               <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
-              <span className="portmeta" style={{ minWidth: 130, textAlign: "right" }}>
-                {r.myPoints.toFixed(1)} vs{" "}
-                {r.opponentPoints != null ? r.opponentPoints.toFixed(1) : "—"}
-                {r.opponentTeamName ? ` (${r.opponentTeamName})` : ""}
+              <span style={{ minWidth: 130, textAlign: "right" }}>
+                <span className="portmeta" style={{ display: "block" }}>
+                  {r.myPoints.toFixed(1)} vs{" "}
+                  {r.opponentPoints != null ? r.opponentPoints.toFixed(1) : "—"}
+                  {r.opponentTeamName ? ` (${r.opponentTeamName})` : ""}
+                </span>
+                {(r.myProjPoints != null || r.opponentProjPoints != null) && (
+                  <span className="portmeta" style={{ fontSize: 11, color: "var(--dim)" }}>
+                    proj {r.myProjPoints != null ? r.myProjPoints.toFixed(1) : "—"} vs{" "}
+                    {r.opponentProjPoints != null ? r.opponentProjPoints.toFixed(1) : "—"}
+                  </span>
+                )}
               </span>
               <Margin value={r.margin} />
             </TableRow>

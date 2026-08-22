@@ -15,6 +15,7 @@ import { getInjuryReports, type InjuryReport } from "@/lib/espnInjuries";
 import { getSeasonSchedule } from "@/lib/espnGames";
 import { getSeasonInjuryReportsByEspnId, type WeeklyInjuryStatus } from "@/lib/nflverseInjuries";
 import { useProjections } from "@/lib/useProjections";
+import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import type { PlayerMapEntry } from "@/lib/types";
 
 const CHART_SEASONS = HISTORICAL_SEASONS;
@@ -152,6 +153,8 @@ export default function PlayerCard({
   // number in the app already uses, just surfaced here too.
   const { projections, week: projWeek } = useProjections();
   const weekProj = projections?.[id]?.pts_ppr ?? null;
+  const fcValues = useFantasyCalcValues();
+  const fcValue = fcValues ? fantasyCalcValue(fcValues, { name: entry.n, pos: entry.p }) : 0;
 
   // Real injury report — ESPN's injuries feed carries the actual RotoWire
   // status blurb + return-date estimate for currently-injured players (see
@@ -445,6 +448,10 @@ export default function PlayerCard({
                 {weekProj != null ? weekProj.toFixed(1) : "—"}
               </span>
             </div>
+            <div className="statbadge terminal" title="Real, independent trade value from fantasycalc.com (redraft, 1QB, PPR)">
+              <b>FC Value</b>
+              <span className="statbadgeval">{fcValue > 0 ? Math.round(fcValue) : "—"}</span>
+            </div>
           </div>
         </div>
 
@@ -482,6 +489,10 @@ export default function PlayerCard({
                 <span className="pval" style={{ color: "var(--amber)" }}>
                   {value != null ? value.toFixed(1) : "—"}
                 </span>
+              </div>
+              <div title="Real, independent trade value from fantasycalc.com (redraft, 1QB, PPR) — a second opinion, not blended into Fantis' own Value above.">
+                <span className="plabel">FC Value</span>
+                <span className="pval">{fcValue > 0 ? Math.round(fcValue) : "—"}</span>
               </div>
               <div title={`Avg PPR pts/game in ${chartSeason} games at a normal snap share (excludes injury/bench-share dips) — see the General hint below.`}>
                 <span className="plabel">Adj PPG &rsquo;{chartSeason.slice(2)}</span>
@@ -574,7 +585,9 @@ export default function PlayerCard({
                 receiving yards &amp; receiving TDs. RZ Opp/Gm is real red-zone
                 opportunity per game (scoring-range volume, not yardage) &mdash; pass
                 attempts inside the 20 for QBs, rush attempts + red-zone targets for
-                RBs, red-zone targets for WR/TE. Not investment or betting advice.
+                RBs, red-zone targets for WR/TE. FC Value is a real, independent number
+                from fantasycalc.com (redraft, 1QB, PPR) &mdash; a second opinion, not
+                blended into Fantis&rsquo; own Value. Not investment or betting advice.
               </p>
             </div>
           </>

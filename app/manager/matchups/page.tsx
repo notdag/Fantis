@@ -42,8 +42,10 @@ export default async function MatchupsPage() {
         leagueName: lg.name,
         week: m.week,
         myPoints: m.myPoints,
+        myProjPoints: m.myProjPoints,
         opponentTeamName: m.opponentTeamName,
         opponentPoints: m.opponentPoints,
+        opponentProjPoints: m.opponentProjPoints,
       };
     });
 

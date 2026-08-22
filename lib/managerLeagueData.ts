@@ -81,10 +81,14 @@ export async function getLeagueDetailData(leagueId: string): Promise<LeagueDetai
         myPoints: matchupRow.myPoints,
         myStarters: matchupRow.myStarters,
         myStartersPoints: matchupRow.myStartersPoints,
+        myProjPoints: matchupRow.myProjPoints,
+        myStartersProjPoints: matchupRow.myStartersProjPoints,
         opponentTeamName: matchupRow.opponentTeamName,
         opponentPoints: matchupRow.opponentPoints,
         opponentStarters: matchupRow.opponentStarters,
         opponentStartersPoints: matchupRow.opponentStartersPoints,
+        opponentProjPoints: matchupRow.opponentProjPoints,
+        opponentStartersProjPoints: matchupRow.opponentStartersProjPoints,
       }
     : null;
 

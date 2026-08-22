@@ -11,11 +11,13 @@ import type { PlayerMap } from "@/lib/types";
 function Side({
   playerId,
   points,
+  projected,
   pmap,
   align,
 }: {
   playerId: string | undefined;
   points: number | undefined;
+  projected: number | undefined;
   pmap: PlayerMap | null;
   align: "left" | "right";
 }) {
@@ -39,7 +41,12 @@ function Side({
           </span>
         )}
       </div>
-      <span className="portvalue" style={{ minWidth: 42 }}>{points != null ? points.toFixed(1) : "—"}</span>
+      <div style={{ minWidth: 42, textAlign: "center" }}>
+        <span className="portvalue" style={{ display: "block" }}>{points != null ? points.toFixed(1) : "—"}</span>
+        {projected != null && (
+          <span className="portmeta" style={{ fontSize: 11 }}>proj {projected.toFixed(1)}</span>
+        )}
+      </div>
     </>
   );
   return (
@@ -66,10 +73,14 @@ export default function MatchupDetail({
   myPoints,
   myStarters,
   myStartersPoints,
+  myProjPoints,
+  myStartersProjPoints,
   opponentTeamName,
   opponentPoints,
   opponentStarters,
   opponentStartersPoints,
+  opponentProjPoints,
+  opponentStartersProjPoints,
   rosterPositions,
 }: {
   leagueId: string;
@@ -78,10 +89,14 @@ export default function MatchupDetail({
   myPoints: number;
   myStarters: string[];
   myStartersPoints: number[];
+  myProjPoints: number | null;
+  myStartersProjPoints: number[];
   opponentTeamName: string | null;
   opponentPoints: number | null;
   opponentStarters: string[];
   opponentStartersPoints: number[];
+  opponentProjPoints: number | null;
+  opponentStartersProjPoints: number[];
   rosterPositions: string[];
 }) {
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
@@ -108,6 +123,9 @@ export default function MatchupDetail({
             <div style={{ fontSize: 32, fontWeight: 800, color: leading != null && leading > 0 ? "var(--mint)" : "var(--bone)" }}>
               {myPoints.toFixed(1)}
             </div>
+            {myProjPoints != null && (
+              <div className="hint" style={{ margin: 0 }}>proj {myProjPoints.toFixed(1)}</div>
+            )}
           </div>
           <div className="hint" style={{ margin: 0 }}>vs</div>
           <div style={{ textAlign: "center" }}>
@@ -115,6 +133,9 @@ export default function MatchupDetail({
             <div style={{ fontSize: 32, fontWeight: 800, color: leading != null && leading < 0 ? "var(--mint)" : "var(--bone)" }}>
               {opponentPoints != null ? opponentPoints.toFixed(1) : "—"}
             </div>
+            {opponentProjPoints != null && (
+              <div className="hint" style={{ margin: 0 }}>proj {opponentProjPoints.toFixed(1)}</div>
+            )}
           </div>
         </div>
       </section>
@@ -139,9 +160,21 @@ export default function MatchupDetail({
               <>
                 {slots.map((slot, i) => (
                   <div className="mgrrow static" key={slot.key}>
-                    <Side playerId={myStarters[i]} points={myStartersPoints[i]} pmap={pmap} align="left" />
+                    <Side
+                      playerId={myStarters[i]}
+                      points={myStartersPoints[i]}
+                      projected={myStartersProjPoints[i]}
+                      pmap={pmap}
+                      align="left"
+                    />
                     <span className="portmeta" style={{ minWidth: 44, textAlign: "center" }}>{slot.code}</span>
-                    <Side playerId={opponentStarters[i]} points={opponentStartersPoints[i]} pmap={pmap} align="right" />
+                    <Side
+                      playerId={opponentStarters[i]}
+                      points={opponentStartersPoints[i]}
+                      projected={opponentStartersProjPoints[i]}
+                      pmap={pmap}
+                      align="right"
+                    />
                   </div>
                 ))}
                 {slots.length === 0 && <p className="hint" style={{ padding: 16 }}>No roster format synced for this league yet.</p>}
@@ -151,7 +184,8 @@ export default function MatchupDetail({
         )}
         <p className="hint" style={{ marginTop: 10 }}>
           Points shown are real, from Sleeper&rsquo;s own weekly scoring — 0.0 before kickoff, live
-          once games start.
+          once games start. Proj figures are Sleeper&rsquo;s own weekly projection (the same feed
+          used for season trade value elsewhere in the app), not a Fantis-computed estimate.
         </p>
       </section>
     </>

@@ -68,10 +68,14 @@ export interface ManagedMatchup {
   myPoints: number;
   myStarters: string[];
   myStartersPoints: number[];
+  myProjPoints: number | null;
+  myStartersProjPoints: number[];
   opponentTeamName: string | null;
   opponentPoints: number | null;
   opponentStarters: string[];
   opponentStartersPoints: number[];
+  opponentProjPoints: number | null;
+  opponentStartersProjPoints: number[];
 }
 
 export interface ManagedDraft {
