@@ -12,17 +12,21 @@ import {
   getUser,
 } from "@/lib/sleeper";
 import type { LeagueBundle, PlayerMap, SleeperLeague, Team } from "@/lib/types";
+import { posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import LeagueView from "@/components/LeagueView";
 import TeamHub from "@/components/TeamHub";
-import SuggestedTrades from "@/components/SuggestedTrades";
 import Rankings from "@/components/Rankings";
 import Trade from "@/components/Trade";
 import StartSit from "@/components/StartSit";
 import WaiverWire from "@/components/WaiverWire";
+import Portfolio from "@/components/Portfolio";
+import PixelLoader from "@/components/PixelLoader";
 
-type Tab = "leagues" | "rankings" | "trade" | "startsit" | "waivers";
+type Tab = "leagues" | "rankings" | "trade" | "startsit" | "portfolio";
 
 export default function FantisApp() {
+  const PLAYERS = usePlayers();
   const [tab, setTab] = useState<Tab>("leagues");
   const [username, setUsername] = useState("");
   const [season, setSeason] = useState("2026");
@@ -128,7 +132,7 @@ export default function FantisApp() {
                 ["rankings", "Rankings"],
                 ["trade", "Trade"],
                 ["startsit", "Start/Sit"],
-                ["waivers", "Waivers"],
+                ["portfolio", "Portfolio"],
               ] as [Tab, string][]
             ).map(([k, l]) => (
               <button
@@ -146,60 +150,65 @@ export default function FantisApp() {
           <>
             {!sel && (
               <section className="hero">
-                <span className="eyebrow">
-                  <span className="dot" /> Link your league in 60 seconds
-                </span>
-                <h1 className="big">
-                  Win your <span>fantasy</span>
-                  <br />
-                  league.
-                </h1>
-                <p className="sub">
-                  Rankings, rosters, standings and a trade calculator — synced live
-                  from your real league. Built for Fantis.
-                </p>
-                <div className="card sync">
-                  <div className="field">
-                    <input
-                      className="input"
-                      placeholder="Sleeper username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && sync()}
-                    />
-                    <select
-                      className="select"
-                      value={season}
-                      onChange={(e) => setSeason(e.target.value)}
-                    >
-                      {SEASONS.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <button className="btn" onClick={sync} disabled={loading}>
-                      {loading ? (
-                        <>
-                          <span className="spin" />
-                          Syncing
-                        </>
-                      ) : (
-                        "Sync league"
-                      )}
-                    </button>
-                  </div>
-                  <div className="plat">
-                    <span className="chip live">● Sleeper — live</span>
-                    <span className="chip">ESPN — coming soon</span>
-                    <span className="chip">Yahoo — coming soon</span>
-                  </div>
-                  {error && <div className="err">{error}</div>}
-                  <div className="hint">
-                    Uses Sleeper&rsquo;s public API. No password needed — just your
-                    username.
+                <div className="herobanner">
+                  <h1 className="big">
+                    Win your <span>fantasy</span>
+                    <br />
+                    league.
+                  </h1>
+                  <p className="sub">
+                    Rankings, rosters, standings and a trade calculator — synced live
+                    from your real league. Built for Fantis.
+                  </p>
+                  <div className="card sync">
+                    <div className="field">
+                      <input
+                        className="input"
+                        placeholder="Sleeper username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && sync()}
+                      />
+                      <select
+                        className="select"
+                        value={season}
+                        onChange={(e) => setSeason(e.target.value)}
+                      >
+                        {SEASONS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                      <button className="btn" onClick={sync} disabled={loading}>
+                        {loading ? <PixelLoader label="Syncing" tone="onAccent" /> : "Sync league"}
+                      </button>
+                    </div>
+                    <div className="plat">
+                      <span className="chip live">
+                        <span className="dot" /> Sleeper — live
+                      </span>
+                      <span className="chip">ESPN — coming soon</span>
+                      <span className="chip">Yahoo — coming soon</span>
+                    </div>
+                    {error && <div className="err">{error}</div>}
+                    <div className="hint">
+                      Uses Sleeper&rsquo;s public API — no password, ~60 seconds.
+                    </div>
                   </div>
                 </div>
+                <button className="proof" onClick={() => setTab("rankings")}>
+                  <span className="prooflabel">Real rankings, right now</span>
+                  <span className="proofplayers">
+                    {PLAYERS.slice(0, 4).map((p) => (
+                      <span className="proofpl" key={p.name} style={posChipStyle(p.pos)}>
+                        {p.pos}
+                        {p.posRank} {p.name}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="proofgo">See full board →</span>
+                </button>
               </section>
             )}
 
@@ -231,8 +240,10 @@ export default function FantisApp() {
             {sel && (
               <>
                 <TeamHub bundle={sel} myUserId={myUserId} onNavigate={setTab} />
-                <SuggestedTrades bundle={sel} myUserId={myUserId} onNavigate={setTab} />
                 <LeagueView bundle={sel} myUserId={myUserId} onBack={() => setSel(null)} />
+                <div id="waivers-section">
+                  <WaiverWire sel={sel} onGoToLeagues={() => setTab("leagues")} />
+                </div>
               </>
             )}
             {selLoading && sel && (
@@ -256,10 +267,17 @@ export default function FantisApp() {
             onGoToLeagues={() => setTab("leagues")}
           />
         )}
-        {tab === "waivers" && (
-          <WaiverWire sel={sel} onGoToLeagues={() => setTab("leagues")} />
+        {tab === "portfolio" && (
+          <Portfolio
+            leagues={leagues}
+            myUserId={myUserId}
+            onGoToLeagues={() => setTab("leagues")}
+            onOpenLeague={(lg) => {
+              setTab("leagues");
+              openLeague(lg);
+            }}
+          />
         )}
-
         <footer className="footer">
           Fantis MVP · league data via the Sleeper public API · rankings & values
           are an editable starter set, not investment advice. Swap them for your

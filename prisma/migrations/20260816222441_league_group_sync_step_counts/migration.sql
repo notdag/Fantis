@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "League" ADD COLUMN     "group" TEXT;
+
+-- AlterTable
+ALTER TABLE "SyncRun" ADD COLUMN     "draftsOk" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "matchupsOk" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "rostersOk" INTEGER NOT NULL DEFAULT 0;

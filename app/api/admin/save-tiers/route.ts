@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import fs from "fs/promises";
-import path from "path";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import { computePosRanks } from "@/lib/players";
-import { generatePlayersData } from "@/lib/generatePlayersData";
+import { db } from "@/lib/db";
 
 interface IncomingPlayer {
   name: string;
@@ -13,6 +11,13 @@ interface IncomingPlayer {
   tier: number;
 }
 
+// The tier board always sends the full ordered board (see
+// components/TierBoard.tsx's save()), never a partial diff, so a save is a
+// full replace of RankedPlayer in one transaction — same effect
+// generatePlayersData() used to have on lib/players.data.ts, just against
+// the DB instead of a file. This is what makes the write actually apply on
+// the next page load in production, where Vercel's read-only filesystem
+// used to force handing back generated source to paste in by hand.
 export async function POST(req: NextRequest) {
   const store = await cookies();
   if (!isValidToken(store.get(ADMIN_COOKIE)?.value)) {
@@ -26,19 +31,20 @@ export async function POST(req: NextRequest) {
   }
 
   const posRanks = computePosRanks(players);
-  const source = generatePlayersData(
-    players.map((p, i) => ({ ...p, posRank: posRanks[i] }))
-  );
 
-  // Vercel (and most serverless hosts) run a read-only filesystem in
-  // production, and a write there wouldn't survive the next deploy anyway —
-  // hand back the generated source instead so the owner can paste it into
-  // lib/players.data.ts and commit it like any other code change.
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ ok: true, written: false, source });
-  }
+  await db.$transaction([
+    db.rankedPlayer.deleteMany(),
+    db.rankedPlayer.createMany({
+      data: players.map((p, i) => ({
+        order: i,
+        name: p.name,
+        pos: p.pos,
+        team: p.team,
+        tier: p.tier,
+        posRank: posRanks[i],
+      })),
+    }),
+  ]);
 
-  const filePath = path.join(process.cwd(), "lib", "players.data.ts");
-  await fs.writeFile(filePath, source, "utf8");
-  return NextResponse.json({ ok: true, written: true });
+  return NextResponse.json({ ok: true });
 }

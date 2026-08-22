@@ -23,10 +23,10 @@ colors:
 typography:
   display:
     fontFamily: "Inter, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "clamp(34px, 5vw, 56px)"
+    fontSize: "clamp(42px, 7vw, 84px)"
     fontWeight: 700
-    lineHeight: 1.08
-    letterSpacing: "-0.01em"
+    lineHeight: 1.02
+    letterSpacing: "-0.02em"
   headline:
     fontFamily: "Inter, -apple-system, 'Segoe UI', sans-serif"
     fontSize: "32px"
@@ -186,7 +186,7 @@ Quiet neutrals carry the page; amber is the only saturated color spent on UI chr
 **Character:** One typeface for everything, doing all the work through weight, size, and case rather than a second face. Deliberately not "condensed sports-display" — that was the old scoreboard identity this system replaced.
 
 ### Hierarchy
-- **Display** (700, `clamp(34px, 5vw, 56px)`, 1.08 line-height): the Leagues landing hero only ("Win your fantasy league."). The single loudest moment in the app; used nowhere else.
+- **Display** (700, `clamp(42px, 7vw, 84px)`, 1.02 line-height, -0.02em tracking): the Leagues landing hero only ("Win your fantasy league."). Bumped up from an earlier 34–56px range (2026-08-09) to make the hero read as the loudest moment it's meant to be. The single loudest moment in the app; used nowhere else.
 - **Headline** (700, 32px, 1.2): player-card name in the detail modal — the only other place text goes this large.
 - **Title** (600, 19px, 1.3, -0.005em): section headings ("Rankings", "Trade calculator", "Start / Sit", league name).
 - **Subtitle** (600, 17px): the Rankings detail panel's player name, chart section labels.

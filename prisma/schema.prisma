@@ -1,0 +1,449 @@
+// Fantis database schema (Prisma + PostgreSQL).
+// This file belongs in a folder named "prisma" once the app is scaffolded.
+// Claude Code will run migrations from it. You don't need to edit it by hand.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Auth (NextAuth standard models)
+// ---------------------------------------------------------------------------
+model User {
+  id            String         @id @default(cuid())
+  name          String?
+  email         String?        @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  leagues       LinkedLeague[]
+  subscription  Subscription?
+  createdAt     DateTime       @default(now())
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------------------------------------------------------------------------
+// Fantis domain
+// ---------------------------------------------------------------------------
+
+// A fantasy league a user has connected (Sleeper, Yahoo, or ESPN).
+model LinkedLeague {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   String // "sleeper" | "yahoo" | "espn"
+  externalId String // the league's id on that platform
+  name       String
+  season     String
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, provider, externalId])
+}
+
+// Stripe-backed subscription state for the paid tier.
+model Subscription {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+  status               String    @default("inactive") // active | canceled | past_due | inactive
+  tier                 String    @default("free") // free | premium
+  currentPeriodEnd     DateTime?
+  updatedAt            DateTime  @updatedAt
+}
+
+// The curated player list (tier + posRank) that used to live entirely in
+// the checked-in lib/players.data.ts — moved here so the owner-only /admin
+// tier board (components/TierBoard.tsx) can write directly and have it
+// take effect on the next page load, instead of the old flow (generate
+// file source, paste it in, commit, deploy) that Vercel's read-only
+// production filesystem forced. `order` is the master rank (top to bottom,
+// all positions mixed) — posRank is derived from position within that
+// order and stored alongside it as a cache, same relationship
+// lib/players.ts's computePosRanks() always had. A save from the tier
+// board replaces every row in one transaction (see
+// app/api/admin/save-tiers/route.ts) since the board always sends the
+// full ordered list, never a partial diff.
+model RankedPlayer {
+  id      String @id @default(cuid())
+  order   Int    @unique
+  name    String
+  pos     String
+  team    String
+  tier    Int
+  posRank Int
+}
+
+// ---------------------------------------------------------------------------
+// Sleeper Manager (owner-only, gated by ADMIN_PASSPHRASE — see
+// lib/adminAuth.ts). No relation to User above: single-owner tool, not
+// multi-user. Do not FK to User without a real auth decision first.
+// ---------------------------------------------------------------------------
+
+// A Sleeper username the owner has connected. id IS the Sleeper user_id
+// (Sleeper serializes its own numeric ids as strings specifically to avoid
+// JS float-precision loss, so this uses that value directly rather than a
+// surrogate key). More than one account is supported (alts, dynasty vs
+// redraft logins, etc).
+model SleeperAccount {
+  id            String          @id // Sleeper user_id
+  username      String // last-known username used to resolve this account (Sleeper usernames are mutable; id is the stable identifier)
+  displayName   String?
+  connectedAt   DateTime        @default(now())
+  lastSyncedAt  DateTime?
+  leagues       League[]
+  syncRuns      SyncRun[]
+  waiverHistory WaiverHistory[]
+}
+
+// One Sleeper league, keyed by Sleeper's own league_id directly.
+model League {
+  id            String              @id // Sleeper league_id
+  accountId     String
+  account       SleeperAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  name          String
+  season        String // current season only in Phase 1
+  totalRosters  Int
+  status        String // Sleeper's own value verbatim: pre_draft | drafting | in_season | complete
+  sport         String              @default("nfl")
+  // Full raw GET /league/{id} response (Sleeper's settings sub-object,
+  // scoring_settings, roster_positions, draft_id, avatar, etc). Not
+  // normalized into columns — large and variable; every reader accesses a
+  // sub-field defensively. Null only transiently between the initial
+  // "connect" summary upsert and that league's first detail-sync pass.
+  settings      Json?
+  // Fantis's own data, not Sleeper's — a free-text label the owner sets to
+  // group leagues that share nothing Sleeper exposes (buy-in tier, which
+  // friend group, dynasty vs redraft naming isn't a real field). Never
+  // written by sync; only by the owner via the group-editing UI.
+  group         String?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  roster        Roster?
+  leagueRosters LeagueRoster[]
+  matchups      Matchup[]
+  drafts        Draft[]
+  alerts        Alert[]
+  actions       Action[]
+  transactions  LeagueTransaction[]
+  weeklyResults WeeklyResult[]
+
+  @@index([accountId])
+}
+
+// One sync attempt (today: the manual "Sync now" button; same code path a
+// future cron would call). accountId null = ran across every account.
+model SyncRun {
+  id             String          @id @default(cuid())
+  accountId      String?
+  account        SleeperAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  startedAt      DateTime        @default(now())
+  finishedAt     DateTime?
+  status         String          @default("running") // running | success | partial_failure | failed
+  leaguesSeen    Int             @default(0)
+  leaguesOk      Int             @default(0)
+  leaguesFailed  Int             @default(0)
+  // Per-step counts, not just per-league pass/fail — a league can succeed
+  // overall while its matchup/draft sub-fetch was legitimately skipped
+  // (pre-draft has no matchup; no draft_id means no draft). These make that
+  // visible instead of collapsing everything into one ok/fail number.
+  rostersOk      Int             @default(0)
+  matchupsOk     Int             @default(0)
+  draftsOk       Int             @default(0)
+  transactionsOk Int             @default(0)
+  errors         Json? // [{leagueId, leagueName?, message}] — populated whenever leaguesFailed > 0
+
+  @@index([accountId])
+  @@index([startedAt])
+}
+
+// My own roster only, per league — this is the input to lineup alerts, plus
+// the extra owner-specific stats (wins/losses/fpts/waiver position/FAAB)
+// Sleeper only reports for a roster you're looking at directly. Every other
+// team's roster in the league is separately covered by LeagueRoster below
+// (added 2026-08) — this model stays focused on "my" fields rather than
+// duplicating what that one already has for everyone including me.
+// leagueId is the primary key (1:1); Sleeper's own roster_id is only
+// unique *within* a league, so it can't be the PK on its own.
+model Roster {
+  leagueId       String    @id
+  league         League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId       Int // Sleeper's roster_id within this league
+  starters       String[] // "0" = Sleeper's real empty-slot placeholder
+  players        String[]
+  reserve        String[]  @default([]) // real Sleeper IR/reserve slot — confirmed real field, distinct from players/starters
+  waiverPosition Int?
+  faabUsed       Int?
+  wins           Int       @default(0)
+  losses         Int       @default(0)
+  ties           Int       @default(0)
+  fpts           Float?
+  fptsAgainst    Float?
+  // Real Sleeper "potential points" (settings.ppts/ppts_decimal) — what
+  // the optimal lineup would have scored every week. Confirmed real via
+  // a live Sleeper roster (not fabricated): absent pre-season (no real
+  // box scores to compute it from yet), populated once games are played.
+  maxPtsFor      Float?
+  lastSyncedAt   DateTime?
+}
+
+// Every team's roster in a league, mine included — not a new Sleeper fetch:
+// getRosters(leagueId) already returns every roster in one call and the
+// sync loop was only keeping mine (Roster above) and discarding the rest.
+// This is what makes league-wide rank, team value, and a real (not just
+// "not on my roster") best-available-FA check possible without adding a
+// single extra Sleeper API call. A save is a full per-league replace
+// (delete + createMany in one transaction), same reasoning as
+// RankedPlayer's save — the sync loop always has the complete current
+// roster list for a league, never a partial diff.
+//
+// wins/losses/ties/fpts/fptsAgainst (2026-08) are the same story again:
+// getRosters()'s response already carries every team's real win/loss
+// record and points in `settings`, the sync loop just wasn't persisting
+// it for anyone but me — this is what makes a real Standings table
+// possible. teamName needs one real new (but unconditional-per-league,
+// not per-team) Sleeper call — getLeagueUsers() — since Sleeper doesn't
+// put display names in the rosters response itself; null if unresolved,
+// never fabricated (LeagueDetail.tsx falls back to "Team {rosterId}").
+model LeagueRoster {
+  id          String   @id @default(cuid())
+  leagueId    String
+  league      League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterId    Int // Sleeper's roster_id within this league
+  ownerId     String? // null = unclaimed team, same meaning as elsewhere
+  players     String[]
+  starters    String[]
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  ties        Int      @default(0)
+  fpts        Float?
+  fptsAgainst Float?
+  teamName    String?
+
+  @@unique([leagueId, rosterId])
+  @@index([leagueId])
+}
+
+// One row per league per week — my side + resolved opponent. Only synced
+// for status "in_season" (pre_draft/drafting leagues have no real matchup
+// yet).
+model Matchup {
+  id                         String    @id @default(cuid())
+  leagueId                   String
+  league                     League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week                       Int
+  myRosterId                 Int
+  myMatchupId                Int
+  myPoints                   Float
+  myStarters                 String[]  @default([])
+  myStartersPoints           Float[]   @default([])
+  myProjPoints               Float?
+  myStartersProjPoints       Float[]   @default([])
+  opponentRosterId           Int?
+  opponentTeamName           String?
+  opponentPoints             Float?
+  opponentStarters           String[]  @default([])
+  opponentStartersPoints     Float[]   @default([])
+  opponentProjPoints         Float?
+  opponentStartersProjPoints Float[]   @default([])
+  lastSyncedAt               DateTime?
+
+  @@unique([leagueId, week])
+  @@index([leagueId])
+}
+
+// Real per-roster, per-week result for EVERY team in a league (not just the
+// account owner's own matchup, which Matchup above already covers) — powers
+// Standings' real Streak column. Populated from the exact same getMatchups()
+// response already fetched once per league per week in managerSync.ts's
+// Matchup block; this just persists the rest of that response instead of
+// discarding it. `won` is null for an unresolved/odd-roster-count matchup
+// (e.g. a bye) — never guessed.
+model WeeklyResult {
+  id           String    @id @default(cuid())
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week         Int
+  rosterId     Int
+  points       Float
+  won          Boolean?
+  lastSyncedAt DateTime?
+
+  @@unique([leagueId, week, rosterId])
+  @@index([leagueId])
+}
+
+// Real waiver usage for a past season — deliberately separate from Roster
+// (current-season-oriented, carries unrelated large fields like starters/
+// players/reserve that don't belong on a historical record). Populated by a
+// separate, bounded, on-demand sync (not the main "Refresh" button — see
+// lib/managerWaiverHistorySync.ts) covering a capped number of past seasons,
+// each with its own real Sleeper league_id (a past season is a distinct
+// league on Sleeper's side, not a row in the current League table).
+model WaiverHistory {
+  id             String         @id @default(cuid())
+  accountId      String
+  account        SleeperAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  leagueId       String
+  leagueName     String
+  season         String
+  rosterId       Int
+  waiverPosition Int?
+  faabUsed       Int?
+  faabBudget     Int?
+  syncedAt       DateTime       @default(now())
+
+  @@unique([accountId, leagueId, season])
+  @@index([accountId, season])
+}
+
+// Lightweight — real fields only, enough for "upcoming drafts"/"draft status".
+model Draft {
+  id           String    @id // Sleeper draft_id
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  status       String // Sleeper's own value: pre_draft | drafting | complete
+  type         String?
+  startTime    DateTime?
+  lastSyncedAt DateTime?
+
+  @@index([leagueId])
+}
+
+// Regenerated wholesale every sync (delete this league's rows, reinsert
+// the freshly computed set) — simplest correct approach, no incremental
+// dedup/read-state tracking.
+model Alert {
+  id           String    @id @default(cuid())
+  leagueId     String
+  league       League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  type         String // injured_starter | empty_slot | bye_starter | draft_upcoming | trade_deadline_upcoming | unclaimed_team
+  severity     String // action_required | review
+  message      String // full human-readable text, built at compute time
+  playerId     String?
+  week         Int
+  dedupKey     String // `${type}:${playerId ?? message}` — stable identity across syncs
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime? // set when a sync no longer reproduces this dedupKey
+  snoozedUntil DateTime? // set by the user via /api/manager/alerts/[id]/snooze; null = not snoozed
+
+  @@index([leagueId])
+  @@index([leagueId, resolvedAt])
+}
+
+// Real trade/waiver/free-agent activity, one row per Sleeper transaction.
+// Only ever synced for the CURRENT week's round per in-season league (see
+// lib/managerSync.ts) — never backfilled across multiple weeks in one
+// sync, to stay inside the 60s sync budget (app/api/manager/sync/route.ts).
+// A sync does a full replace scoped to {leagueId, week} (delete +
+// createMany, same shape as LeagueRoster's per-league replace) so a past
+// week's rows, once that week has rolled by, are frozen at whatever
+// Sleeper reported the last time that week was current — this is how real
+// history accumulates without re-fetching every week on every sync.
+// adds/drops are stored pre-resolved (player name/pos + team name baked
+// in at sync time) so the transactions page never needs a second Sleeper
+// player-dump fetch to render — same "resolve once, store the resolved
+// value" precedent as Matchup.opponentTeamName.
+model LeagueTransaction {
+  id                   String   @id @default(cuid())
+  leagueId             String
+  league               League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  week                 Int // the round this was fetched under
+  sleeperTransactionId String // Sleeper's own transaction_id — real stable identity
+  type                 String // Sleeper's own value verbatim: trade | waiver | free_agent
+  status               String // Sleeper's own value verbatim: complete | pending | failed
+  createdAt            DateTime // Sleeper's real `created` epoch, not a Fantis insert timestamp
+  creatorTeamName      String? // resolved via nameByOwnerId, same resolution Matchup.opponentTeamName already does; null if unresolved
+  rosterIds            Int[]    @default([]) // Sleeper's real roster_ids
+  adds                 Json? // [{playerId, playerName, pos, rosterId, teamName}] — resolved at sync time
+  drops                Json? // same shape, from Sleeper's real drops map
+  waiverBid            Int? // real FAAB amount for a waiver claim; null for trades/free agent adds and no-bid waiver leagues
+
+  @@unique([leagueId, sleeperTransactionId])
+  @@index([leagueId, week])
+  @@index([week])
+  @@index([createdAt])
+}
+
+// Known, documented gap: Sleeper's real draft_picks field (traded picks
+// inside a trade transaction) is not surfaced here — trades show player
+// adds/drops correctly but not a traded pick. Same "documented, not
+// silently wrong" spirit as the receptions-prop gap noted in CLAUDE.md.
+
+// ---------------------------------------------------------------------------
+// Phase 3: browser automation (Tampermonkey userscript, see
+// automation/fantis-sleeper-manager.user.js). No consequential actions yet —
+// open_league is the only real type. Auth is a separate secret
+// (AUTOMATION_TOKEN, lib/automationAuth.ts) from the dashboard's
+// ADMIN_PASSPHRASE cookie, since the userscript's token lives in a real
+// browser session rather than behind the httpOnly-cookie boundary.
+// ---------------------------------------------------------------------------
+
+// One queued browser-automation action. Status names match the product
+// spec verbatim: pending | approved | running | completed | failed |
+// cancelled — this phase only ever uses pending -> completed/failed, since
+// opening a tab isn't consequential enough to need approval.
+model Action {
+  id          String    @id @default(cuid())
+  leagueId    String
+  league      League    @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  type        String    @default("open_league")
+  status      String    @default("pending")
+  targetUrl   String // the real Sleeper URL to open
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+
+  @@index([leagueId])
+  @@index([status])
+}
+
+// Singleton row (id always "singleton") — lets the dashboard show a real
+// "automation connected, last seen Ns ago" status instead of guessing.
+model AutomationPing {
+  id         String   @id @default("singleton")
+  lastPingAt DateTime @default(now())
+  userAgent  String?
+}

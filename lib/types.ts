@@ -30,6 +30,14 @@ export interface SleeperRosterSettings {
   fpts_decimal?: number;
   fpts_against?: number;
   fpts_against_decimal?: number;
+  // Real "potential points" — what the optimal lineup would have scored
+  // every week. Confirmed real via a live roster fetch; absent pre-season
+  // (no real box scores yet to compute it from), populated once games
+  // are played.
+  ppts?: number;
+  ppts_decimal?: number;
+  waiver_position?: number;
+  waiver_budget_used?: number;
 }
 
 export interface SleeperRoster {
@@ -37,6 +45,7 @@ export interface SleeperRoster {
   owner_id: string;
   starters: string[] | null;
   players: string[] | null;
+  reserve: string[] | null;
   settings?: SleeperRosterSettings;
 }
 
@@ -57,12 +66,52 @@ export interface SleeperPlayerRaw {
   years_exp?: number;
   college?: string;
   injury_status?: string | null;
+  injury_body_part?: string | null;
+  injury_notes?: string | null;
+  practice_participation?: string | null;
+  news_updated?: number | null;
+  espn_id?: number | null;
 }
 
 export interface SleeperState {
   week: number;
   season: string;
   season_type: string; // "pre" | "regular" | "post"
+  leg: number; // the round/week index transactions are filed under
+}
+
+// Real pending trade offer — see app/api/... none, fetched client-side like
+// rosters. adds/drops map playerId -> the roster_id receiving/losing them.
+export interface SleeperTransaction {
+  transaction_id: string;
+  type: string; // "trade" | "waiver" | "free_agent"
+  status: string; // "pending" | "complete" | "failed"
+  created: number; // ms epoch
+  creator: string | null; // user_id who proposed it
+  roster_ids: number[] | null;
+  consenter_ids: number[] | null;
+  adds: Record<string, number> | null;
+  drops: Record<string, number> | null;
+  settings: { waiver_bid?: number } | null; // real FAAB bid for a waiver claim; null for trades/free agent
+}
+
+// Narrow shapes for Sleeper Manager's Phase 2 sync (lib/managerSync.ts) —
+// cast from getMatchups/getDraft's loosely-typed real payloads at the call
+// site, rather than typing those fetches themselves (full shapes aren't
+// pinned down, same reasoning as getLeagueRaw).
+export interface SleeperMatchupRow {
+  roster_id: number;
+  matchup_id: number | null;
+  starters: string[] | null;
+  starters_points: number[] | null;
+  points: number;
+}
+
+export interface SleeperDraftRaw {
+  status: string; // pre_draft | drafting | complete
+  type?: string;
+  start_time?: number; // ms epoch
+  league_id: string;
 }
 
 export interface SleeperProjectionEntry {
@@ -94,6 +143,11 @@ export interface PlayerMapEntry {
   exp?: number; // years_exp
   college?: string;
   inj?: string | null; // injury_status
+  injBodyPart?: string | null;
+  injNotes?: string | null;
+  practiceStatus?: string | null; // practice_participation — "Full" | "Limited" | "Did Not Participate"
+  newsUpdated?: number | null; // ms epoch — last time Sleeper's own player page updated
+  espnId?: number | null; // ESPN's athlete id — used to match this player's real news articles
 }
 
 export type PlayerMap = Record<string, PlayerMapEntry>;

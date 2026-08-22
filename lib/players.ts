@@ -1,17 +1,11 @@
-// Derived helpers over the curated player list. The actual data (tier,
-// posRank per player) lives in lib/players.data.ts, which the owner-only
-// /admin tier board can regenerate — see CLAUDE.md "Known limitations".
-import type { Player } from "./types";
-import { RAW } from "./players.data";
-
-export const PLAYERS: Player[] = RAW.map(([name, pos, team, tier, posRank]) => ({
-  name,
-  pos,
-  team,
-  tier,
-  posRank,
-}));
-
+// Pure, static helpers over the curated player list. The actual data
+// (tier, posRank per player) lives in Postgres now (RankedPlayer, see
+// prisma/schema.prisma) — fetched via lib/usePlayers.ts's usePlayers()
+// hook, not imported here, so the owner-only /admin tier board's saves
+// apply on the next page load instead of needing a file paste + deploy.
+// lib/players.data.ts still exists as the one-time seed this table was
+// migrated from (see scripts/seedRankedPlayers.ts) but nothing reads it
+// at runtime anymore.
 export const POS_COLOR: Record<string, string> = {
   QB: "var(--qb)",
   RB: "var(--rb)",
@@ -34,9 +28,9 @@ export function posChipStyle(pos: string) {
 }
 
 // Letter-grade tier labels (S/A/B/.../G) instead of raw numbers — the
-// underlying `tier` field on Player is still just 1-8 (index + 1) so
-// lib/players.data.ts, the save route, and computePosRanks don't need to
-// know about labels at all; this is purely a display mapping.
+// underlying `tier` field on Player/RankedPlayer is still just 1-8
+// (index + 1) so the save route and computePosRanks don't need to know
+// about labels at all; this is purely a display mapping.
 export const TIER_LABELS = ["S", "A", "B", "C", "D", "E", "F", "G"];
 
 export const TIER_COLOR = [
@@ -54,7 +48,7 @@ export const TIER_COLOR = [
 // a position, in whatever order they're given, is ranked N at that
 // position. The tier board (components/TierBoard.tsx) relies on this to
 // turn "master rank order" into posRank live, and the save route uses it to
-// bake posRank into lib/players.data.ts.
+// bake posRank into each RankedPlayer row.
 export function computePosRanks(players: { pos: string }[]): number[] {
   const counts: Record<string, number> = {};
   return players.map((p) => {

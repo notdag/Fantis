@@ -9,6 +9,7 @@ import type {
   SleeperPlayerRaw,
   SleeperRoster,
   SleeperState,
+  SleeperTransaction,
   SleeperUser,
 } from "./types";
 
@@ -38,9 +39,34 @@ export const getLeagueDetail = (leagueId: string) =>
 export const getLeagueUsers = (leagueId: string) =>
   jget<SleeperLeagueUser[]>(`${S}/league/${leagueId}/users`);
 
+// Full, unshaped GET /league/{id} response — same real endpoint as
+// getLeagueDetail above, but kept loosely typed and used by Sleeper
+// Manager's sync (lib/managerSync.ts), which stores the whole payload
+// verbatim rather than picking out specific fields ahead of time. Doesn't
+// touch getLeagueDetail's existing typed call site in Start/Sit.
+export const getLeagueRaw = (leagueId: string) =>
+  jget<Record<string, unknown>>(`${S}/league/${leagueId}`);
+
+// Real, populated even before games start — a team's real starters/points
+// for one week (see Sleeper Manager's alert engine, lib/managerAlerts.ts).
+// Loosely typed like getLeagueRaw; managerSync.ts casts to the narrow
+// SleeperMatchupRow shape it actually reads.
+export const getMatchups = (leagueId: string, week: number) =>
+  jget<Record<string, unknown>[]>(`${S}/league/${leagueId}/matchups/${week}`);
+
+export const getDraft = (draftId: string) =>
+  jget<Record<string, unknown>>(`${S}/draft/${draftId}`);
+
+// Real trade/waiver/free-agent activity for one league, filed under the
+// week ("round"/"leg") it was created — see Portfolio's trade inbox
+// (lib/usePortfolio.ts), which scans a small window of recent legs rather
+// than every week of the season for performance.
+export const getTransactions = (leagueId: string, round: number) =>
+  jget<SleeperTransaction[]>(`${S}/league/${leagueId}/transactions/${round}`);
+
 export const today = () => new Date().toISOString().slice(0, 10);
 
-const PLAYERS_CACHE_KEY = "fantis_players_nfl_v1";
+const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
 
 // Sleeper's full player dump is several MB; cache it in localStorage for the day.
 export async function getPlayers(): Promise<PlayerMap> {
@@ -71,6 +97,11 @@ export async function getPlayers(): Promise<PlayerMap> {
       exp: p.years_exp,
       college: p.college,
       inj: p.injury_status,
+      injBodyPart: p.injury_body_part,
+      injNotes: p.injury_notes,
+      practiceStatus: p.practice_participation,
+      newsUpdated: p.news_updated,
+      espnId: p.espn_id,
     };
   }
 
@@ -90,6 +121,13 @@ export async function getPlayers(): Promise<PlayerMap> {
 
 export const avatar = (id: string | null | undefined) =>
   id ? `https://sleepercdn.com/avatars/thumbs/${id}` : null;
+
+// Player headshot (distinct from avatar() above, which is for
+// league/team avatars) — same real URL already used in production at
+// components/Portfolio.tsx, pulled out here so new call sites don't
+// duplicate the string.
+export const playerPhotoUrl = (playerId: string) =>
+  `https://sleepercdn.com/content/nfl/players/${playerId}.jpg`;
 
 export const SEASONS = ["2026", "2025", "2024"];
 
@@ -193,11 +231,27 @@ export async function getSeasonProjectionTotals(
     }
   }
 
+  // Fetched concurrently, not week-by-week — 18 sequential awaits measured
+  // ~7.3s real end-to-end on a cold cache; Sleeper's public read API has no
+  // documented rate limit to throttle against (same conclusion
+  // managerSync.ts's DETAIL_BATCH_SIZE comment already reached), so all 18
+  // fire at once. onProgress reports completion COUNT, not week number,
+  // since completion order is no longer guaranteed once concurrent.
+  const weeks = Array.from({ length: SEASON_WEEKS }, (_, i) => i + 1);
+  let completed = 0;
+  const responses = await Promise.all(
+    weeks.map((week) =>
+      jget<Record<string, RawWeeklyProjection | null>>(
+        `${S}/projections/nfl/regular/${season}/${week}`
+      ).then((raw) => {
+        onProgress?.(++completed, SEASON_WEEKS);
+        return raw;
+      })
+    )
+  );
+
   const totals: Record<string, SeasonProjectionTotal> = {};
-  for (let week = 1; week <= SEASON_WEEKS; week++) {
-    const raw = await jget<Record<string, RawWeeklyProjection | null>>(
-      `${S}/projections/nfl/regular/${season}/${week}`
-    );
+  for (const raw of responses) {
     for (const id in raw) {
       const p = raw[id];
       if (!p || p.pts_ppr == null) continue;
@@ -221,7 +275,6 @@ export async function getSeasonProjectionTotals(
       t.weeksCounted += 1;
       totals[id] = t;
     }
-    onProgress?.(week, SEASON_WEEKS);
   }
 
   if (typeof window !== "undefined") {
@@ -333,6 +386,7 @@ export interface WeeklyStatLine {
   recYpt: number | null;
   recRzTgt: number | null;
   targetSharePct: number | null;
+  rushSharePct: number | null;
 }
 
 // One real week's full stat payload (~500KB) is too large to keep in
@@ -373,6 +427,10 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
         (id) => pmap[id].t === team && ["WR", "TE", "RB"].includes(pmap[id].p)
       )
     : [];
+  // Carry share has no position restriction — a QB scramble or WR jet sweep
+  // still counts as a team carry, so the denominator is every player on the
+  // roster, not just RBs. Same current-roster caveat as target share above.
+  const teamIds = team ? Object.keys(pmap).filter((id) => pmap[id].t === team) : [];
 
   const lines: WeeklyStatLine[] = [];
   for (let week = 1; week <= SEASON_WEEKS; week++) {
@@ -380,28 +438,38 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
     const s = weekStats[playerId];
     let teamTargets = 0;
     for (const tid of targetShareIds) teamTargets += weekStats[tid]?.rec_tgt ?? 0;
+    let teamCarries = 0;
+    for (const tid of teamIds) teamCarries += weekStats[tid]?.rush_att ?? 0;
+
+    // Sleeper's raw payload omits a counting stat entirely when it's zero
+    // (confirmed directly: a real 16-carry, 0-TD game has no `rush_td` key
+    // at all) rather than sending 0 — so "field missing" only means "really
+    // didn't happen" when the player has a stat line (`s`) at all. When `s`
+    // itself is missing, that's a genuine DNP and stays null throughout.
+    const count = (v: number | undefined) => (s ? (v ?? 0) : null);
 
     lines.push({
       week,
       pts: s?.pts_ppr ?? null,
       posRank: s?.pos_rank_ppr ?? null,
       snapPct: s?.off_snp != null && s?.tm_off_snp ? (s.off_snp / s.tm_off_snp) * 100 : null,
-      passAtt: s?.pass_att ?? null,
-      passYd: s?.pass_yd ?? null,
-      passTd: s?.pass_td ?? null,
-      passInt: s?.pass_int ?? null,
-      passRzAtt: s?.pass_rz_att ?? null,
-      rushAtt: s?.rush_att ?? null,
-      rushYd: s?.rush_yd ?? null,
-      rushTd: s?.rush_td ?? null,
-      rushRzAtt: s?.rush_rz_att ?? null,
-      recTgt: s?.rec_tgt ?? null,
-      rec: s?.rec ?? null,
-      recYd: s?.rec_yd ?? null,
-      recTd: s?.rec_td ?? null,
+      passAtt: count(s?.pass_att),
+      passYd: count(s?.pass_yd),
+      passTd: count(s?.pass_td),
+      passInt: count(s?.pass_int),
+      passRzAtt: count(s?.pass_rz_att),
+      rushAtt: count(s?.rush_att),
+      rushYd: count(s?.rush_yd),
+      rushTd: count(s?.rush_td),
+      rushRzAtt: count(s?.rush_rz_att),
+      recTgt: count(s?.rec_tgt),
+      rec: count(s?.rec),
+      recYd: count(s?.rec_yd),
+      recTd: count(s?.rec_td),
       recYpt: s?.rec_ypt ?? null,
-      recRzTgt: s?.rec_rz_tgt ?? null,
+      recRzTgt: count(s?.rec_rz_tgt),
       targetSharePct: s?.rec_tgt != null && teamTargets > 0 ? (s.rec_tgt / teamTargets) * 100 : null,
+      rushSharePct: s?.rush_att != null && teamCarries > 0 ? (s.rush_att / teamCarries) * 100 : null,
     });
   }
   return lines;
