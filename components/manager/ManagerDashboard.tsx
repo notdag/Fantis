@@ -18,12 +18,11 @@ import {
   type ManagedLeague,
   type ManagedSyncRun,
 } from "@/lib/manager";
-import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { posChipStyle } from "@/lib/players";
-import { computeLeagueRank, computeStanding, type LeagueRosterRow } from "@/lib/leagueRank";
+import { computeStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import { IconFlag, IconCheck, IconSearch, IconUsers, IconCalendar, IconChevronRight } from "./MgrIcons";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
@@ -122,7 +121,7 @@ export default function ManagerDashboard({
   currentWeek: number;
 }) {
   // Shared guard for every Date.now()-dependent render below
-  // (automationConnected, formatRelative, formatUpcoming, draftsThisWeek) —
+  // (automationConnected, formatRelative, formatUpcoming) —
   // each of those differs between the server render and the client
   // hydration pass a moment later, which is a real hydration mismatch
   // (React error #418), not just cosmetic, when it changes DOM structure
@@ -565,51 +564,21 @@ export default function ManagerDashboard({
     return counts;
   }, [leagues]);
 
-  // Exception-based grouping: the whole point is that the groups themselves
-  // do the triage, no filter click needed. Real Alert rows only — a league
-  // with zero rows genuinely means "synced, nothing found," not "not
-  // checked yet."
-  //
-  // draftsThisWeek below depends on Date.now(), same hydration hazard as
-  // `connected` above — gated on `mounted` (in the dependency array) so it
-  // stays 0 (matching the server render) until after hydration, then
-  // recomputes for real.
+  // Real Alert rows only — a league with zero rows genuinely means "synced,
+  // nothing found," not "not checked yet."
   const groups = useMemo(() => {
-    const actionRequired: { league: ManagedLeague; alerts: ManagedAlert[] }[] = [];
-    const commissioner: { league: ManagedLeague; alerts: ManagedAlert[] }[] = [];
-    const upcomingDrafts: { league: ManagedLeague; draft: ManagedDraft | undefined }[] = [];
-    const review: { league: ManagedLeague; alerts: ManagedAlert[] }[] = [];
     const allClear: ManagedLeague[] = [];
-    let draftsThisWeek = 0;
 
     for (const lg of leagues) {
       // Snoozed alerts are real/active (still counted toward "All clear"
       // being false), but don't clutter the exception groups — same
       // filtering as the Commissioner/Player search server pages.
       const alerts = (alertsByLeague[lg.id] ?? []).filter((a) => !isSnoozed(a));
-      const required = alerts.filter((a) => a.severity === "action_required");
-      const unclaimed = alerts.filter((a) => a.type === "unclaimed_team");
-      const draftAlert = alerts.find((a) => a.type === "draft_upcoming");
-      const otherReview = alerts.filter(
-        (a) => a.severity === "review" && a.type !== "unclaimed_team" && a.type !== "draft_upcoming"
-      );
-
-      if (required.length > 0) actionRequired.push({ league: lg, alerts: required });
-      if (unclaimed.length > 0) commissioner.push({ league: lg, alerts: unclaimed });
-      if (draftAlert) {
-        const draft = draftsByLeague[lg.id];
-        upcomingDrafts.push({ league: lg, draft });
-        if (mounted && draft?.startTime) {
-          const days = (new Date(draft.startTime).getTime() - Date.now()) / 86400000;
-          if (days >= 0 && days <= 7) draftsThisWeek += 1;
-        }
-      }
-      if (otherReview.length > 0) review.push({ league: lg, alerts: otherReview });
       if (alerts.length === 0) allClear.push(lg);
     }
 
-    return { actionRequired, commissioner, upcomingDrafts, review, allClear, draftsThisWeek };
-  }, [leagues, alertsByLeague, draftsByLeague, mounted]);
+    return { allClear };
+  }, [leagues, alertsByLeague]);
 
   const mostRecentSync = leagues.reduce<string | null>((latest, lg) => {
     if (!lg.lastSyncedAt) return latest;
@@ -617,55 +586,17 @@ export default function ManagerDashboard({
     return latest;
   }, null);
 
-  // Real combined record/points across every synced roster — same
-  // aggregation components/manager/MyTeams.tsx already does, so the two
-  // pages should never disagree since they're the same source data.
+  // Real per-league win/loss bucketing across every synced roster — feeds
+  // My Portfolio's Record Snapshot card.
   const portfolio = useMemo(() => {
-    let wins = 0, losses = 0, ties = 0, fpts = 0, withPoints = 0;
     let winningLeagues = 0, evenLeagues = 0, losingLeagues = 0;
     for (const r of rosters) {
-      wins += r.wins;
-      losses += r.losses;
-      ties += r.ties;
-      if (r.fpts != null) {
-        fpts += r.fpts;
-        withPoints += 1;
-      }
       if (r.wins > r.losses) winningLeagues += 1;
       else if (r.wins === r.losses) evenLeagues += 1;
       else losingLeagues += 1;
     }
-    const games = wins + losses + ties;
-    const winPct = games > 0 ? ((wins + ties * 0.5) / games) * 100 : null;
-    const avgPts = withPoints > 0 ? fpts / withPoints : null;
-    return { wins, losses, ties, winPct, totalPts: fpts, avgPts, winningLeagues, evenLeagues, losingLeagues };
+    return { winningLeagues, evenLeagues, losingLeagues };
   }, [rosters]);
-
-  // Real league-wide rank per league — same computeLeagueRank() call
-  // components/manager/MyTeams.tsx already proves works, fed by the same
-  // day-cached season totals (no new Sleeper call) and the LeagueRoster
-  // data app/manager/page.tsx now fetches for Today too.
-  const seasonTotals = useSeasonTotals();
-  const rankByLeague = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof computeLeagueRank>>();
-    for (const r of rosters) {
-      map.set(r.leagueId, computeLeagueRank(leagueRostersByLeague[r.leagueId] ?? [], r.rosterId, seasonTotals));
-    }
-    return map;
-  }, [rosters, leagueRostersByLeague, seasonTotals]);
-
-  // Same "top-half" bucketing/naming as MyTeams.tsx's totals.topHalf/
-  // totals.ranked, kept identical across both pages on purpose.
-  const rankSnapshot = useMemo(() => {
-    let topHalf = 0, ranked = 0;
-    for (const r of rankByLeague.values()) {
-      if (r.rank != null) {
-        ranked += 1;
-        if (r.rank <= r.totalTeams / 2) topHalf += 1;
-      }
-    }
-    return { topHalf, ranked };
-  }, [rankByLeague]);
 
   // Real portfolio composition — every number here is a plain count over
   // already-fetched leagues/draftsByLeague, no new data. draftsByLeague
@@ -795,100 +726,6 @@ export default function ManagerDashboard({
             <StatCard icon={IconCalendar} color="var(--amber)" label="Upcoming drafts" value={portfolioComposition.upcomingDrafts} />
             <StatCard icon={IconFlag} color="var(--muted)" label="Drafted" value={portfolioComposition.completedDrafts} />
           </StatCardGrid>
-        </section>
-      )}
-
-      {leagues.length > 0 && (
-        <section className="sec">
-          <SectionHead title="Today" right="what needs you right now" />
-
-          <p className="hint">
-            Record {portfolio.wins}-{portfolio.losses}
-            {portfolio.ties > 0 ? `-${portfolio.ties}` : ""}
-            {portfolio.winPct != null ? ` (${portfolio.winPct.toFixed(0)}%)` : ""} overall ·{" "}
-            {rankSnapshot.ranked > 0 ? `${rankSnapshot.topHalf} of ${rankSnapshot.ranked} top-half leagues` : "no season data yet"}
-            {" · "}
-            {groups.draftsThisWeek} draft{groups.draftsThisWeek === 1 ? "" : "s"} this week · avg{" "}
-            {portfolio.avgPts != null ? portfolio.avgPts.toFixed(1) : "—"} pts/league
-          </p>
-
-          {groups.actionRequired.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <SectionHead
-                level={3}
-                title="Your team"
-                right={`${groups.actionRequired.length} leagues`}
-                style={{ marginBottom: 8 }}
-              />
-              <DataTable>
-                {groups.actionRequired.map(({ league, alerts }) => (
-                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <Badge tone={alertSeverityChipStyle("action_required")}>
-                      {alerts.length} issue{alerts.length === 1 ? "" : "s"}
-                    </Badge>
-                    <span className="portmeta">
-                      {alerts[0].message}
-                      {alerts.length > 1 ? ` +${alerts.length - 1} more` : ""}
-                    </span>
-                  </TableRow>
-                ))}
-              </DataTable>
-            </div>
-          )}
-
-          {groups.commissioner.length > 0 && (
-            <div style={{ marginTop: 18 }}>
-              <SectionHead
-                level={3}
-                title="Commissioner"
-                right={`${groups.commissioner.length} leagues`}
-                style={{ marginBottom: 8 }}
-              />
-              <DataTable>
-                {groups.commissioner.map(({ league, alerts }) => (
-                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <Badge tone={alertSeverityChipStyle("review")}>review</Badge>
-                    <span className="portmeta">{alerts[0].message}</span>
-                  </TableRow>
-                ))}
-              </DataTable>
-            </div>
-          )}
-
-          {(groups.upcomingDrafts.length > 0 || groups.review.length > 0) && (
-            <div style={{ marginTop: 18 }}>
-              <SectionHead
-                level={3}
-                title="Drafts & deadlines"
-                right={`${groups.upcomingDrafts.length + groups.review.length} leagues`}
-                style={{ marginBottom: 8 }}
-              />
-              <DataTable>
-                {groups.upcomingDrafts.map(({ league, draft }) => (
-                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <span className="portvalue">{mounted ? formatUpcoming(draft?.startTime) : "—"}</span>
-                  </TableRow>
-                ))}
-                {groups.review.map(({ league, alerts }) => (
-                  <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                    <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                    <Badge tone={alertSeverityChipStyle("review")}>review</Badge>
-                    <span className="portmeta">{alerts[0].message}</span>
-                  </TableRow>
-                ))}
-              </DataTable>
-            </div>
-          )}
-
-          {groups.actionRequired.length === 0 &&
-            groups.commissioner.length === 0 &&
-            groups.upcomingDrafts.length === 0 &&
-            groups.review.length === 0 && (
-              <p className="hint" style={{ marginTop: 18 }}>Nothing needs you right now.</p>
-            )}
         </section>
       )}
 
