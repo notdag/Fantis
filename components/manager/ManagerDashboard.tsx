@@ -892,178 +892,6 @@ export default function ManagerDashboard({
         </section>
       )}
 
-      {groups.allClear.length > 0 && (
-        <section className="sec">
-          <SectionHead
-            title="All clear"
-            right={
-              <button className="chip-filter" onClick={() => setShowAllClear((v) => !v)}>
-                {showAllClear ? "Hide" : `Show ${groups.allClear.length} leagues`}
-              </button>
-            }
-          />
-          {showAllClear && (
-            <DataTable>
-              {groups.allClear.map((league) => (
-                <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
-                  <span className="tname" style={{ flex: 1 }}>{league.name}</span>
-                  <Badge tone={alertSeverityChipStyle("clear")}>clear</Badge>
-                </TableRow>
-              ))}
-            </DataTable>
-          )}
-        </section>
-      )}
-
-      {leagues.length === 0 ? (
-        <section className="sec">
-          <p className="hint">
-            No leagues yet — connect a Sleeper username above to sync its real leagues in.
-          </p>
-        </section>
-      ) : (
-        <section className="sec">
-          <SectionHead title="All leagues" right="browse everything, not just exceptions" />
-
-          <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
-            <input
-              className="input"
-              placeholder="Search leagues…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{ maxWidth: 280 }}
-            />
-            <button
-              className={`chip-filter ${statusFilter === "ALL" ? "on" : ""}`}
-              onClick={() => setStatusFilter("ALL")}
-            >
-              All <span className="portmeta">{leagues.length}</span>
-            </button>
-            {STATUSES.map((s) => (
-              <button
-                key={s}
-                className={`chip-filter ${statusFilter === s ? "on" : ""}`}
-                onClick={() => setStatusFilter(s)}
-              >
-                {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
-              </button>
-            ))}
-            <select
-              className="select sm"
-              value={draftFilter}
-              onChange={(e) => setDraftFilter(e.target.value as typeof draftFilter)}
-            >
-              <option value="ALL">Any draft status</option>
-              <option value="pre_draft">Pre-draft</option>
-              <option value="drafting">Drafting</option>
-              <option value="complete">Drafted</option>
-              <option value="none">No draft synced</option>
-            </select>
-            {(groupOptions.named.length > 0 || groupOptions.ungrouped > 0) && (
-              <select
-                className="select sm"
-                value={groupFilter}
-                onChange={(e) => setGroupFilter(e.target.value)}
-              >
-                <option value="ALL">All groups</option>
-                {groupOptions.named.map(([name, count]) => (
-                  <option key={name} value={name}>
-                    {name} ({count})
-                  </option>
-                ))}
-                {groupOptions.ungrouped > 0 && (
-                  <option value={UNGROUPED}>Ungrouped ({groupOptions.ungrouped})</option>
-                )}
-              </select>
-            )}
-            <span style={{ flex: 1 }} />
-            {(["name", "teams", "record", "draftTime", "status", "synced"] as SortKey[]).map((k) => (
-              <button
-                key={k}
-                className={`sorth ${sortBy === k ? "on" : ""}`}
-                onClick={() => toggleSort(k)}
-              >
-                {k === "name"
-                  ? "Name"
-                  : k === "teams"
-                    ? "Teams"
-                    : k === "record"
-                      ? "Record"
-                      : k === "draftTime"
-                        ? "Draft"
-                        : k === "status"
-                          ? "Status"
-                          : "Synced"}
-                {sortBy === k && <span className="arrow">{sortDir === "asc" ? "↑" : "↓"}</span>}
-              </button>
-            ))}
-          </div>
-
-          <DataTable>
-            <TableHeaderRow>
-              <span style={{ flex: 1, marginLeft: 34 }}>League</span>
-              <span style={{ minWidth: 110 }}>My team</span>
-              <span style={{ minWidth: 76 }}>Status</span>
-              <span style={{ minWidth: 100 }}>Draft time</span>
-              <span style={{ minWidth: 50 }}>Teams</span>
-              <span style={{ minWidth: 70 }}>Scoring</span>
-              <span style={{ minWidth: 50 }}>Record</span>
-              <span style={{ width: 16 }} />
-            </TableHeaderRow>
-            {sorted.map((lg) => {
-              const draft = draftsByLeague[lg.id];
-              const record = rosterByLeague.get(lg.id);
-              const myTeamName = myTeamNameByLeague.get(lg.id);
-              const scoring = scoringFormatLabel(lg.settings);
-              return (
-                <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
-                  <LeagueAvatar league={lg} />
-                  <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
-                  <span className="portmeta" style={{ minWidth: 110 }}>{myTeamName ?? "—"}</span>
-                  <Badge tone={statusChipStyle(lg.status)}>{statusLabel(lg.status)}</Badge>
-                  <span className="portmeta" style={{ minWidth: 100 }}>
-                    {draft?.startTime ? (mounted ? formatUpcoming(draft.startTime) : "—") : "—"}
-                  </span>
-                  <span className="portmeta" style={{ minWidth: 50 }}>{lg.totalRosters}</span>
-                  <span className="portmeta" style={{ minWidth: 70 }}>{scoring ?? "—"}</span>
-                  <span className="portmeta" style={{ minWidth: 50 }}>
-                    {record ? `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ""}` : "—"}
-                  </span>
-                  <IconChevronRight width={16} height={16} style={{ color: "var(--dim)", flex: "none" }} />
-                </TableRow>
-              );
-            })}
-            {sorted.length === 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "32px 16px",
-                  color: "var(--dim)",
-                }}
-              >
-                <IconSearch width={22} height={22} />
-                <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No leagues found</span>
-                <span className="hint" style={{ margin: 0 }}>Try a different search or status filter.</span>
-              </div>
-            )}
-          </DataTable>
-          {sorted.length > 0 && (
-            <div className="hint" style={{ marginTop: 8, display: "flex", justifyContent: "space-between" }}>
-              <span>
-                {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
-                {sorted.length !== leagues.length ? ` of ${leagues.length}` : ""}
-              </span>
-              <span>
-                {sorted.reduce((sum, lg) => sum + lg.totalRosters, 0)} total teams
-              </span>
-            </div>
-          )}
-        </section>
-      )}
-
       {rosters.length > 0 && (
         <section className="sec">
           <SectionHead title="My Portfolio" right="playoff outlook, league breakdown, and player exposure across everything" />
@@ -1327,6 +1155,178 @@ export default function ManagerDashboard({
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {groups.allClear.length > 0 && (
+        <section className="sec">
+          <SectionHead
+            title="All clear"
+            right={
+              <button className="chip-filter" onClick={() => setShowAllClear((v) => !v)}>
+                {showAllClear ? "Hide" : `Show ${groups.allClear.length} leagues`}
+              </button>
+            }
+          />
+          {showAllClear && (
+            <DataTable>
+              {groups.allClear.map((league) => (
+                <TableRow as="link" href={`/manager/${league.id}`} key={league.id}>
+                  <span className="tname" style={{ flex: 1 }}>{league.name}</span>
+                  <Badge tone={alertSeverityChipStyle("clear")}>clear</Badge>
+                </TableRow>
+              ))}
+            </DataTable>
+          )}
+        </section>
+      )}
+
+      {leagues.length === 0 ? (
+        <section className="sec">
+          <p className="hint">
+            No leagues yet — connect a Sleeper username above to sync its real leagues in.
+          </p>
+        </section>
+      ) : (
+        <section className="sec">
+          <SectionHead title="All leagues" right="browse everything, not just exceptions" />
+
+          <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
+            <input
+              className="input"
+              placeholder="Search leagues…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              style={{ maxWidth: 280 }}
+            />
+            <button
+              className={`chip-filter ${statusFilter === "ALL" ? "on" : ""}`}
+              onClick={() => setStatusFilter("ALL")}
+            >
+              All <span className="portmeta">{leagues.length}</span>
+            </button>
+            {STATUSES.map((s) => (
+              <button
+                key={s}
+                className={`chip-filter ${statusFilter === s ? "on" : ""}`}
+                onClick={() => setStatusFilter(s)}
+              >
+                {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
+              </button>
+            ))}
+            <select
+              className="select sm"
+              value={draftFilter}
+              onChange={(e) => setDraftFilter(e.target.value as typeof draftFilter)}
+            >
+              <option value="ALL">Any draft status</option>
+              <option value="pre_draft">Pre-draft</option>
+              <option value="drafting">Drafting</option>
+              <option value="complete">Drafted</option>
+              <option value="none">No draft synced</option>
+            </select>
+            {(groupOptions.named.length > 0 || groupOptions.ungrouped > 0) && (
+              <select
+                className="select sm"
+                value={groupFilter}
+                onChange={(e) => setGroupFilter(e.target.value)}
+              >
+                <option value="ALL">All groups</option>
+                {groupOptions.named.map(([name, count]) => (
+                  <option key={name} value={name}>
+                    {name} ({count})
+                  </option>
+                ))}
+                {groupOptions.ungrouped > 0 && (
+                  <option value={UNGROUPED}>Ungrouped ({groupOptions.ungrouped})</option>
+                )}
+              </select>
+            )}
+            <span style={{ flex: 1 }} />
+            {(["name", "teams", "record", "draftTime", "status", "synced"] as SortKey[]).map((k) => (
+              <button
+                key={k}
+                className={`sorth ${sortBy === k ? "on" : ""}`}
+                onClick={() => toggleSort(k)}
+              >
+                {k === "name"
+                  ? "Name"
+                  : k === "teams"
+                    ? "Teams"
+                    : k === "record"
+                      ? "Record"
+                      : k === "draftTime"
+                        ? "Draft"
+                        : k === "status"
+                          ? "Status"
+                          : "Synced"}
+                {sortBy === k && <span className="arrow">{sortDir === "asc" ? "↑" : "↓"}</span>}
+              </button>
+            ))}
+          </div>
+
+          <DataTable>
+            <TableHeaderRow>
+              <span style={{ flex: 1, marginLeft: 34 }}>League</span>
+              <span style={{ minWidth: 110 }}>My team</span>
+              <span style={{ minWidth: 76 }}>Status</span>
+              <span style={{ minWidth: 100 }}>Draft time</span>
+              <span style={{ minWidth: 50 }}>Teams</span>
+              <span style={{ minWidth: 70 }}>Scoring</span>
+              <span style={{ minWidth: 50 }}>Record</span>
+              <span style={{ width: 16 }} />
+            </TableHeaderRow>
+            {sorted.map((lg) => {
+              const draft = draftsByLeague[lg.id];
+              const record = rosterByLeague.get(lg.id);
+              const myTeamName = myTeamNameByLeague.get(lg.id);
+              const scoring = scoringFormatLabel(lg.settings);
+              return (
+                <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
+                  <LeagueAvatar league={lg} />
+                  <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
+                  <span className="portmeta" style={{ minWidth: 110 }}>{myTeamName ?? "—"}</span>
+                  <Badge tone={statusChipStyle(lg.status)}>{statusLabel(lg.status)}</Badge>
+                  <span className="portmeta" style={{ minWidth: 100 }}>
+                    {draft?.startTime ? (mounted ? formatUpcoming(draft.startTime) : "—") : "—"}
+                  </span>
+                  <span className="portmeta" style={{ minWidth: 50 }}>{lg.totalRosters}</span>
+                  <span className="portmeta" style={{ minWidth: 70 }}>{scoring ?? "—"}</span>
+                  <span className="portmeta" style={{ minWidth: 50 }}>
+                    {record ? `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ""}` : "—"}
+                  </span>
+                  <IconChevronRight width={16} height={16} style={{ color: "var(--dim)", flex: "none" }} />
+                </TableRow>
+              );
+            })}
+            {sorted.length === 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "32px 16px",
+                  color: "var(--dim)",
+                }}
+              >
+                <IconSearch width={22} height={22} />
+                <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No leagues found</span>
+                <span className="hint" style={{ margin: 0 }}>Try a different search or status filter.</span>
+              </div>
+            )}
+          </DataTable>
+          {sorted.length > 0 && (
+            <div className="hint" style={{ marginTop: 8, display: "flex", justifyContent: "space-between" }}>
+              <span>
+                {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
+                {sorted.length !== leagues.length ? ` of ${leagues.length}` : ""}
+              </span>
+              <span>
+                {sorted.reduce((sum, lg) => sum + lg.totalRosters, 0)} total teams
+              </span>
+            </div>
+          )}
         </section>
       )}
     </>
