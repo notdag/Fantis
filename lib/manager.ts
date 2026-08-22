@@ -235,6 +235,24 @@ export function scoringFormatLabel(settings: unknown): string | null {
   return `${rec} pt/rec`;
 }
 
+export interface PlayoffFormat {
+  playoffTeams: number | null;
+  playoffWeekStart: number | null;
+}
+
+// Real Sleeper league settings — playoff_teams/playoff_week_start,
+// confirmed live against a real league (`GET /league/{id}`) before this
+// was written, not assumed. Used for the real Playoff % estimate on
+// Command Center's Portfolio section.
+export function playoffFormat(settings: unknown): PlayoffFormat {
+  if (!settings || typeof settings !== "object") return { playoffTeams: null, playoffWeekStart: null };
+  const s = settings as Record<string, unknown>;
+  return {
+    playoffTeams: typeof s.playoff_teams === "number" ? s.playoff_teams : null,
+    playoffWeekStart: typeof s.playoff_week_start === "number" ? s.playoff_week_start : null,
+  };
+}
+
 export function formatRelative(iso: string | null | undefined): string {
   if (!iso) return "never";
   const date = new Date(iso);

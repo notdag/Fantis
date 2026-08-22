@@ -277,6 +277,7 @@ export async function syncAccount(
                 settings.fpts_against != null
                   ? settings.fpts_against + (settings.fpts_against_decimal ?? 0) / 100
                   : null,
+              maxPtsFor: settings.ppts != null ? settings.ppts + (settings.ppts_decimal ?? 0) / 100 : null,
               lastSyncedAt: new Date(),
             },
             update: {
@@ -294,6 +295,7 @@ export async function syncAccount(
                 settings.fpts_against != null
                   ? settings.fpts_against + (settings.fpts_against_decimal ?? 0) / 100
                   : null,
+              maxPtsFor: settings.ppts != null ? settings.ppts + (settings.ppts_decimal ?? 0) / 100 : null,
               lastSyncedAt: new Date(),
             },
           });

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import ManagerDashboard from "@/components/manager/ManagerDashboard";
 import { db } from "@/lib/db";
+import { getState, currentProjectionWeek } from "@/lib/sleeper";
 import type {
   ManagedAccount,
   ManagedAlert,
@@ -55,7 +56,15 @@ export default async function ManagerPage() {
       }),
       db.automationPing.findUnique({ where: { id: "singleton" } }),
       db.roster.findMany({
-        select: { leagueId: true, rosterId: true, wins: true, losses: true, ties: true, fpts: true },
+        select: {
+          leagueId: true,
+          rosterId: true,
+          wins: true,
+          losses: true,
+          ties: true,
+          fpts: true,
+          maxPtsFor: true,
+        },
       }),
       // Every team's roster in every league — already-synced data, zero new
       // Sleeper calls (see LeagueRoster in prisma/schema.prisma). Same fetch
@@ -141,6 +150,12 @@ export default async function ManagerPage() {
     };
   }
 
+  // Real current NFL week (same getState()/currentProjectionWeek() pattern
+  // app/api/manager/sync/route.ts already uses) — one cheap Sleeper call at
+  // page load, not per-league, used for the real Playoff % estimate.
+  const state = await getState().catch(() => null);
+  const currentWeek = state ? currentProjectionWeek(state) : 1;
+
   return (
     <ManagerDashboard
       accounts={accounts}
@@ -151,6 +166,7 @@ export default async function ManagerPage() {
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       rosters={rosterRows}
       leagueRostersByLeague={leagueRostersByLeague}
+      currentWeek={currentWeek}
     />
   );
 }

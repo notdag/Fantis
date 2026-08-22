@@ -220,6 +220,11 @@ model Roster {
   ties           Int       @default(0)
   fpts           Float?
   fptsAgainst    Float?
+  // Real Sleeper "potential points" (settings.ppts/ppts_decimal) — what
+  // the optimal lineup would have scored every week. Confirmed real via
+  // a live Sleeper roster (not fabricated): absent pre-season (no real
+  // box scores to compute it from yet), populated once games are played.
+  maxPtsFor      Float?
   lastSyncedAt   DateTime?
 }
 

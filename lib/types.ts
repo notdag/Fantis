@@ -30,6 +30,12 @@ export interface SleeperRosterSettings {
   fpts_decimal?: number;
   fpts_against?: number;
   fpts_against_decimal?: number;
+  // Real "potential points" — what the optimal lineup would have scored
+  // every week. Confirmed real via a live roster fetch; absent pre-season
+  // (no real box scores yet to compute it from), populated once games
+  // are played.
+  ppts?: number;
+  ppts_decimal?: number;
   waiver_position?: number;
   waiver_budget_used?: number;
 }
