@@ -83,6 +83,24 @@
    .mgrstatvalue verbatim — MyTeams.tsx's own .mgrstats grid is untouched. */
 .mgrherorow{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:20px 0}
 
+/* Breakdown cards (My Portfolio, 2026-08d) — a real per-card sub-count
+   list underneath the usual icon+label+summary header, reusing the same
+   panel/border/radius tokens as .mgrstat rather than a new visual
+   language. Bigger padding/icon than .mgrstat since the summary sentence
+   plus 3-4 breakdown rows need more room than a single number. */
+.mgrbreakdowngrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin:20px 0}
+.mgrbreakdowncard{background:var(--panel);border:1px solid var(--line);border-radius:var(--mgr-radius);padding:20px}
+.mgrbreakdownhead{display:flex;align-items:flex-start;gap:14px;margin-bottom:16px}
+.mgrbreakdownicon{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;
+  justify-content:center;flex:none}
+.mgrbreakdowntext{min-width:0}
+.mgrbreakdownlabel{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:0 0 4px}
+.mgrbreakdowndesc{font-size:14px;font-weight:650;color:var(--bone);margin:0;line-height:1.4}
+.mgrbreakdownrows{border-top:1px solid var(--line-soft);padding-top:12px;display:flex;flex-direction:column;gap:10px}
+.mgrbreakdownrow{display:flex;align-items:center;justify-content:space-between;font-size:13px;gap:12px}
+.mgrbreakdownrow span:first-child{color:var(--muted)}
+.mgrbreakdownrow span:last-child{color:var(--bone);font-weight:700;white-space:nowrap}
+
 /* overflow-x:auto (not hidden) so a row wider than its container scrolls
    within the table instead of clipping content or blowing out the whole
    page's width — the spec's explicit "tables scroll horizontally, page

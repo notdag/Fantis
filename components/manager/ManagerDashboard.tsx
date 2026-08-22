@@ -16,8 +16,9 @@ import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { posChipStyle } from "@/lib/players";
 import { computeStanding, type LeagueRosterRow } from "@/lib/leagueRank";
-import { IconFlag, IconCheck, IconUsers, IconCalendar } from "./MgrIcons";
+import { IconFlag, IconCheck, IconUsers, IconCalendar, IconStar, IconArrowUp } from "./MgrIcons";
 import { StatCard, StatCardGrid } from "./StatCard";
+import { BreakdownCard, BreakdownCardGrid } from "./BreakdownCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { SectionHead } from "./PageHead";
 import { LeagueAvatar, PlayerAvatar } from "./Avatar";
@@ -55,8 +56,6 @@ function tierTone(color: string) {
     borderColor: `color-mix(in srgb, ${color} 52%, transparent)`,
   };
 }
-
-const DEPTH_COLOR: Record<string, string> = { Strong: "var(--mint)", Average: "var(--muted)", Thin: "var(--red)" };
 
 function computePlayoffPct(
   standing: number | null,
@@ -305,6 +304,14 @@ export default function ManagerDashboard({
     return counts;
   }, [playoffPctByLeague]);
 
+  // One-line real summary for the Playoff Outlook breakdown card — "still
+  // simulating" is every league not yet in the Likely In (60%+) bucket,
+  // i.e. still genuinely uncertain by this same real estimate.
+  const playoffOutlookDesc = useMemo(() => {
+    const stillSimulating = playoffOutlook.bubble + playoffOutlook.outside + playoffOutlook.longshot;
+    return `${playoffOutlook.likely} team${playoffOutlook.likely === 1 ? "" : "s"} at 60%+ playoff odds. ${stillSimulating} still simulating.`;
+  }, [playoffOutlook]);
+
   // Real per-player cross-league exposure — exact port of
   // usePortfolio.ts's exposure loop, restricted to QB/RB/WR/TE.
   const EXPOSURE_POS = useMemo(() => new Set(["QB", "RB", "WR", "TE"]), []);
@@ -370,6 +377,19 @@ export default function ManagerDashboard({
       return { pos, avgValue, tier };
     });
   }, [rosters, leagueRostersByLeague, pmap, tradeValues, EXPOSURE_POS]);
+
+  // One-line real summary for the Positional Depth breakdown card — lists
+  // whichever positions are real Strong/Thin outliers (skips "Average"
+  // since that's the non-notable default).
+  const positionalDepthDesc = useMemo(() => {
+    const strong = positionalDepth.filter((d) => d.tier === "Strong").map((d) => d.pos);
+    const thin = positionalDepth.filter((d) => d.tier === "Thin").map((d) => d.pos);
+    const parts: string[] = [];
+    if (strong.length > 0) parts.push(`strong at ${strong.join(" and ")}`);
+    if (thin.length > 0) parts.push(`thin at ${thin.join(" and ")}`);
+    if (parts.length === 0) return "Evenly balanced across positions.";
+    return parts.join(", ").replace(/^./, (c) => c.toUpperCase()) + ".";
+  }, [positionalDepth]);
 
   // League Breakdown rows — one per league where I have a real roster,
   // real record/FC-rank/playoff%/points-for/max-points-for/standing.
@@ -453,6 +473,17 @@ export default function ManagerDashboard({
     }
     return { winningLeagues, evenLeagues, losingLeagues };
   }, [rosters]);
+
+  // One-line real summary for the Record Snapshot breakdown card — a
+  // simple real comparison of winning vs. losing league counts, not a
+  // fabricated verdict.
+  const recordSnapshotDesc = useMemo(() => {
+    const { winningLeagues, losingLeagues } = portfolio;
+    if (winningLeagues === losingLeagues) return "Evenly split between winning and losing.";
+    return winningLeagues > losingLeagues
+      ? "Leaning winning across your portfolio."
+      : "Leaning losing across your portfolio.";
+  }, [portfolio]);
 
   // Real portfolio composition — every number here is a plain count over
   // already-fetched leagues/draftsByLeague, no new data. draftsByLeague
@@ -589,35 +620,38 @@ export default function ManagerDashboard({
         <section className="sec">
           <SectionHead title="My Portfolio" right="playoff outlook, league breakdown, and player exposure across everything" />
 
-          <StatCardGrid variant="grid">
-            <StatCard
-              icon={IconFlag}
-              color={TIER_COLOR.likely}
+          <BreakdownCardGrid>
+            <BreakdownCard
+              icon={IconStar}
+              color="var(--amber)"
               label="Playoff Outlook"
-              value={`${playoffOutlook.likely} likely in`}
-              sub={`${playoffOutlook.bubble} bubble · ${playoffOutlook.outside} outside · ${playoffOutlook.longshot} longshot`}
+              description={playoffOutlookDesc}
+              rows={[
+                { label: "Likely In (60%+)", value: playoffOutlook.likely },
+                { label: "Bubble (40-60%)", value: playoffOutlook.bubble },
+                { label: "Outside (10-40%)", value: playoffOutlook.outside },
+                { label: "Longshots (<10%)", value: playoffOutlook.longshot },
+              ]}
             />
-            <StatCard
-              icon={IconCheck}
+            <BreakdownCard
+              icon={IconArrowUp}
               color="var(--mint)"
               label="Record Snapshot"
-              value={`${portfolio.winningLeagues} winning`}
-              sub={`${portfolio.evenLeagues} .500 · ${portfolio.losingLeagues} losing`}
+              description={recordSnapshotDesc}
+              rows={[
+                { label: "Winning Record", value: portfolio.winningLeagues },
+                { label: ".500 Teams", value: portfolio.evenLeagues },
+                { label: "Losing Record", value: portfolio.losingLeagues },
+              ]}
             />
-            <StatCard
+            <BreakdownCard
               icon={IconUsers}
+              color="var(--rb)"
               label="Positional Depth"
-              value={
-                <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                  {positionalDepth.map((d) => (
-                    <Badge key={d.pos} tone={tierTone(DEPTH_COLOR[d.tier])}>
-                      {d.pos} {d.tier}
-                    </Badge>
-                  ))}
-                </span>
-              }
+              description={positionalDepthDesc}
+              rows={positionalDepth.map((d) => ({ label: d.pos, value: d.tier }))}
             />
-          </StatCardGrid>
+          </BreakdownCardGrid>
           <p className="hint" style={{ marginTop: 8 }}>
             Playoff % is a real estimate from your current standing, roster strength, and how far
             into the season you are — not a full schedule simulation. Positional Depth compares
