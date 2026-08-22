@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getPlayers, getState, currentProjectionWeek, playerPhotoUrl } from "@/lib/sleeper";
+import { getState, currentProjectionWeek } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
+import { usePlayerMap } from "@/lib/usePlayerMap";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
-import type { PlayerMap } from "@/lib/types";
+import { PlayerAvatar } from "./Avatar";
 import { IconCalendar, IconFlag, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
-import { DataTable, TableRow } from "./DataRow";
+import { DataTable, TableRow, TableRowSkeleton } from "./DataRow";
 
 export interface ByeLeagueRow {
   leagueId: string;
@@ -16,38 +17,20 @@ export interface ByeLeagueRow {
   players: string[];
 }
 
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
-
 export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
   const [currentWeek, setCurrentWeek] = useState<number | null>(null);
+  const [stateError, setStateError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
     getState()
       .then((s) => {
         if (!cancelled) setCurrentWeek(currentProjectionWeek(s));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setStateError(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -74,7 +57,7 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
   }, [leagues, pmap, currentWeek]);
 
   const weeks = Array.from(byWeek.keys()).sort((a, b) => a - b);
-  const loading = !pmap || currentWeek == null;
+  const loading = (pmapLoading || (currentWeek == null && !stateError)) && !pmapError;
   const thisWeekCount = currentWeek != null ? (byWeek.get(currentWeek)?.length ?? 0) : 0;
   const totalUpcoming = weeks.reduce((sum, w) => sum + (byWeek.get(w)?.length ?? 0), 0);
   const nextWeek = weeks[0];
@@ -92,7 +75,7 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
             </>
           }
         />
-        {!loading && (
+        {!loading && !pmapError && !(stateError && currentWeek == null) && (
           <StatCardGrid variant="hero">
             <StatCard
               icon={IconCalendar}
@@ -119,9 +102,24 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
         )}
       </section>
 
-      {loading ? (
+      {pmapError ? (
         <section className="sec">
-          <p className="hint">Loading real roster and schedule data…</p>
+          <p className="hint">
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        </section>
+      ) : stateError && currentWeek == null ? (
+        <section className="sec">
+          <p className="hint">Couldn&rsquo;t load the current NFL week — bye planning needs it to know what&rsquo;s still upcoming.</p>
+        </section>
+      ) : loading ? (
+        <section className="sec">
+          <DataTable>
+            <TableRowSkeleton count={4} />
+          </DataTable>
         </section>
       ) : weeks.length === 0 ? (
         <section className="sec">
@@ -141,7 +139,7 @@ export default function ByePlanner({ leagues }: { leagues: ByeLeagueRow[] }) {
                   const entry = pmap![r.playerId];
                   return (
                     <TableRow as="link" href={`/manager/${r.leagueId}`} key={`${r.leagueId}-${r.playerId}-${i}`}>
-                      <Avatar playerId={r.playerId} pos={entry.p} size={26} />
+                      <PlayerAvatar playerId={r.playerId} pos={entry.p} size={26} />
                       <span className="mgrplayername">{entry.n}</span>
                       {entry.p && (
                         <span className="pos" style={posChipStyle(entry.p)}>

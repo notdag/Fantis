@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
-import { posChipStyle } from "@/lib/players";
 import { isSnoozed } from "@/lib/manager";
 import { useSeasonTotals, pickReplacementCandidate } from "@/lib/useDropCandidates";
+import { usePlayerMap } from "@/lib/usePlayerMap";
 import AlertRow from "./AlertRow";
+import { PlayerAvatar } from "./Avatar";
 import { PageHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
-import type { PlayerMap } from "@/lib/types";
 
 export interface ActionItem {
   id: string;
@@ -36,22 +35,6 @@ export interface ActionQueueRoster {
 // player to suggest a same-position swap for.
 const REPLACEABLE_TYPES = new Set(["injured_starter", "questionable_starter", "bye_starter"]);
 
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
-
 export default function ActionQueue({
   items,
   rosters,
@@ -64,18 +47,7 @@ export default function ActionQueue({
     setMounted(true);
   }, []);
 
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap } = usePlayerMap();
   const seasonTotals = useSeasonTotals();
 
   const [showSnoozed, setShowSnoozed] = useState(false);
@@ -150,7 +122,7 @@ export default function ActionQueue({
                     replacement && replacementLabel ? (
                       <div className="mgrplayer" style={{ marginRight: 8 }}>
                         <span className="portmeta">start instead:</span>
-                        <Avatar playerId={replacement.playerId} pos={replacementLabel.p} size={22} />
+                        <PlayerAvatar playerId={replacement.playerId} pos={replacementLabel.p} size={22} />
                         <span className="portmeta" style={{ color: "var(--bone)" }}>
                           {replacementLabel.n}
                         </span>

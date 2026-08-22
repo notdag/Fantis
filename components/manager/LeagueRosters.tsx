@@ -1,31 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { type ManagedLeague } from "@/lib/manager";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
+import { usePlayerMap } from "@/lib/usePlayerMap";
 import { sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
+import { PlayerAvatar } from "./Avatar";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { SectionHead } from "./PageHead";
-import { DataTable, TableRow } from "./DataRow";
-import type { PlayerMap } from "@/lib/types";
-
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
+import { DataTable, TableRow, TableRowSkeleton } from "./DataRow";
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
 
@@ -42,18 +26,7 @@ export default function LeagueRosters({
   leagueRosters: LeagueRosterRow[];
   myRosterId: number | null;
 }) {
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   const seasonTotals = useSeasonTotals();
   const OFFENSE_POS = useMemo(() => new Set(["QB", "RB", "WR", "TE"]), []);
@@ -80,7 +53,18 @@ export default function LeagueRosters({
     <>
       <LeagueIdentityBar league={league} />
 
-      {orderedTeams.length === 0 ? (
+      {pmapError && (
+        <section className="sec">
+          <p className="hint">
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        </section>
+      )}
+
+      {pmapError ? null : orderedTeams.length === 0 ? (
         <section className="sec">
           <p className="hint">No rosters synced yet for this league.</p>
         </section>
@@ -119,12 +103,14 @@ export default function LeagueRosters({
                   <TableRow>
                     <span className="hint">No real roster data synced for this team yet.</span>
                   </TableRow>
+                ) : pmapLoading ? (
+                  <TableRowSkeleton count={players.length} />
                 ) : (
                   players.map((id) => {
                     const entry = pmap?.[id];
                     return (
                       <TableRow key={id}>
-                        <Avatar playerId={id} pos={entry?.p} size={26} />
+                        <PlayerAvatar playerId={id} pos={entry?.p} size={26} />
                         <span className="tname" style={{ flex: 1 }}>{entry?.n ?? id}</span>
                         {entry?.p && (
                           <span className="pos" style={posChipStyle(entry.p)}>
@@ -148,7 +134,7 @@ export default function LeagueRosters({
           <DataTable>
             {bestAvailable.map((p) => (
               <TableRow key={p.id}>
-                <Avatar playerId={p.id} pos={p.pos} size={26} />
+                <PlayerAvatar playerId={p.id} pos={p.pos} size={26} />
                 <span className="tname" style={{ flex: 1 }}>{p.name}</span>
                 <span className="pos" style={posChipStyle(p.pos)}>{p.pos}</span>
                 <span className="portmeta">{p.team}</span>

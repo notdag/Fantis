@@ -1,27 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { PlayerAvatar } from "./Avatar";
+import { TableRowSkeleton } from "./DataRow";
 import type { PlayerMap } from "@/lib/types";
-
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
 
 function Side({
   playerId,
@@ -45,7 +30,7 @@ function Side({
   const entry = pmap?.[playerId];
   const content = (
     <>
-      <Avatar playerId={playerId} pos={entry?.p} size={26} />
+      <PlayerAvatar playerId={playerId} pos={entry?.p} size={26} />
       <div>
         <div className="mgrplayername">{entry?.n ?? playerId}</div>
         {entry?.p && (
@@ -99,18 +84,7 @@ export default function MatchupDetail({
   opponentStartersPoints: number[];
   rosterPositions: string[];
 }) {
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   const slots = buildStartingSlots(rosterPositions);
   const leading = opponentPoints != null ? myPoints - opponentPoints : null;
@@ -150,16 +124,31 @@ export default function MatchupDetail({
           <h2 style={{ fontSize: 18 }}>Starters</h2>
           <span className="rt">who started who</span>
         </div>
-        <div className="mgrtable">
-          {slots.map((slot, i) => (
-            <div className="mgrrow static" key={slot.key}>
-              <Side playerId={myStarters[i]} points={myStartersPoints[i]} pmap={pmap} align="left" />
-              <span className="portmeta" style={{ minWidth: 44, textAlign: "center" }}>{slot.code}</span>
-              <Side playerId={opponentStarters[i]} points={opponentStartersPoints[i]} pmap={pmap} align="right" />
-            </div>
-          ))}
-          {slots.length === 0 && <p className="hint" style={{ padding: 16 }}>No roster format synced for this league yet.</p>}
-        </div>
+        {pmapError ? (
+          <p className="hint">
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        ) : (
+          <div className="mgrtable">
+            {pmapLoading ? (
+              <TableRowSkeleton count={slots.length || 3} />
+            ) : (
+              <>
+                {slots.map((slot, i) => (
+                  <div className="mgrrow static" key={slot.key}>
+                    <Side playerId={myStarters[i]} points={myStartersPoints[i]} pmap={pmap} align="left" />
+                    <span className="portmeta" style={{ minWidth: 44, textAlign: "center" }}>{slot.code}</span>
+                    <Side playerId={opponentStarters[i]} points={opponentStartersPoints[i]} pmap={pmap} align="right" />
+                  </div>
+                ))}
+                {slots.length === 0 && <p className="hint" style={{ padding: 16 }}>No roster format synced for this league yet.</p>}
+              </>
+            )}
+          </div>
+        )}
         <p className="hint" style={{ marginTop: 10 }}>
           Points shown are real, from Sleeper&rsquo;s own weekly scoring — 0.0 before kickoff, live
           once games start.

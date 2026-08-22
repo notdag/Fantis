@@ -50,3 +50,19 @@ export function TableRow(props: TableRowProps) {
     </div>
   );
 }
+
+// Placeholder rows matching .mgrrow's real dimensions (avatar + one line),
+// shown while a client fetch (usePlayerMap, etc.) is in flight so layout
+// doesn't jump once the real content arrives.
+export function TableRowSkeleton({ count = 3 }: { count?: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div className="mgrrow mgrskel static" key={i}>
+          <span className="mgrskelavatar" />
+          <span className="mgrskelline" style={{ flex: 1 }} />
+        </div>
+      ))}
+    </>
+  );
+}

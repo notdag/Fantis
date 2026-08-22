@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
+import { useMemo, useState } from "react";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { PlayerAvatar } from "./Avatar";
 import { IconFlag, IconCheck, IconUsers, IconSearch } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
-import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
+import type { PlayerMapEntry } from "@/lib/types";
 
 export interface PlayerLeagueRow {
   leagueId: string;
@@ -27,22 +28,6 @@ const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
 
 type Status = "starting" | "bench" | "ir" | "not_rostered";
 
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
-
 export default function PlayerLeagues({
   leagues,
   alertRefs,
@@ -50,18 +35,7 @@ export default function PlayerLeagues({
   leagues: PlayerLeagueRow[];
   alertRefs: PlayerAlertRef[];
 }) {
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -174,7 +148,18 @@ export default function PlayerLeagues({
           />
         </div>
 
-        {!selectedId && searchResults.length > 0 && (
+        {!selectedId && query.trim().length >= 2 && pmapError && (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        )}
+        {!selectedId && query.trim().length >= 2 && pmapLoading && !pmapError && (
+          <p className="hint" style={{ marginTop: 8 }}>Loading real player data…</p>
+        )}
+        {!selectedId && !pmapLoading && !pmapError && searchResults.length > 0 && (
           <div style={{ marginTop: 8, maxWidth: 400 }}>
             <DataTable>
               {searchResults.map(([id, p]) => (
@@ -186,7 +171,7 @@ export default function PlayerLeagues({
                     setQuery(p.n);
                   }}
                 >
-                  <Avatar playerId={id} pos={p.p} size={28} />
+                  <PlayerAvatar playerId={id} pos={p.p} size={28} />
                   <span className="tname" style={{ flex: 1 }}>{p.n}</span>
                   <span className="pos" style={posChipStyle(p.p)}>
                     {p.p}
@@ -197,7 +182,7 @@ export default function PlayerLeagues({
             </DataTable>
           </div>
         )}
-        {!selectedId && query.trim().length >= 2 && searchResults.length === 0 && (
+        {!selectedId && !pmapLoading && !pmapError && query.trim().length >= 2 && searchResults.length === 0 && (
           <div
             style={{
               display: "flex",
@@ -217,6 +202,25 @@ export default function PlayerLeagues({
           </div>
         )}
       </section>
+
+      {!selectedId && pmapLoading && !pmapError && (
+        <section className="sec">
+          <SectionHead title="Position exposure" right={`across ${leagues.length} synced leagues`} />
+          <p className="hint">Loading real player data…</p>
+        </section>
+      )}
+
+      {!selectedId && pmapError && (
+        <section className="sec">
+          <SectionHead title="Position exposure" right={`across ${leagues.length} synced leagues`} />
+          <p className="hint">
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        </section>
+      )}
 
       {!selectedId && exposure && (
         <section className="sec">
@@ -246,7 +250,7 @@ export default function PlayerLeagues({
                           setQuery(entry?.n ?? "");
                         }}
                       >
-                        <Avatar playerId={playerId} pos={entry?.p} size={22} />
+                        <PlayerAvatar playerId={playerId} pos={entry?.p} size={22} />
                         <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
                         <span className="portvalue">{pct}%</span>
                       </TableRow>
@@ -265,7 +269,7 @@ export default function PlayerLeagues({
             <SectionHead
               title={
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Avatar playerId={selectedId} pos={selected?.p} size={40} />
+                  <PlayerAvatar playerId={selectedId} pos={selected?.p} size={40} />
                   {selected?.n ?? selectedId}
                 </span>
               }

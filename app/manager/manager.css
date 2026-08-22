@@ -88,6 +88,13 @@
 
 .mgravatar{border-radius:999px;object-fit:cover;background:var(--ink);flex:none;
   border:2px solid var(--line);display:block}
+.mgravatarfallback{display:flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;background:var(--ink)}
+
+.mgrskelavatar{width:26px;height:26px;border-radius:999px;background:var(--line-soft);flex:none}
+.mgrskelline{height:12px;border-radius:4px;background:var(--line-soft)}
+.mgrskel .mgrskelavatar,.mgrskel .mgrskelline{animation:mgrskelpulse 1.4s ease-in-out infinite}
+@keyframes mgrskelpulse{0%,100%{opacity:.5}50%{opacity:1}}
 
 .mgrplayer{display:flex;align-items:center;gap:8px;min-width:0}
 .mgrplayername{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

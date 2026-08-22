@@ -33,9 +33,10 @@ function leagueAvatarId(settings: unknown): string | null {
 }
 
 function LeagueAvatar({ league }: { league: ManagedLeague }) {
+  const [failed, setFailed] = useState(false);
   const id = leagueAvatarId(league.settings);
   const url = avatar(id);
-  if (!url) {
+  if (!url || failed) {
     return (
       <span
         className="mgravatar"
@@ -62,9 +63,7 @@ function LeagueAvatar({ league }: { league: ManagedLeague }) {
       src={url}
       alt=""
       style={{ width: 24, height: 24 }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
+      onError={() => setFailed(true)}
     />
   );
 }

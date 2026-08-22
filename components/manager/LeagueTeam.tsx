@@ -2,29 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { formatRelative, type ManagedLeague, type ManagedRoster } from "@/lib/manager";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { PlayerAvatar } from "./Avatar";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { SectionHead } from "./PageHead";
-import { DataTable, TableRow } from "./DataRow";
+import { DataTable, TableRow, TableRowSkeleton } from "./DataRow";
 import type { PlayerMap } from "@/lib/types";
-
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
 
 function playerLabel(pmap: PlayerMap | null, id: string) {
   const entry = pmap?.[id];
@@ -35,10 +20,12 @@ function playerLabel(pmap: PlayerMap | null, id: string) {
 function RosterSection({
   roster,
   pmap,
+  pmapLoading,
   rosterPositions,
 }: {
   roster: ManagedRoster;
   pmap: PlayerMap | null;
+  pmapLoading: boolean;
   rosterPositions: string[];
 }) {
   const slots = buildStartingSlots(rosterPositions);
@@ -46,6 +33,10 @@ function RosterSection({
   const bench = roster.players.filter(
     (id) => !roster.starters.includes(id) && !roster.reserve.includes(id)
   );
+
+  if (pmapLoading) {
+    return <DataTable><TableRowSkeleton count={slots.length} /></DataTable>;
+  }
 
   return (
     <DataTable>
@@ -64,7 +55,7 @@ function RosterSection({
               </span>
             ) : (
               <>
-                <Avatar playerId={playerId} pos={label!.pos} size={26} />
+                <PlayerAvatar playerId={playerId} pos={label!.pos} size={26} />
                 <span className="tname" style={{ flex: 1 }}>{label!.name}</span>
                 {label!.pos && (
                   <span className="pos" style={posChipStyle(label!.pos)}>
@@ -115,18 +106,7 @@ export default function LeagueTeam({
     setMounted(true);
   }, []);
 
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   return (
     <>
@@ -137,7 +117,16 @@ export default function LeagueTeam({
             title="My roster"
             right={`${roster.waiverPosition != null ? `waiver #${roster.waiverPosition} · ` : ""}${roster.faabUsed != null ? `$${roster.faabUsed} FAAB used · ` : ""}synced ${mounted ? formatRelative(roster.lastSyncedAt) : "—"}`}
           />
-          <RosterSection roster={roster} pmap={pmap} rosterPositions={rosterPositions} />
+          {pmapError ? (
+            <p className="hint">
+              Couldn&rsquo;t load player data.{" "}
+              <button type="button" className="link" onClick={retryPmap}>
+                Retry
+              </button>
+            </p>
+          ) : (
+            <RosterSection roster={roster} pmap={pmap} pmapLoading={pmapLoading} rosterPositions={rosterPositions} />
+          )}
         </section>
       ) : (
         <section className="sec">

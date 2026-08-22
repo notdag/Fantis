@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
-import type { PlayerMap, PlayerMapEntry } from "@/lib/types";
+import type { PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
   leagueId: string;
@@ -24,22 +25,6 @@ export interface WaiverLeague {
 }
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
-
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
 
 function Diff({ value }: { value: number | null }) {
   if (value == null) return <span className="portmeta">—</span>;
@@ -70,18 +55,7 @@ export default function WaiverAssistant({
   }, []);
   const connected = mounted && automationConnected(automationLastPingAt);
 
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   const seasonTotals = useSeasonTotals();
 
@@ -241,7 +215,18 @@ export default function WaiverAssistant({
           />
         </div>
 
-        {!selectedId && searchResults.length > 0 && (
+        {!selectedId && query.trim().length >= 2 && pmapError && (
+          <p className="hint" style={{ marginTop: 8 }}>
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        )}
+        {!selectedId && query.trim().length >= 2 && pmapLoading && !pmapError && (
+          <p className="hint" style={{ marginTop: 8 }}>Loading real player data…</p>
+        )}
+        {!selectedId && !pmapLoading && !pmapError && searchResults.length > 0 && (
           <div style={{ marginTop: 8, maxWidth: 400 }}>
             <DataTable>
               {searchResults.map(([id, p]) => (
@@ -253,7 +238,7 @@ export default function WaiverAssistant({
                     setQuery(p.n);
                   }}
                 >
-                  <Avatar playerId={id} pos={p.p} size={28} />
+                  <PlayerAvatar playerId={id} pos={p.p} size={28} />
                   <span className="tname" style={{ flex: 1 }}>{p.n}</span>
                   <span className="pos" style={posChipStyle(p.p)}>
                     {p.p}
@@ -264,7 +249,7 @@ export default function WaiverAssistant({
             </DataTable>
           </div>
         )}
-        {!selectedId && query.trim().length >= 2 && searchResults.length === 0 && (
+        {!selectedId && !pmapLoading && !pmapError && query.trim().length >= 2 && searchResults.length === 0 && (
           <div
             style={{
               display: "flex",
@@ -290,7 +275,7 @@ export default function WaiverAssistant({
           <SectionHead
             title={
               <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <Avatar playerId={selectedId} pos={pmap?.[selectedId]?.p} size={40} />
+                <PlayerAvatar playerId={selectedId} pos={pmap?.[selectedId]?.p} size={40} />
                 <span>
                   <span style={{ display: "block" }}>{pmap?.[selectedId]?.n ?? selectedId}</span>
                   <span className="portmeta">
@@ -339,7 +324,7 @@ export default function WaiverAssistant({
                         </span>
                       ) : drop ? (
                         <div className="mgrplayer">
-                          <Avatar playerId={drop.playerId} pos={label?.p} size={26} />
+                          <PlayerAvatar playerId={drop.playerId} pos={label?.p} size={26} />
                           <div>
                             <div className="mgrplayername">
                               {label?.n ?? drop.playerId}

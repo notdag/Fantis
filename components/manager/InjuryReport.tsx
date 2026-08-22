@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
+import { useMemo } from "react";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
-import type { PlayerMap } from "@/lib/types";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { PlayerAvatar } from "./Avatar";
 import { IconFlag, IconShield, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
-import { DataTable, TableRow } from "./DataRow";
+import { DataTable, TableRow, TableRowSkeleton } from "./DataRow";
 
 export interface InjuryLeagueRow {
   leagueId: string;
@@ -17,35 +17,8 @@ export interface InjuryLeagueRow {
   starters: string[];
 }
 
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
-
 export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }) {
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   // Same real "is this player effectively unavailable" definition already
   // used everywhere else in the app (checkInjuredStarters in
@@ -79,7 +52,6 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
     const bi = STATUS_ORDER.indexOf(b);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
   });
-  const loading = !pmap;
   const totalStarting = Array.from(byStatus.values()).flat().filter((r) => r.starting).length;
   const outCount = byStatus.get("Out")?.length ?? 0;
   const doubtfulCount = byStatus.get("Doubtful")?.length ?? 0;
@@ -109,9 +81,20 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
         )}
       </section>
 
-      {loading ? (
+      {pmapError ? (
         <section className="sec">
-          <p className="hint">Loading real roster and injury data…</p>
+          <p className="hint">
+            Couldn&rsquo;t load player data.{" "}
+            <button type="button" className="link" onClick={retryPmap}>
+              Retry
+            </button>
+          </p>
+        </section>
+      ) : loading ? (
+        <section className="sec">
+          <DataTable>
+            <TableRowSkeleton count={4} />
+          </DataTable>
         </section>
       ) : statuses.length === 0 ? (
         <section className="sec">
@@ -128,7 +111,7 @@ export default function InjuryReport({ leagues }: { leagues: InjuryLeagueRow[] }
                   const entry = pmap![r.playerId];
                   return (
                     <TableRow as="link" href={`/manager/${r.leagueId}`} key={`${r.leagueId}-${r.playerId}-${i}`}>
-                      <Avatar playerId={r.playerId} pos={entry.p} size={26} />
+                      <PlayerAvatar playerId={r.playerId} pos={entry.p} size={26} />
                       <span className="mgrplayername">{entry.n}</span>
                       {entry.p && (
                         <span className="pos" style={posChipStyle(entry.p)}>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { statusChipStyle, statusLabel } from "@/lib/manager";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
@@ -221,7 +222,18 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
               </TableRow>
             );
           })}
-          {sorted.length === 0 && (
+          {sorted.length === 0 && teams.length === 0 && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "32px 16px", color: "var(--dim)" }}>
+              <IconSearch width={22} height={22} />
+              <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No teams yet</span>
+              <span className="hint" style={{ margin: 0 }}>
+                Connect a Sleeper username on the{" "}
+                <Link href="/manager" className="link">Command Center</Link> to sync its real
+                leagues in.
+              </span>
+            </div>
+          )}
+          {sorted.length === 0 && teams.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "32px 16px", color: "var(--dim)" }}>
               <IconSearch width={22} height={22} />
               <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No leagues found</span>

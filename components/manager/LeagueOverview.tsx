@@ -14,34 +14,18 @@ import {
   transactionTypeChipStyle,
   transactionTypeLabel,
 } from "@/lib/manager";
-import { getPlayers, playerPhotoUrl } from "@/lib/sleeper";
 import { posChipStyle } from "@/lib/players";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
+import { usePlayerMap } from "@/lib/usePlayerMap";
 import { computeLeagueRank, computeStanding, sortByStanding, type LeagueRosterRow } from "@/lib/leagueRank";
 import AlertRow from "./AlertRow";
+import { PlayerAvatar } from "./Avatar";
 import LeagueIdentityBar from "./LeagueIdentityBar";
 import { IconCheck, IconStar, IconCalendar, IconShield } from "./MgrIcons";
 import { SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
-import { DataTable, TableRow } from "./DataRow";
-import type { PlayerMap } from "@/lib/types";
-
-function Avatar({ playerId, pos, size }: { playerId: string; pos?: string; size: number }) {
-  const ring = pos ? posChipStyle(pos).color : "var(--line)";
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      className="mgravatar"
-      src={playerPhotoUrl(playerId)}
-      alt=""
-      style={{ width: size, height: size, borderColor: ring }}
-      onError={(e) => {
-        (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-      }}
-    />
-  );
-}
+import { DataTable, TableRow, TableRowSkeleton } from "./DataRow";
 
 const ROSTER_PREVIEW_SLOTS = 5;
 
@@ -73,18 +57,7 @@ export default function LeagueOverview({
     setMounted(true);
   }, []);
 
-  const [pmap, setPmap] = useState<PlayerMap | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    getPlayers()
-      .then((m) => {
-        if (!cancelled) setPmap(m);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   const seasonTotals = useSeasonTotals();
   const leagueRank = useMemo(
@@ -197,31 +170,44 @@ export default function LeagueOverview({
                     </Link>
                   }
                 />
-                <DataTable>
-                  {rosterSlotsPreview.map((slot, i) => {
-                    const playerId = roster.starters[i];
-                    const empty = !playerId || playerId === "0";
-                    const entry = empty ? null : pmap?.[playerId];
-                    return (
-                      <TableRow key={slot.key}>
-                        <span className="portmeta" style={{ minWidth: 44 }}>{slot.code}</span>
-                        {empty ? (
-                          <span className="tname" style={{ color: "var(--red)" }}>Empty slot</span>
-                        ) : (
-                          <>
-                            <Avatar playerId={playerId} pos={entry?.p} size={26} />
-                            <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
-                            {entry?.p && (
-                              <span className="pos" style={posChipStyle(entry.p)}>
-                                {entry.p}
-                              </span>
+                {pmapError ? (
+                  <p className="hint">
+                    Couldn&rsquo;t load player data.{" "}
+                    <button type="button" className="link" onClick={retryPmap}>
+                      Retry
+                    </button>
+                  </p>
+                ) : (
+                  <DataTable>
+                    {pmapLoading ? (
+                      <TableRowSkeleton count={ROSTER_PREVIEW_SLOTS} />
+                    ) : (
+                      rosterSlotsPreview.map((slot, i) => {
+                        const playerId = roster.starters[i];
+                        const empty = !playerId || playerId === "0";
+                        const entry = empty ? null : pmap?.[playerId];
+                        return (
+                          <TableRow key={slot.key}>
+                            <span className="portmeta" style={{ minWidth: 44 }}>{slot.code}</span>
+                            {empty ? (
+                              <span className="tname" style={{ color: "var(--red)" }}>Empty slot</span>
+                            ) : (
+                              <>
+                                <PlayerAvatar playerId={playerId} pos={entry?.p} size={26} />
+                                <span className="tname" style={{ flex: 1 }}>{entry?.n ?? playerId}</span>
+                                {entry?.p && (
+                                  <span className="pos" style={posChipStyle(entry.p)}>
+                                    {entry.p}
+                                  </span>
+                                )}
+                              </>
                             )}
-                          </>
-                        )}
-                      </TableRow>
-                    );
-                  })}
-                </DataTable>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </DataTable>
+                )}
               </div>
             )}
 
