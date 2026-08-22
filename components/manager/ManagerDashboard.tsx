@@ -3,12 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  statusChipStyle,
-  statusLabel,
-  scoringFormatLabel,
   playoffFormat,
   formatRelative,
-  formatUpcoming,
   alertSeverityChipStyle,
   automationConnected,
   isSnoozed,
@@ -23,18 +19,12 @@ import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { posChipStyle } from "@/lib/players";
 import { computeStanding, type LeagueRosterRow } from "@/lib/leagueRank";
-import { IconFlag, IconCheck, IconSearch, IconUsers, IconCalendar, IconChevronRight } from "./MgrIcons";
+import { IconFlag, IconCheck, IconUsers, IconCalendar } from "./MgrIcons";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { SectionHead } from "./PageHead";
 import { LeagueAvatar, PlayerAvatar } from "./Avatar";
 import { Badge } from "./Badge";
-
-type SortKey = "name" | "teams" | "status" | "synced" | "record" | "draftTime";
-type SortDir = "asc" | "desc";
-
-const STATUSES = ["pre_draft", "drafting", "in_season", "complete"] as const;
-const UNGROUPED = "__ungrouped__";
 
 // Real, documented estimate — not a schedule simulation. Blends real
 // standing (65%) and real roster-strength rank (35%) into a 0-100 score,
@@ -151,12 +141,6 @@ export default function ManagerDashboard({
   const tradeValues = useTradeValues();
   const fcValues = useFantasyCalcValues();
 
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | (typeof STATUSES)[number]>("ALL");
-  const [draftFilter, setDraftFilter] = useState<"ALL" | "pre_draft" | "drafting" | "complete" | "none">("ALL");
-  const [groupFilter, setGroupFilter] = useState("ALL");
-  const [sortBy, setSortBy] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [showAllClear, setShowAllClear] = useState(false);
   const [breakdownTierFilter, setBreakdownTierFilter] = useState<"ALL" | PlayoffTierKey>("ALL");
   const [showAllBreakdown, setShowAllBreakdown] = useState(false);
@@ -223,46 +207,6 @@ export default function ManagerDashboard({
       setSyncing(false);
     }
   };
-
-  const toggleSort = (key: SortKey) => {
-    if (sortBy === key) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortBy(key);
-      setSortDir("asc");
-    }
-  };
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return leagues.filter((lg) => {
-      const draftStatus = draftsByLeague[lg.id]?.status ?? "none";
-      return (
-        (statusFilter === "ALL" || lg.status === statusFilter) &&
-        (draftFilter === "ALL" || draftStatus === draftFilter) &&
-        (groupFilter === "ALL" ||
-          (groupFilter === UNGROUPED ? !lg.group : lg.group === groupFilter)) &&
-        (!q || lg.name.toLowerCase().includes(q))
-      );
-    });
-  }, [leagues, query, statusFilter, draftFilter, groupFilter, draftsByLeague]);
-
-  // Per-league record lookup for the "All leagues" table's Record column
-  // — same `rosters` prop already used for the portfolio aggregation
-  // further down, just keyed for a single-row lookup instead of summed.
-  const rosterByLeague = useMemo(() => new Map(rosters.map((r) => [r.leagueId, r])), [rosters]);
-
-  // My real team name per league — leagueRostersByLeague already has every
-  // team in every league (fetched for league-wide rank above), just keyed
-  // by rosterId; find the one row matching my own rosterId per league.
-  const myTeamNameByLeague = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const r of rosters) {
-      const mine = (leagueRostersByLeague[r.leagueId] ?? []).find((lr) => lr.rosterId === r.rosterId);
-      map.set(r.leagueId, mine?.teamName ?? null);
-    }
-    return map;
-  }, [rosters, leagueRostersByLeague]);
 
   // My Portfolio (2026-08c) — ported from lib/usePortfolio.ts's exact
   // formulas (already proven on the legacy Portfolio page), fed by the
@@ -497,72 +441,6 @@ export default function ManagerDashboard({
     }
     return counts;
   }, [exposure]);
-
-  // Real distinct group values the owner has actually set, sorted by how
-  // many leagues use each — freeform text, so this is a dropdown (unbounded
-  // cardinality) rather than a chip row like the fixed status values above.
-  const groupOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    let ungrouped = 0;
-    for (const lg of leagues) {
-      if (lg.group) counts.set(lg.group, (counts.get(lg.group) ?? 0) + 1);
-      else ungrouped += 1;
-    }
-    const named = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
-    return { named, ungrouped };
-  }, [leagues]);
-
-  const sorted = useMemo(() => {
-    const dir = sortDir === "asc" ? 1 : -1;
-    const rows = [...filtered];
-    rows.sort((a, b) => {
-      switch (sortBy) {
-        case "name":
-          return a.name.localeCompare(b.name) * dir;
-        case "teams":
-          return (a.totalRosters - b.totalRosters) * dir;
-        case "status":
-          return a.status.localeCompare(b.status) * dir;
-        case "synced":
-          return ((a.lastSyncedAt ?? "").localeCompare(b.lastSyncedAt ?? "")) * dir;
-        case "draftTime": {
-          // Same "unresolved sorts last" spirit as record/rank below —
-          // a league with no synced draft or no start time isn't "earliest."
-          const ta = draftsByLeague[a.id]?.startTime;
-          const tb = draftsByLeague[b.id]?.startTime;
-          if (ta == null && tb == null) return 0;
-          if (ta == null) return 1;
-          if (tb == null) return -1;
-          return ta.localeCompare(tb) * dir;
-        }
-        case "record": {
-          // Unrecorded (no synced roster yet) sorts to the bottom
-          // regardless of direction — same "unranked sorts last" spirit
-          // as the rank column's comparator elsewhere on this page.
-          const ra = rosterByLeague.get(a.id);
-          const rb = rosterByLeague.get(b.id);
-          const pa = ra ? ra.wins - ra.losses : null;
-          const pb = rb ? rb.wins - rb.losses : null;
-          if (pa == null && pb == null) return 0;
-          if (pa == null) return 1;
-          if (pb == null) return -1;
-          return (pa - pb) * dir;
-        }
-        default:
-          return 0;
-      }
-    });
-    return rows;
-  }, [filtered, sortBy, sortDir, rosterByLeague, draftsByLeague]);
-
-  // Real per-status counts (unfiltered by the search box, since the chips
-  // themselves are the status filter) — shown on each chip so you know
-  // what "In season" etc. actually contains before clicking it.
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const lg of leagues) counts[lg.status] = (counts[lg.status] ?? 0) + 1;
-    return counts;
-  }, [leagues]);
 
   // Real Alert rows only — a league with zero rows genuinely means "synced,
   // nothing found," not "not checked yet."
@@ -1018,154 +896,6 @@ export default function ManagerDashboard({
         </section>
       )}
 
-      {leagues.length === 0 ? (
-        <section className="sec">
-          <p className="hint">
-            No leagues yet — connect a Sleeper username above to sync its real leagues in.
-          </p>
-        </section>
-      ) : (
-        <section className="sec">
-          <SectionHead title="All leagues" right="browse everything, not just exceptions" />
-
-          <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
-            <input
-              className="input"
-              placeholder="Search leagues…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              style={{ maxWidth: 280 }}
-            />
-            <button
-              className={`chip-filter ${statusFilter === "ALL" ? "on" : ""}`}
-              onClick={() => setStatusFilter("ALL")}
-            >
-              All <span className="portmeta">{leagues.length}</span>
-            </button>
-            {STATUSES.map((s) => (
-              <button
-                key={s}
-                className={`chip-filter ${statusFilter === s ? "on" : ""}`}
-                onClick={() => setStatusFilter(s)}
-              >
-                {statusLabel(s)} <span className="portmeta">{statusCounts[s] ?? 0}</span>
-              </button>
-            ))}
-            <select
-              className="select sm"
-              value={draftFilter}
-              onChange={(e) => setDraftFilter(e.target.value as typeof draftFilter)}
-            >
-              <option value="ALL">Any draft status</option>
-              <option value="pre_draft">Pre-draft</option>
-              <option value="drafting">Drafting</option>
-              <option value="complete">Drafted</option>
-              <option value="none">No draft synced</option>
-            </select>
-            {(groupOptions.named.length > 0 || groupOptions.ungrouped > 0) && (
-              <select
-                className="select sm"
-                value={groupFilter}
-                onChange={(e) => setGroupFilter(e.target.value)}
-              >
-                <option value="ALL">All groups</option>
-                {groupOptions.named.map(([name, count]) => (
-                  <option key={name} value={name}>
-                    {name} ({count})
-                  </option>
-                ))}
-                {groupOptions.ungrouped > 0 && (
-                  <option value={UNGROUPED}>Ungrouped ({groupOptions.ungrouped})</option>
-                )}
-              </select>
-            )}
-            <span style={{ flex: 1 }} />
-            {(["name", "teams", "record", "draftTime", "status", "synced"] as SortKey[]).map((k) => (
-              <button
-                key={k}
-                className={`sorth ${sortBy === k ? "on" : ""}`}
-                onClick={() => toggleSort(k)}
-              >
-                {k === "name"
-                  ? "Name"
-                  : k === "teams"
-                    ? "Teams"
-                    : k === "record"
-                      ? "Record"
-                      : k === "draftTime"
-                        ? "Draft"
-                        : k === "status"
-                          ? "Status"
-                          : "Synced"}
-                {sortBy === k && <span className="arrow">{sortDir === "asc" ? "↑" : "↓"}</span>}
-              </button>
-            ))}
-          </div>
-
-          <DataTable>
-            <TableHeaderRow>
-              <span style={{ flex: 1, marginLeft: 34 }}>League</span>
-              <span style={{ minWidth: 110 }}>My team</span>
-              <span style={{ minWidth: 76 }}>Status</span>
-              <span style={{ minWidth: 100 }}>Draft time</span>
-              <span style={{ minWidth: 50 }}>Teams</span>
-              <span style={{ minWidth: 70 }}>Scoring</span>
-              <span style={{ minWidth: 50 }}>Record</span>
-              <span style={{ width: 16 }} />
-            </TableHeaderRow>
-            {sorted.map((lg) => {
-              const draft = draftsByLeague[lg.id];
-              const record = rosterByLeague.get(lg.id);
-              const myTeamName = myTeamNameByLeague.get(lg.id);
-              const scoring = scoringFormatLabel(lg.settings);
-              return (
-                <TableRow as="link" href={`/manager/${lg.id}`} key={lg.id}>
-                  <LeagueAvatar league={lg} />
-                  <span className="tname" style={{ flex: 1 }}>{lg.name}</span>
-                  <span className="portmeta" style={{ minWidth: 110 }}>{myTeamName ?? "—"}</span>
-                  <Badge tone={statusChipStyle(lg.status)}>{statusLabel(lg.status)}</Badge>
-                  <span className="portmeta" style={{ minWidth: 100 }}>
-                    {draft?.startTime ? (mounted ? formatUpcoming(draft.startTime) : "—") : "—"}
-                  </span>
-                  <span className="portmeta" style={{ minWidth: 50 }}>{lg.totalRosters}</span>
-                  <span className="portmeta" style={{ minWidth: 70 }}>{scoring ?? "—"}</span>
-                  <span className="portmeta" style={{ minWidth: 50 }}>
-                    {record ? `${record.wins}-${record.losses}${record.ties > 0 ? `-${record.ties}` : ""}` : "—"}
-                  </span>
-                  <IconChevronRight width={16} height={16} style={{ color: "var(--dim)", flex: "none" }} />
-                </TableRow>
-              );
-            })}
-            {sorted.length === 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "32px 16px",
-                  color: "var(--dim)",
-                }}
-              >
-                <IconSearch width={22} height={22} />
-                <span style={{ color: "var(--bone)", fontSize: 13, fontWeight: 600 }}>No leagues found</span>
-                <span className="hint" style={{ margin: 0 }}>Try a different search or status filter.</span>
-              </div>
-            )}
-          </DataTable>
-          {sorted.length > 0 && (
-            <div className="hint" style={{ marginTop: 8, display: "flex", justifyContent: "space-between" }}>
-              <span>
-                {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
-                {sorted.length !== leagues.length ? ` of ${leagues.length}` : ""}
-              </span>
-              <span>
-                {sorted.reduce((sum, lg) => sum + lg.totalRosters, 0)} total teams
-              </span>
-            </div>
-          )}
-        </section>
-      )}
     </>
   );
 }
