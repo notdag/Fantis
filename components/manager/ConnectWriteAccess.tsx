@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { buildBookmarklet } from "@/lib/sleeperBookmarklet";
 import {
   clearStoredToken,
   decodeJwtUnverified,
@@ -36,8 +37,35 @@ export default function ConnectWriteAccess({
   const [decoded, setDecoded] = useState<DecodedSleeperToken | null>(null);
   const [error, setError] = useState("");
 
+  const bookmarkletRef = useRef<HTMLAnchorElement>(null);
+  const [copied, setCopied] = useState(false);
+
   useEffect(() => {
     setMounted(true);
+
+    // One-click path: the "Send Sleeper token to Fantis" bookmarklet (see
+    // lib/sleeperBookmarklet.ts) opens this page as `#token=<jwt>`. URL
+    // fragments are never sent to a server, so the token stays in this
+    // browser. Accept it, store it, and strip it from the address bar.
+    const m = window.location.hash.match(/^#token=(.+)$/);
+    if (m) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      let fromHash = m[1];
+      try {
+        fromHash = decodeURIComponent(fromHash);
+      } catch {
+        // keep raw value
+      }
+      const d = decodeJwtUnverified(fromHash);
+      if (d && !isExpired(d)) {
+        setStoredToken(fromHash);
+        setDecoded(d);
+        onTokenReady(fromHash);
+        return;
+      }
+      setError("The token sent from Sleeper was invalid or already expired — try the bookmark again.");
+    }
+
     const stored = getStoredToken();
     if (stored) {
       const d = decodeJwtUnverified(stored);
@@ -47,6 +75,22 @@ export default function ConnectWriteAccess({
     // onTokenReady is a stable callback from the parent; only run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // React refuses to render a `javascript:` href from JSX, so the bookmarklet
+  // link's href is set directly on the DOM node once it exists.
+  useEffect(() => {
+    bookmarkletRef.current?.setAttribute("href", buildBookmarklet(window.location.origin));
+  }, [mounted, decoded]);
+
+  const copyBookmarklet = async () => {
+    try {
+      await navigator.clipboard.writeText(buildBookmarklet(window.location.origin));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Couldn't copy automatically — drag the button to your bookmarks bar instead.");
+    }
+  };
 
   const connect = () => {
     const token = tokenInput.trim();
@@ -112,11 +156,33 @@ export default function ConnectWriteAccess({
         stored only in this browser (never sent to or seen by Fantis&rsquo;s own server) and used
         only to call sleeper.com directly. Disconnect below whenever you&rsquo;re done.
       </p>
-      <ol className="hint" style={{ marginTop: 10, paddingLeft: 18 }}>
-        <li>Open sleeper.com in this browser and log in as usual.</li>
-        <li>Open DevTools → Network, then set any lineup change on sleeper.com so a request fires.</li>
-        <li>Filter requests for &ldquo;graphql&rdquo;, click one, and find the <code>authorization</code> request header.</li>
-        <li>Copy that header&rsquo;s value (starts with &ldquo;eyJ&rdquo;) and paste it below.</li>
+      <p className="hint" style={{ margin: "12px 0 6px", color: "var(--bone)", fontWeight: 600 }}>
+        Easiest: one-click bookmark
+      </p>
+      <ol className="hint" style={{ margin: 0, paddingLeft: 18 }}>
+        <li>
+          Drag this button to your bookmarks bar:{" "}
+          <a
+            ref={bookmarkletRef}
+            className="btn ghost sm"
+            style={{ display: "inline-block", cursor: "grab" }}
+            onClick={(e) => e.preventDefault()}
+          >
+            Send Sleeper token to Fantis
+          </a>{" "}
+          <button className="linklike" style={{ fontSize: 13 }} onClick={copyBookmarklet}>
+            {copied ? "Copied!" : "or copy it"}
+          </button>
+        </li>
+        <li>Open sleeper.com and log in as usual.</li>
+        <li>Click the bookmark. This page reopens already connected.</li>
+      </ol>
+      <p className="hint" style={{ margin: "12px 0 6px", color: "var(--bone)", fontWeight: 600 }}>
+        Or paste it manually
+      </p>
+      <ol className="hint" style={{ margin: 0, paddingLeft: 18 }}>
+        <li>On sleeper.com, open DevTools → Network and make any lineup change so a request fires.</li>
+        <li>Filter for &ldquo;graphql&rdquo;, click one, and copy the <code>authorization</code> request header value (starts with &ldquo;eyJ&rdquo;).</li>
       </ol>
       <div className="field" style={{ marginTop: 10 }}>
         <input
