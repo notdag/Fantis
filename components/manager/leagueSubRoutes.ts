@@ -23,6 +23,7 @@ const PORTFOLIO_SLUGS = new Set([
   "byes",
   "injuries",
   "actions",
+  "lineups",
   "waiver",
   "player",
   "drafts",
