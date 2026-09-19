@@ -81,6 +81,33 @@ export async function getWeekGameContext(
   return out;
 }
 
+let kickoffCache: { key: string; data: Record<string, string> } | null = null;
+
+// Team -> kickoff time (ISO) for one week, from the same ESPN scoreboard
+// events already read above (`event.date`). Used to lock lineup moves once a
+// player's game has started. ESPN's "WSH" is normalised to Sleeper's "WAS"
+// so it lines up with player teams from Sleeper's player dump.
+export async function getWeekKickoffs(season: string, week: number): Promise<Record<string, string>> {
+  const key = `${season}-${week}`;
+  if (kickoffCache?.key === key) return kickoffCache.data;
+  const res = await fetch(
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`
+  );
+  if (!res.ok) throw new Error("Couldn't reach ESPN scoreboard.");
+  const json = await res.json();
+  const out: Record<string, string> = {};
+  for (const event of json.events ?? []) {
+    const date: string | undefined = event.date;
+    if (!date) continue;
+    for (const c of (event.competitions?.[0]?.competitors ?? []) as ScoreboardCompetitor[]) {
+      const abbr = c.team?.abbreviation;
+      if (abbr) out[abbr === "WSH" ? "WAS" : abbr] = date;
+    }
+  }
+  kickoffCache = { key, data: out };
+  return out;
+}
+
 const SEASON_WEEKS = 18;
 const SCHEDULE_CACHE_PREFIX = "fantis_espn_schedule_v1_";
 

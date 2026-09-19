@@ -92,5 +92,5 @@ export default async function LineupsPage() {
     };
   });
 
-  return <LineupManager leagues={leagues} currentWeek={currentWeek} />;
+  return <LineupManager leagues={leagues} currentWeek={currentWeek} season={state?.season ?? new Date().getFullYear().toString()} />;
 }

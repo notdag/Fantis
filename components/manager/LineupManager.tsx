@@ -9,6 +9,7 @@ import { isBestBall, type ManagedLeague, type ManagedRoster } from "@/lib/manage
 import type { PlayerMap } from "@/lib/types";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkIR from "./BulkIR";
+import BulkOptimize from "./BulkOptimize";
 import BulkAdd from "./BulkAdd";
 import { PlayerAvatar } from "./Avatar";
 import { SectionHead } from "./PageHead";
@@ -225,9 +226,11 @@ function LeagueRow({
 export default function LineupManager({
   leagues: allLeagues,
   currentWeek,
+  season,
 }: {
   leagues: LineupLeague[];
   currentWeek: number;
+  season: string;
 }) {
   // Best ball leagues set their own lineups, so they're hidden from every
   // tab here by default (one toggle brings them back).
@@ -242,7 +245,7 @@ export default function LineupManager({
   );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [tab, setTab] = useState<"lineups" | "ir" | "add">("lineups");
+  const [tab, setTab] = useState<"lineups" | "optimize" | "ir" | "add">("lineups");
   const { pmap } = usePlayerMap();
 
   const needsAttention = useMemo(() => leagues.filter((l) => l.alertCount > 0), [leagues]);
@@ -259,6 +262,9 @@ export default function LineupManager({
         <div className="field" style={{ marginBottom: 16 }}>
           <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => setTab("lineups")}>
             Lineups
+          </button>
+          <button className={`chip-filter ${tab === "optimize" ? "on" : ""}`} onClick={() => setTab("optimize")}>
+            Optimize
           </button>
           <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => setTab("ir")}>
             Mass IR
@@ -277,6 +283,9 @@ export default function LineupManager({
             </button>
           )}
         </div>
+        {tab === "optimize" && (
+          <BulkOptimize leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} season={season} />
+        )}
         {tab === "ir" && <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />}
         {tab === "add" && <BulkAdd leagues={leagues} pmap={pmap} token={token} />}
         {tab === "lineups" && (

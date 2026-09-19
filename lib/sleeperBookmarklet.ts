@@ -21,6 +21,7 @@ function ok(s){try{var p=s.split('.');if(p.length!==3)return false;var j=JSON.pa
 function scan(t){var m=String(t||'').match(/eyJ[\\w-]+\\.eyJ[\\w-]+\\.[\\w-]+/g)||[];for(var i=0;i<m.length;i++){if(ok(m[i]))return m[i]}return null}
 function url(t){return O+'/manager/lineups#token='+encodeURIComponent(t)}
 var f=null;
+try{var k=localStorage.getItem('token');if(k&&ok(k)){window.open(url(k),'_blank');return}}catch(e){}
 try{[localStorage,sessionStorage].forEach(function(st){for(var i=0;i<st.length&&!f;i++){f=scan(st.getItem(st.key(i)))}})}catch(e){}
 if(!f)f=scan(document.cookie);
 if(f){window.open(url(f),'_blank');return}
