@@ -235,6 +235,18 @@ export function scoringFormatLabel(settings: unknown): string | null {
   return `${rec} pt/rec`;
 }
 
+// Real `roster_positions` array from a league's raw settings JSON (e.g.
+// ["QB","RB","RB","WR","WR","TE","FLEX","FLEX","BN",...]) — same
+// defensive-JSON-read pattern as scoringFormatLabel()/playoffFormat()
+// above. Extracted here since app/manager/[leagueId]/team/page.tsx,
+// overview/page.tsx, and matchup/page.tsx each duplicated their own local
+// settingsField()+array-check for this one field.
+export function rosterPositionsFromSettings(settings: unknown): string[] {
+  if (!settings || typeof settings !== "object") return [];
+  const value = (settings as Record<string, unknown>).roster_positions;
+  return Array.isArray(value) ? (value as string[]) : [];
+}
+
 export interface PlayoffFormat {
   playoffTeams: number | null;
   playoffWeekStart: number | null;

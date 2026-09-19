@@ -29,6 +29,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     icon: "wrench",
     label: "Tools",
     links: [
+      { href: "/manager/lineups", label: "Lineups" },
       { href: "/manager/actions", label: "Action Queue" },
       { href: "/manager/waiver", label: "Waiver Assistant" },
       { href: "/manager/player", label: "Player search" },
