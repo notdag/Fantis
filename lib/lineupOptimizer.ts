@@ -17,6 +17,10 @@ export interface OptimizeInput {
   points: (id: string) => number; // projected points, real data only (missing = 0)
   unavailable: (id: string) => boolean; // out / IR / bye — scores nothing this week
   locked: (id: string) => boolean; // game already started — can't be moved
+  // The owner's own list. priorityRank: 0 = top pick; undefined = not listed.
+  // Optional — without it this is a pure best-projection optimizer.
+  priorityRank?: (id: string) => number | undefined;
+  avoid?: (id: string) => boolean;
 }
 
 export interface LineupChange {
@@ -37,11 +41,23 @@ export interface OptimizeResult {
 const EMPTY = "0";
 const isEmpty = (id: string | undefined) => !id || id === EMPTY;
 
-// Real players must always beat an empty slot, and an unchanged lineup must
-// beat an equal-points reshuffle — tiny fixed nudges, far below any real
-// projection difference (projections are in whole tenths).
-const REAL_PLAYER_BONUS = 0.001;
+// Slot-assignment weights, as bands so each rule strictly outranks the next:
+//   priority band  >>  normal players (ranked by projection)  >  avoid band  >  empty slot
+// - Every real player beats an empty slot (REAL), even an "avoid" one — a
+//   slot is only left empty when nobody eligible exists.
+// - The owner's priority list adds a band big enough to dominate any
+//   projection gap; rank order breaks ties between priority players.
+// - "Avoid" players take a penalty smaller than REAL, so they only start when
+//   no normal player can fill the slot.
+// - STAY_PUT keeps an unchanged lineup ahead of an equal-weight reshuffle.
+// Injured, bye and locked players never reach this step (they're excluded or
+// frozen before it), so a preference can never force one into a lineup.
+const REAL_PLAYER_BONUS = 1e6;
+const PRIORITY_BASE = 1e7;
+const PRIORITY_RANK_STEP = 1000; // per list position; list is capped at 500
+const AVOID_PENALTY = 5e5;
 const STAY_PUT_BONUS = 0.0005;
+const BIG = 1e9;
 
 // Hungarian algorithm (min cost), rows <= cols. Returns, for each row, the
 // column assigned to it.
@@ -103,6 +119,17 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
   const effective = (id: string) => (isEmpty(id) || unavailable(id) ? 0 : points(id));
   const currentPoints = current.reduce((sum, id) => sum + effective(id), 0);
 
+  // What a player is worth to the assignment: real points plus the owner's
+  // preference band. (Empty slots and unavailable players are worth 0.)
+  const weight = (id: string) => {
+    if (isEmpty(id) || unavailable(id)) return 0;
+    let w = REAL_PLAYER_BONUS + points(id);
+    const rank = input.priorityRank?.(id);
+    if (rank !== undefined) w += PRIORITY_BASE + (500 - Math.min(rank, 500)) * PRIORITY_RANK_STEP;
+    else if (input.avoid?.(id)) w -= AVOID_PENALTY;
+    return w;
+  };
+
   // A player whose game has started stays exactly where he is: his slot is
   // frozen and he can't be pulled from the bench into another slot.
   const fixed = new Set<number>();
@@ -122,7 +149,6 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     // Columns: every pool player, then one "empty" filler per free slot so a
     // perfect assignment always exists even on a thin roster.
     const cols = pool.length + freeSlots.length;
-    const BIG = 1e6;
     const cost = freeSlots.map((slotIdx) => {
       const eligible = new Set(eligiblePositions(slotCodes[slotIdx]));
       const row = new Array(cols).fill(0);
@@ -132,8 +158,7 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
         if (!eligible.has(pos)) {
           row[c] = BIG * 10; // not allowed in this slot
         } else {
-          const weight = points(id) + REAL_PLAYER_BONUS + (current[slotIdx] === id ? STAY_PUT_BONUS : 0);
-          row[c] = BIG - weight;
+          row[c] = BIG - (weight(id) + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
         }
       }
       for (let c = pool.length; c < cols; c++) row[c] = BIG; // empty filler, weight 0
@@ -169,8 +194,12 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     }
   });
 
-  // Never propose a lineup that's worse than the one already set.
-  if (optimalPoints < currentPoints) {
+  // Never propose a lineup that's worse than the one already set, judged the
+  // same way the assignment is (points + the owner's preferences). Note
+  // `gain` is real projected points and can be negative when a preference
+  // deliberately starts someone with a lower projection.
+  const score = (ids: string[]) => ids.reduce((sum, id) => sum + weight(id), 0);
+  if (score(result) < score(current) - 1e-6) {
     return { starters: current, currentPoints, optimalPoints: currentPoints, gain: 0, changes: [] };
   }
   return { starters: result, currentPoints, optimalPoints, gain: optimalPoints - currentPoints, changes };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { posChipStyle } from "@/lib/players";
@@ -10,6 +10,8 @@ import type { PlayerMap } from "@/lib/types";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkIR from "./BulkIR";
 import BulkOptimize from "./BulkOptimize";
+import PlayerPreferences from "./PlayerPreferences";
+import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import BulkAdd from "./BulkAdd";
 import { PlayerAvatar } from "./Avatar";
 import { SectionHead } from "./PageHead";
@@ -245,8 +247,30 @@ export default function LineupManager({
   );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [tab, setTab] = useState<"lineups" | "optimize" | "ir" | "add">("lineups");
+  const [tab, setTab] = useState<"lineups" | "optimize" | "players" | "ir" | "add">("lineups");
   const { pmap } = usePlayerMap();
+
+  // The owner's saved priority/avoid lists, loaded once and shared by the
+  // "My players" editor and the Optimize tab. `prefs` is the working copy;
+  // `savedJson` is what's in the database, so the UI can show unsaved edits.
+  const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
+  const [savedJson, setSavedJson] = useState(JSON.stringify(EMPTY_PREFS));
+  const [prefsError, setPrefsError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    loadPrefs()
+      .then((p) => {
+        if (cancelled) return;
+        setPrefs(p);
+        setSavedJson(JSON.stringify(p));
+      })
+      .catch((e) => {
+        if (!cancelled) setPrefsError(e instanceof Error ? e.message : "Couldn't load preferences.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const needsAttention = useMemo(() => leagues.filter((l) => l.alertCount > 0), [leagues]);
   const rest = useMemo(() => leagues.filter((l) => l.alertCount === 0), [leagues]);
@@ -266,6 +290,9 @@ export default function LineupManager({
           <button className={`chip-filter ${tab === "optimize" ? "on" : ""}`} onClick={() => setTab("optimize")}>
             Optimize
           </button>
+          <button className={`chip-filter ${tab === "players" ? "on" : ""}`} onClick={() => setTab("players")}>
+            My players{prefs.priority.length + prefs.avoid.length > 0 ? ` (${prefs.priority.length + prefs.avoid.length})` : ""}
+          </button>
           <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => setTab("ir")}>
             Mass IR
           </button>
@@ -284,7 +311,22 @@ export default function LineupManager({
           )}
         </div>
         {tab === "optimize" && (
-          <BulkOptimize leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} season={season} />
+          <BulkOptimize
+            leagues={leagues}
+            pmap={pmap}
+            token={token}
+            currentWeek={currentWeek}
+            season={season}
+            prefs={prefs}
+            prefsDirty={JSON.stringify(prefs) !== savedJson}
+            onEditPrefs={() => setTab("players")}
+          />
+        )}
+        {tab === "players" && (
+          <>
+            {prefsError && <div className="err">{prefsError}</div>}
+            <PlayerPreferences prefs={prefs} onChange={setPrefs} savedJson={savedJson} onSaved={setSavedJson} pmap={pmap} />
+          </>
         )}
         {tab === "ir" && <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />}
         {tab === "add" && <BulkAdd leagues={leagues} pmap={pmap} token={token} />}

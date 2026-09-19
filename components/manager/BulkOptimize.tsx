@@ -9,6 +9,7 @@ import { optimizeLineup, type OptimizeResult } from "@/lib/lineupOptimizer";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
+import type { PlayerPrefs } from "@/lib/playerPrefs";
 import type { LineupLeague } from "./LineupManager";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
@@ -41,12 +42,18 @@ export default function BulkOptimize({
   token,
   currentWeek,
   season,
+  prefs,
+  prefsDirty,
+  onEditPrefs,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
   currentWeek: number;
   season: string;
+  prefs: PlayerPrefs;
+  prefsDirty: boolean;
+  onEditPrefs: () => void;
 }) {
   const [proj, setProj] = useState<ProjectionMap | null>(null);
   const [kickoffs, setKickoffs] = useState<Record<string, string> | null>(null);
@@ -81,6 +88,9 @@ export default function BulkOptimize({
   const [summary, setSummary] = useState("");
   const abortRef = useRef({ aborted: false });
 
+  const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
+  const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
+
   const { rows, lockedCount, unavailableCount } = useMemo(() => {
     const out: Row[] = [];
     let locked = 0;
@@ -113,26 +123,32 @@ export default function BulkOptimize({
         points: (id) => proj[id]?.[key] ?? 0,
         unavailable: isUnavailable,
         locked: isLocked,
+        priorityRank: (id) => priorityIndex.get(id),
+        avoid: (id) => avoidSet.has(id),
       });
       for (const id of candidates) {
         if (isLocked(id)) locked += 1;
         else if (isUnavailable(id)) unavailable += 1;
       }
-      if (result.gain > 0.05 && result.changes.length > 0) {
+      // A change can come from a preference even when it costs projected
+      // points, so key on "is there a change", not on positive gain.
+      if (result.changes.length > 0) {
         out.push({ key: l.league.id, leagueId: l.league.id, leagueName: l.league.name, rosterId: l.roster.rosterId, slotCodes, result });
       }
     }
     out.sort((a, b) => b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek]);
+  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek, priorityIndex, avoidSet]);
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
   const totalGain = rows.reduce((s, r) => s + r.result.gain, 0);
   const name = (id: string | null) => (id ? pmap?.[id]?.n ?? id : "empty");
   const flag = (id: string | null) => {
-    const inj = id ? pmap?.[id]?.inj : null;
-    return inj === "Questionable" ? " (Q)" : inj === "Doubtful" ? " (D)" : "";
+    if (!id) return "";
+    const inj = pmap?.[id]?.inj;
+    const health = inj === "Questionable" ? " (Q)" : inj === "Doubtful" ? " (D)" : "";
+    return `${priorityIndex.has(id) ? " ★" : avoidSet.has(id) ? " ⊘" : ""}${health}`;
   };
   const swapText = (r: Row) =>
     r.result.changes.map((c) => `${c.slotCode}: ${name(c.out)} → ${name(c.in)}${flag(c.in)}`);
@@ -191,7 +207,12 @@ export default function BulkOptimize({
     <>
       <StatCardGrid variant="grid">
         <StatCard label="Lineups to improve" value={rows.length} />
-        <StatCard label="Projected points gained" value={totalGain.toFixed(1)} valueColor={totalGain > 0 ? "var(--mint)" : undefined} />
+        <StatCard
+          label="Net projected points"
+          value={`${totalGain >= 0 ? "+" : ""}${totalGain.toFixed(1)}`}
+          valueColor={totalGain > 0 ? "var(--mint)" : totalGain < 0 ? "var(--amber)" : undefined}
+          sub={prefs.priority.length + prefs.avoid.length > 0 ? "after your player preferences" : undefined}
+        />
         <StatCard label="Locked / out / bye" value={`${lockedCount} / ${unavailableCount}`} sub="started games · injured or on bye" />
       </StatCardGrid>
       <p className="hint" style={{ margin: "8px 0 12px" }}>
@@ -201,9 +222,21 @@ export default function BulkOptimize({
         locked in place; injured (Out/IR) and bye-week players are skipped. (Q) / (D) marks a
         Questionable or Doubtful player being started.
       </p>
+      <p className="hint" style={{ margin: "0 0 12px" }}>
+        {prefs.priority.length + prefs.avoid.length > 0 ? (
+          <>
+            Following your player preferences ({prefs.priority.length} priority, {prefs.avoid.length}{" "}
+            avoid): ★ = priority, ⊘ = avoid.{" "}
+            {prefsDirty && <span style={{ color: "var(--amber)" }}>Unsaved edits are included. </span>}
+          </>
+        ) : (
+          <>No player preferences set — choosing purely by projection. </>
+        )}
+        <button className="linklike" style={{ fontSize: 13 }} onClick={onEditPrefs}>Edit My players</button>
+      </p>
 
       {rows.length === 0 ? (
-        <p className="hint">Every lineup is already optimal for the data available.</p>
+        <p className="hint">Every lineup already matches your preferences and the best projections.</p>
       ) : (
         <>
           <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
@@ -260,7 +293,9 @@ export default function BulkOptimize({
                   </span>
                   <span className="portmeta" style={{ minWidth: 130 }}>
                     {r.result.currentPoints.toFixed(1)} → {r.result.optimalPoints.toFixed(1)}{" "}
-                    <span style={{ color: "var(--mint)" }}>+{r.result.gain.toFixed(1)}</span>
+                    <span style={{ color: r.result.gain < -0.05 ? "var(--amber)" : "var(--mint)" }}>
+                      {r.result.gain >= 0 ? "+" : ""}{r.result.gain.toFixed(1)}
+                    </span>
                   </span>
                   <StatusCell status={status[r.key]} />
                 </TableRow>

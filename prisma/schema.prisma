@@ -114,6 +114,18 @@ model RankedPlayer {
   posRank Int
 }
 
+// The owner's own lineup preferences, used by /manager/lineups' Optimize tab
+// (single-owner tool, so global rather than per-account). "priority" players
+// start ahead of lower-ranked/unlisted ones whenever healthy and eligible
+// (rank 0 = highest); "avoid" players only start if nothing else can fill a
+// slot. Saved server-side so it follows the owner across browsers/devices.
+model PlayerPreference {
+  playerId  String   @id // Sleeper player_id
+  kind      String // priority | avoid
+  rank      Int      @default(0) // order within priority; unused for avoid
+  updatedAt DateTime @updatedAt
+}
+
 // ---------------------------------------------------------------------------
 // Sleeper Manager (owner-only, gated by ADMIN_PASSPHRASE — see
 // lib/adminAuth.ts). No relation to User above: single-owner tool, not
