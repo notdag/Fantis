@@ -194,7 +194,72 @@ export async function activateFromIR(
   return data.activate_from_ir;
 }
 
-// Fast-follow candidates using this same gql() transport, not built yet
-// (v1 scope is starters + IR only): create_waiver_claim, cancel_waiver_claim,
-// create_free_agent (add/drop), move_to_taxi, propose_trade/accept_trade/
+export interface TransactionResult {
+  transaction_id: string;
+  status: string;
+  type: string;
+  adds?: Record<string, number> | null;
+  drops?: Record<string, number> | null;
+}
+
+// Free-agent add and/or drop in one transaction (either side optional, at
+// least one required). `adds`/`drops` are {playerId: rosterId} maps — the
+// shape the reference client sends. Also used for a pure drop.
+export async function addDropFreeAgent(
+  token: string,
+  params: { leagueId: string; rosterId: number; addPlayerId?: string; dropPlayerId?: string }
+): Promise<TransactionResult> {
+  assertClientSide();
+  if (!params.addPlayerId && !params.dropPlayerId) {
+    throw new Error("addDropFreeAgent needs an add, a drop, or both.");
+  }
+  const rosterId = Math.trunc(params.rosterId);
+  const query = `
+    mutation create_free_agent($league_id: Snowflake!, $roster_id: Int!, $adds: JSON, $drops: JSON) {
+      create_free_agent(league_id: $league_id, roster_id: $roster_id, adds: $adds, drops: $drops) {
+        transaction_id status type created adds drops
+      }
+    }
+  `;
+  const data = await gql<{ create_free_agent: TransactionResult }>(token, "create_free_agent", query, {
+    league_id: assertNumeric(params.leagueId, "leagueId"),
+    roster_id: rosterId,
+    adds: params.addPlayerId ? { [params.addPlayerId]: rosterId } : {},
+    drops: params.dropPlayerId ? { [params.dropPlayerId]: rosterId } : {},
+  });
+  return data.create_free_agent;
+}
+
+// Waiver claim (FAAB bid in dollars, 0 for priority-based leagues).
+export async function claimWaiver(
+  token: string,
+  params: {
+    leagueId: string;
+    rosterId: number;
+    addPlayerId: string;
+    dropPlayerId?: string;
+    bid: number;
+  }
+): Promise<TransactionResult> {
+  assertClientSide();
+  const rosterId = Math.trunc(params.rosterId);
+  const query = `
+    mutation create_waiver_claim($league_id: Snowflake!, $roster_id: Int!, $adds: JSON, $drops: JSON, $waiver_budget: Int) {
+      create_waiver_claim(league_id: $league_id, roster_id: $roster_id, adds: $adds, drops: $drops, waiver_budget: $waiver_budget) {
+        transaction_id status type created adds drops settings
+      }
+    }
+  `;
+  const data = await gql<{ create_waiver_claim: TransactionResult }>(token, "create_waiver_claim", query, {
+    league_id: assertNumeric(params.leagueId, "leagueId"),
+    roster_id: rosterId,
+    adds: { [params.addPlayerId]: rosterId },
+    drops: params.dropPlayerId ? { [params.dropPlayerId]: rosterId } : {},
+    waiver_budget: Math.max(0, Math.trunc(params.bid)),
+  });
+  return data.create_waiver_claim;
+}
+
+// Fast-follow candidates using this same gql() transport, not built yet:
+// cancel_waiver_claim, move_to_taxi, propose_trade/accept_trade/
 // reject_trade/cancel_trade.

@@ -8,6 +8,8 @@ import { activateFromIR, moveToIR, setStarters, SleeperGraphQLError } from "@/li
 import type { ManagedLeague, ManagedRoster } from "@/lib/manager";
 import type { PlayerMap } from "@/lib/types";
 import ConnectWriteAccess from "./ConnectWriteAccess";
+import BulkIR from "./BulkIR";
+import BulkAdd from "./BulkAdd";
 import { PlayerAvatar } from "./Avatar";
 import { SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
@@ -229,6 +231,7 @@ export default function LineupManager({
 }) {
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [tab, setTab] = useState<"lineups" | "ir" | "add">("lineups");
   const { pmap } = usePlayerMap();
 
   const needsAttention = useMemo(() => leagues.filter((l) => l.alertCount > 0), [leagues]);
@@ -239,9 +242,24 @@ export default function LineupManager({
       <section className="sec">
         <SectionHead
           title="Lineups"
-          right="set starters and manage IR across every league, in one place"
+          right="set starters, IR and adds across every league, in one place"
         />
         <ConnectWriteAccess onTokenReady={setToken} />
+        <div className="field" style={{ marginBottom: 16 }}>
+          <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => setTab("lineups")}>
+            Lineups
+          </button>
+          <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => setTab("ir")}>
+            Mass IR
+          </button>
+          <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => setTab("add")}>
+            Mass Add / Claim
+          </button>
+        </div>
+        {tab === "ir" && <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />}
+        {tab === "add" && <BulkAdd leagues={leagues} pmap={pmap} token={token} />}
+        {tab === "lineups" && (
+        <>
         <StatCardGrid variant="grid">
           <StatCard label="Total leagues" value={leagues.length} />
           <StatCard
@@ -256,9 +274,11 @@ export default function LineupManager({
           Fantis&rsquo;s own synced data (records, rosters shown elsewhere in Manager) updates on
           the next regular sync, not instantly.
         </p>
+        </>
+        )}
       </section>
 
-      {needsAttention.length > 0 && (
+      {tab === "lineups" && needsAttention.length > 0 && (
         <section className="sec">
           <SectionHead level={2} title="Needs attention" right={`${needsAttention.length} leagues`} />
           <DataTable>
@@ -269,6 +289,7 @@ export default function LineupManager({
         </section>
       )}
 
+      {tab === "lineups" && (
       <section className="sec">
         <SectionHead
           title="All leagues"
@@ -286,6 +307,7 @@ export default function LineupManager({
           </DataTable>
         )}
       </section>
+      )}
     </>
   );
 }
