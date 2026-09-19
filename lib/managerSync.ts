@@ -27,7 +27,7 @@ import type { PlayerMap, ProjectionMap, SleeperMatchupRow, SleeperDraftRaw } fro
 
 // No documented Sleeper rate limit exists anywhere to tune against — this
 // is a conservative, explicit, tunable constant, not a measured number.
-const DETAIL_BATCH_SIZE = 10;
+const DETAIL_BATCH_SIZE = 25;
 
 // Real per-team weekly-result history (Standings' Streak column) backfills
 // past weeks of the current season incrementally — capped per sync call so

@@ -12,7 +12,7 @@ import type { Prisma } from "@/generated/prisma/client";
 // actually touches. 100 leagues at batch-of-10 is comfortably under this —
 // the explicit bump exists because Vercel's Hobby default (10s) isn't
 // enough headroom regardless.
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const store = await cookies();
