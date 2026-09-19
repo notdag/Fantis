@@ -14,6 +14,7 @@ import type { LineupLeague } from "./LineupManager";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
+import { useCuratedRanks } from "./useCuratedRanks";
 
 // Statuses that score nothing this week. Doubtful/Questionable stay
 // eligible (they might play) and are just flagged next to the name.
@@ -25,6 +26,7 @@ interface Row {
   leagueName: string;
   rosterId: number;
   slotCodes: string[];
+  scoring: "pts_ppr" | "pts_half_ppr" | "pts_std";
   result: OptimizeResult;
 }
 
@@ -88,6 +90,13 @@ export default function BulkOptimize({
   const [summary, setSummary] = useState("");
   const abortRef = useRef({ aborted: false });
 
+  // "rankings": your /admin order decides who starts (projections only order
+  // players you haven't ranked); "projections": pure best projection. The
+  // My players priority/avoid lists apply in both.
+  const [mode, setMode] = useState<"rankings" | "projections">("rankings");
+  const ranks = useCuratedRanks();
+  const ranksPending = mode === "rankings" && !ranks;
+
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
   const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
 
@@ -95,7 +104,7 @@ export default function BulkOptimize({
     const out: Row[] = [];
     let locked = 0;
     let unavailable = 0;
-    if (!pmap || !proj) return { rows: out, lockedCount: 0, unavailableCount: 0 };
+    if (!pmap || !proj || ranksPending) return { rows: out, lockedCount: 0, unavailableCount: 0 };
 
     const isUnavailable = (id: string) => {
       const e = pmap[id];
@@ -125,6 +134,7 @@ export default function BulkOptimize({
         locked: isLocked,
         priorityRank: (id) => priorityIndex.get(id),
         avoid: (id) => avoidSet.has(id),
+        rankOrder: mode === "rankings" ? (id) => ranks?.get(id)?.order : undefined,
       });
       for (const id of candidates) {
         if (isLocked(id)) locked += 1;
@@ -133,12 +143,12 @@ export default function BulkOptimize({
       // A change can come from a preference even when it costs projected
       // points, so key on "is there a change", not on positive gain.
       if (result.changes.length > 0) {
-        out.push({ key: l.league.id, leagueId: l.league.id, leagueName: l.league.name, rosterId: l.roster.rosterId, slotCodes, result });
+        out.push({ key: l.league.id, leagueId: l.league.id, leagueName: l.league.name, rosterId: l.roster.rosterId, slotCodes, scoring: key, result });
       }
     }
     out.sort((a, b) => b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek, priorityIndex, avoidSet]);
+  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek, priorityIndex, avoidSet, mode, ranks, ranksPending]);
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
@@ -150,8 +160,31 @@ export default function BulkOptimize({
     const health = inj === "Questionable" ? " (Q)" : inj === "Doubtful" ? " (D)" : "";
     return `${priorityIndex.has(id) ? " ★" : avoidSet.has(id) ? " ⊘" : ""}${health}`;
   };
+  // Show both sides of every swap with the numbers behind it (your ranking
+  // and Sleeper's projection), so it's clear why each move is proposed.
+  const rankLabel = (id: string) => {
+    const rk = ranks?.get(id);
+    return rk ? `#${rk.order + 1}` : "unranked";
+  };
+  const who = (r: Row, id: string | null) =>
+    id ? `${name(id)}${flag(id)} (${rankLabel(id)} · ${(proj?.[id]?.[r.scoring] ?? 0).toFixed(1)})` : "empty";
+  const reason = (c: { out: string | null; in: string | null }) => {
+    if (c.in && priorityIndex.has(c.in)) return "your priority";
+    if (c.out && avoidSet.has(c.out)) return "avoid list";
+    const outInj = c.out ? pmap?.[c.out]?.inj : null;
+    const outTeam = c.out ? pmap?.[c.out]?.t : null;
+    if (c.out && ((outInj && OUT_STATUSES.has(outInj)) || (outTeam && BYE_WEEKS_2026[outTeam] === currentWeek))) {
+      return "replacing an unavailable player";
+    }
+    if (mode === "rankings" && c.in) {
+      const ri = ranks?.get(c.in)?.order;
+      const ro = c.out ? ranks?.get(c.out)?.order : undefined;
+      if (ri !== undefined && (ro === undefined || ri < ro)) return "ranked higher";
+    }
+    return "higher projection";
+  };
   const swapText = (r: Row) =>
-    r.result.changes.map((c) => `${c.slotCode}: ${name(c.out)} → ${name(c.in)}${flag(c.in)}`);
+    r.result.changes.map((c) => `${c.slotCode}: ${who(r, c.out)} → ${who(r, c.in)} — ${reason(c)}`);
 
   const toggle = (key: string) =>
     setDeselected((prev) => {
@@ -216,12 +249,23 @@ export default function BulkOptimize({
         <StatCard label="Locked / out / bye" value={`${lockedCount} / ${unavailableCount}`} sub="started games · injured or on bye" />
       </StatCardGrid>
       <p className="hint" style={{ margin: "8px 0 12px" }}>
-        Best legal lineup per league from Sleeper&rsquo;s week {currentWeek} projections, using each
-        league&rsquo;s own slots and PPR / half / standard scoring. Leagues with custom scoring
-        (TE premium, 6-point passing TDs) are approximated. Players whose game has started are
-        locked in place; injured (Out/IR) and bye-week players are skipped. (Q) / (D) marks a
-        Questionable or Doubtful player being started.
+        {mode === "rankings"
+          ? "Starts your highest-ranked healthy players (your /admin order); anyone you haven't ranked is ordered by Sleeper's projection and sits below ranked players."
+          : "Starts the highest Sleeper projection at each slot, ignoring your /admin rankings."}{" "}
+        Projections are Sleeper&rsquo;s week {currentWeek} numbers for each league&rsquo;s PPR / half /
+        standard scoring (custom scoring like TE premium is approximated). Players whose game has
+        started are locked in place; injured (Out/IR) and bye-week players are skipped. Each swap
+        shows (your rank · projection) for both players. (Q) / (D) = Questionable / Doubtful.
       </p>
+      <div className="field" style={{ margin: "0 0 12px", alignItems: "center" }}>
+        <span className="portmeta">Choose by</span>
+        <button className={`chip-filter ${mode === "rankings" ? "on" : ""}`} onClick={() => setMode("rankings")}>
+          My rankings
+        </button>
+        <button className={`chip-filter ${mode === "projections" ? "on" : ""}`} onClick={() => setMode("projections")}>
+          Projections only
+        </button>
+      </div>
       <p className="hint" style={{ margin: "0 0 12px" }}>
         {prefs.priority.length + prefs.avoid.length > 0 ? (
           <>
@@ -235,7 +279,9 @@ export default function BulkOptimize({
         <button className="linklike" style={{ fontSize: 13 }} onClick={onEditPrefs}>Edit My players</button>
       </p>
 
-      {rows.length === 0 ? (
+      {ranksPending ? (
+        <p className="hint">Loading your rankings…</p>
+      ) : rows.length === 0 ? (
         <p className="hint">Every lineup already matches your preferences and the best projections.</p>
       ) : (
         <>

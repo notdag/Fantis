@@ -21,6 +21,9 @@ export interface OptimizeInput {
   // Optional — without it this is a pure best-projection optimizer.
   priorityRank?: (id: string) => number | undefined;
   avoid?: (id: string) => boolean;
+  // Position in the owner's overall curated rankings (0 = best); undefined =
+  // not ranked. Optional — omit it to choose purely by projection.
+  rankOrder?: (id: string) => number | undefined;
 }
 
 export interface LineupChange {
@@ -42,7 +45,8 @@ const EMPTY = "0";
 const isEmpty = (id: string | undefined) => !id || id === EMPTY;
 
 // Slot-assignment weights, as bands so each rule strictly outranks the next:
-//   priority band  >>  normal players (ranked by projection)  >  avoid band  >  empty slot
+//   priority list  >  owner's rankings (/admin order)  >  unranked players (by
+//   projection)  >  avoid band  >  empty slot
 // - Every real player beats an empty slot (REAL), even an "avoid" one — a
 //   slot is only left empty when nobody eligible exists.
 // - The owner's priority list adds a band big enough to dominate any
@@ -55,6 +59,11 @@ const isEmpty = (id: string | undefined) => !id || id === EMPTY;
 const REAL_PLAYER_BONUS = 1e6;
 const PRIORITY_BASE = 1e7;
 const PRIORITY_RANK_STEP = 1000; // per list position; list is capped at 500
+// The owner's curated rankings sit between the two: above any projection gap,
+// below the explicit priority list. Better (lower) rank wins a contested
+// slot; players missing from the rankings fall back to projections.
+const RANKING_BASE = 3e6;
+const RANKING_STEP = 1000; // per rank position; ranks are capped at 1000
 const AVOID_PENALTY = 5e5;
 const STAY_PUT_BONUS = 0.0005;
 const BIG = 1e9;
@@ -127,6 +136,10 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     const rank = input.priorityRank?.(id);
     if (rank !== undefined) w += PRIORITY_BASE + (500 - Math.min(rank, 500)) * PRIORITY_RANK_STEP;
     else if (input.avoid?.(id)) w -= AVOID_PENALTY;
+    else {
+      const order = input.rankOrder?.(id);
+      if (order !== undefined) w += RANKING_BASE + (1000 - Math.min(order, 1000)) * RANKING_STEP;
+    }
     return w;
   };
 
