@@ -30,20 +30,10 @@ export const NAV_ENTRIES: NavEntry[] = [
     label: "Tools",
     links: [
       { href: "/manager/lineups", label: "Lineups" },
+      { href: "/manager/transactions", label: "Transactions" },
       { href: "/manager/actions", label: "Action Queue" },
       { href: "/manager/waiver", label: "Waiver Assistant" },
       { href: "/manager/player", label: "Player search" },
-    ],
-  },
-  {
-    kind: "group",
-    icon: "shield",
-    label: "League Ops",
-    links: [
-      { href: "/manager/drafts", label: "Drafts" },
-      { href: "/manager/transactions", label: "Transactions" },
-      { href: "/manager/commissioner", label: "Commissioner" },
-      { href: "/manager/history", label: "History" },
     ],
   },
 ];

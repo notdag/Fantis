@@ -5,7 +5,7 @@ import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { posChipStyle } from "@/lib/players";
 import { activateFromIR, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
-import type { ManagedLeague, ManagedRoster } from "@/lib/manager";
+import { isBestBall, type ManagedLeague, type ManagedRoster } from "@/lib/manager";
 import type { PlayerMap } from "@/lib/types";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkIR from "./BulkIR";
@@ -223,12 +223,23 @@ function LeagueRow({
 }
 
 export default function LineupManager({
-  leagues,
+  leagues: allLeagues,
   currentWeek,
 }: {
   leagues: LineupLeague[];
   currentWeek: number;
 }) {
+  // Best ball leagues set their own lineups, so they're hidden from every
+  // tab here by default (one toggle brings them back).
+  const [hideBestBall, setHideBestBall] = useState(true);
+  const bestBallCount = useMemo(
+    () => allLeagues.filter((l) => isBestBall(l.league.settings)).length,
+    [allLeagues]
+  );
+  const leagues = useMemo(
+    () => (hideBestBall ? allLeagues.filter((l) => !isBestBall(l.league.settings)) : allLeagues),
+    [allLeagues, hideBestBall]
+  );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [tab, setTab] = useState<"lineups" | "ir" | "add">("lineups");
@@ -255,6 +266,16 @@ export default function LineupManager({
           <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => setTab("add")}>
             Mass Add / Claim
           </button>
+          <span style={{ flex: 1 }} />
+          {bestBallCount > 0 && (
+            <button
+              className={`chip-filter ${hideBestBall ? "on" : ""}`}
+              onClick={() => setHideBestBall((v) => !v)}
+              title="Best ball leagues set their own lineups"
+            >
+              {hideBestBall ? `Best ball hidden (${bestBallCount})` : `Hide ${bestBallCount} best ball`}
+            </button>
+          )}
         </div>
         {tab === "ir" && <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />}
         {tab === "add" && <BulkAdd leagues={leagues} pmap={pmap} token={token} />}

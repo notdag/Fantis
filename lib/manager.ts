@@ -247,6 +247,15 @@ export function rosterPositionsFromSettings(settings: unknown): string[] {
   return Array.isArray(value) ? (value as string[]) : [];
 }
 
+// Best ball leagues auto-set lineups, so there's nothing to manage in them.
+// Sleeper marks them with `best_ball: 1` inside the league's nested
+// `settings` object (confirmed against real synced data — 15 of 234).
+export function isBestBall(settings: unknown): boolean {
+  if (!settings || typeof settings !== "object") return false;
+  const inner = (settings as Record<string, unknown>).settings;
+  return !!inner && typeof inner === "object" && (inner as Record<string, unknown>).best_ball === 1;
+}
+
 export interface PlayoffFormat {
   playoffTeams: number | null;
   playoffWeekStart: number | null;
