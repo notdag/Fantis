@@ -196,7 +196,7 @@ Quiet neutrals carry the page; amber is the only saturated color spent on UI chr
 - **Body** (500, 13px): the most common text size in the app — results, tabs, general UI text.
 - **Caption** (500, 12px): secondary/meta text — hint lines, sub-labels, roster meta.
 - **Label** (600, 10.5px, uppercase, 0.07em tracking): table column headers, tier/position micro-labels.
-- **Micro** (700, 9px): the smallest text in the app — the sort-column arrow glyph and the position-power bar's in-segment rank digit (that digit occasionally drops to 7px where the bar segment is too narrow for 9px to fit; treat 7px as Micro's floor, not a separate step).
+- **Micro** (700, 10px, uppercase where it labels): the smallest text carrying information — roster slot labels, stat-badge labels, position-power bar rank digits, bubble names. 10px is the floor (raised from 9px/7px after the 2026-09 audit found them unreadable on phones). The one exception is the sort-column arrow glyph, which stays 9px because it is an icon, not text.
 
 Sizes are tuned in half-pixel increments around these anchors on individual components (e.g. 13.5px on some table cells beside 13px Body, 15px/15.5px beside 16px Body Large) — that fine adjustment is intentional per-component polish, not a separate named step for every value.
 

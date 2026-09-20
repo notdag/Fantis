@@ -14,6 +14,7 @@
   --amber:#FFB020; --amber-soft:rgba(255,176,32,.14);
   --mint:#37E0B0; --red:#FF5D5D;
   --qb:#5FDA9C; --rb:#59B4E8; --wr:#F0808A; --te:#F0B876; --oth:#8A93A3;
+  --on-accent:#10131A; /* text drawn on amber and position-colour fills */
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -64,7 +65,7 @@ h1.big span{color:var(--amber)}
 .select.sm{padding:5px 8px;font-size:12.5px}
 .btn{appearance:none;border:0;cursor:pointer;border-radius:8px;
   font-weight:600;font-size:14px;padding:11px 18px;display:inline-flex;align-items:center;
-  justify-content:center;background:var(--amber);color:#10131A}
+  justify-content:center;background:var(--amber);color:var(--on-accent)}
 .btn:hover{filter:brightness(1.08)}
 .btn:disabled{opacity:.5;cursor:default}
 .btn.ghost{background:transparent;color:var(--bone);border:1px solid var(--line)}
@@ -96,7 +97,7 @@ h1.big span{color:var(--amber)}
 /* filter chips (position filters etc.) */
 .chip-filter{appearance:none;border:0;background:transparent;cursor:pointer;
   font-size:12.5px;font-weight:500;color:var(--muted);border-radius:7px;padding:6px 11px}
-.chip-filter.on{background:var(--amber);color:#10131A;font-weight:800}
+.chip-filter.on{background:var(--amber);color:var(--on-accent);font-weight:800}
 .chip-filter:hover:not(.on){color:var(--bone)}
 
 /* section */
@@ -324,7 +325,7 @@ h1.big span{color:var(--amber)}
    full-width dividers, so it fits any screen width with no horizontal
    scrolling; drag a row down past a band to re-tier it. */
 .tierlist{border:1px solid var(--line);border-radius:10px;overflow:hidden}
-.tierband{display:flex;align-items:center;gap:8px;padding:7px 14px;font-weight:800;font-size:14px;color:#10131A}
+.tierband{display:flex;align-items:center;gap:8px;padding:7px 14px;font-weight:800;font-size:14px;color:var(--on-accent)}
 .tierband .count{font-weight:600;font-size:12px;opacity:.65}
 .tierband.empty{padding:5px 14px;font-size:11px;font-weight:600;opacity:.7}
 .tierrow{display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--line-soft);font-size:13px;cursor:grab;background:var(--panel)}
@@ -352,9 +353,9 @@ h1.big span{color:var(--amber)}
 .trtop .chev{color:var(--dim);font-size:13px;transition:transform .15s;flex:none}
 .trtop .chev.open{transform:rotate(180deg)}
 .trbar{display:flex;height:9px;border-radius:3px;overflow:hidden;gap:1px;flex:1;min-width:80px}
-.trbar div{display:flex;align-items:center;justify-content:center;flex:1;font-size:7px;font-weight:700;color:#10131A}
+.trbar div{display:flex;align-items:center;justify-content:center;flex:1;font-size:10px;font-weight:700;color:var(--on-accent)}
 .trbottom{display:flex;align-items:center;gap:22px;flex-wrap:wrap;margin-top:8px;padding-left:20px}
-.trscore{font-weight:900;font-size:15px;color:#10131A;background:var(--amber);min-width:48px;
+.trscore{font-weight:900;font-size:15px;color:var(--on-accent);background:var(--amber);min-width:48px;
   text-align:center;padding:5px 10px;border-radius:7px;font-variant-numeric:tabular-nums}
 .trranktext{display:flex;gap:12px;font-size:13px;font-weight:700;font-variant-numeric:tabular-nums}
 .trmeta{display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--dim)}
@@ -364,16 +365,16 @@ h1.big span{color:var(--amber)}
 .trcol{background:var(--panel);border:1px solid var(--line);border-radius:9px;overflow:hidden;min-width:0}
 .trphoto{width:20px;height:20px;border-radius:50%;object-fit:cover;background:var(--ink);
   border:1px solid var(--line);flex:none}
-.trcol header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;font-size:13.5px;font-weight:700;color:#10131A;flex-wrap:wrap;gap:6px}
+.trcol header{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;font-size:13.5px;font-weight:700;color:var(--on-accent);flex-wrap:wrap;gap:6px}
 .trcol header .badge{background:rgba(16,19,26,.25);border-radius:5px;padding:2px 7px;font-size:12.5px}
 /* Position filter chips inside the Waivers column's amber header — same
    dark-ink-on-amber base as the header text, inverts to ink bg / amber
    text when active (mirrors the badge's dark-tint treatment). */
 .waiverposfilter{display:flex;gap:3px}
 .waiverposfilter button{appearance:none;border:1px solid rgba(16,19,26,.3);background:transparent;
-  color:#10131A;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700;
+  color:var(--on-accent);border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700;
   letter-spacing:.02em;cursor:pointer}
-.waiverposfilter button.on{background:#10131A;border-color:#10131A;color:var(--amber)}
+.waiverposfilter button.on{background:var(--ink);border-color:var(--ink);color:var(--amber)}
 .waiverposfilter button:hover:not(.on){background:rgba(16,19,26,.15)}
 .trplayer{display:flex;align-items:center;gap:6px;padding:7px 9px;font-size:14px;border-top:1px solid var(--line-soft)}
 .trplayer .plname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -385,7 +386,7 @@ h1.big span{color:var(--amber)}
 /* "Starting" label inside the team scorecard's roster columns — plain dim
    uppercase text, not a colored badge, so it doesn't compete with the
    position-tint system or reuse mint outside its two reserved uses. */
-.tcstarter{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+.tcstarter{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   color:var(--dim);flex:none;white-space:nowrap}
 
 /* player detail modal — sized to read like a real page, not a mini popup */
@@ -416,7 +417,7 @@ h1.big span{color:var(--amber)}
 .pcardheadstats{display:flex;gap:8px;flex:none;align-self:flex-start}
 .statbadge{display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 14px;
   border:1px solid var(--line);border-radius:8px;background:var(--ink);min-width:60px}
-.statbadge b{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+.statbadge b{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   color:var(--dim);white-space:nowrap}
 .statbadge .statbadgeval{font-size:20px;font-weight:900;color:var(--bone);font-variant-numeric:tabular-nums}
 /* "Analytics terminal" variant (2026-08, v2) — unfilled, just the hairline
@@ -518,7 +519,7 @@ h1.big span{color:var(--amber)}
 .expbubblecaption{position:absolute;left:6%;right:6%;bottom:8%;display:flex;flex-direction:column;
   align-items:center;line-height:1.05;padding:1px 0;border-radius:5px;
   background:rgba(16,19,26,.74);pointer-events:none}
-.expbubblename{font-size:9px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;
+.expbubblename{font-size:10px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;max-width:100%}
 .expbubblecount{font-size:11.5px;font-weight:900;color:#fff}
 .expbubblestatus{position:absolute;top:-2px;left:-2px;width:11px;height:11px;border-radius:50%;
@@ -571,14 +572,14 @@ h1.big span{color:var(--amber)}
   margin-bottom:8px;font-weight:600}
 .hubstartercards{display:flex;gap:12px;overflow-x:auto;padding-bottom:6px}
 .hubstartercard{display:flex;flex-direction:column;align-items:center;gap:2px;flex:none;width:76px}
-.hubcardslot{font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+.hubcardslot{font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
   color:var(--dim);margin-bottom:4px}
 .hubcardphotowrap{width:64px;height:64px}
 .hubcardphotowrap.empty{background:var(--ink);border:1px dashed var(--line);border-radius:14px}
 .hubcardphoto{width:64px;height:64px;border-radius:14px;object-fit:cover;background:var(--ink);
   border:1px solid var(--line)}
 /* Sits below the photo in normal flow now, not overlapping the image edge. */
-.hubcardpos{font-size:9px;padding:2px 6px;white-space:nowrap;margin-top:6px}
+.hubcardpos{font-size:10px;padding:2px 6px;white-space:nowrap;margin-top:6px}
 .hubcardname{font-size:11.5px;font-weight:500;text-align:center;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;max-width:76px;margin-top:2px}
 .hubcardteam{font-size:10px;color:var(--dim)}
@@ -665,7 +666,7 @@ h1.big span{color:var(--amber)}
 .pixelloadergrid{display:inline-grid;grid-template-columns:repeat(3,4px);gap:1.5px}
 .pixelloadercell{width:4px;height:4px;border-radius:1px;background:var(--amber);opacity:.15;
   animation:pixel-on 650ms ease-in-out infinite}
-.pixelloader.on-accent .pixelloadercell{background:#10131A}
+.pixelloader.on-accent .pixelloadercell{background:var(--ink)}
 .pixelloaderlabel{font-size:13px;font-weight:500;color:var(--muted);
   animation:label-pulse 1.4s ease-in-out infinite}
 .pixelloader.on-accent .pixelloaderlabel{color:rgba(16,19,26,.7)}
@@ -676,3 +677,12 @@ h1.big span{color:var(--amber)}
 a.link{color:var(--amber);text-decoration:none}
 a.link:hover{text-decoration:underline}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* keyboard focus: one shared amber ring for every control that had none */
+:where(.btn,.chip-filter,.select,.mini,button,a,summary,[role="button"]):focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+/* touch: real finger-sized targets on phones/tablets only, desktop density unchanged */
+@media (pointer:coarse){
+  .btn.sm,.chip-filter,.select.sm{min-height:44px}
+  .btn{min-height:44px}
+}
