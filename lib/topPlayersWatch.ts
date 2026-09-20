@@ -1,6 +1,7 @@
 // "Is anyone I care about sitting on the bench?" — pure detection used by the
-// Lineups page notice. Watched players = the owner's top-N curated rankings
-// (/admin order) plus anyone on the My players priority list. A benched
+// Lineups page notice. Watched players = the owner's top players PER POSITION
+// (e.g. top 40 WR, top 12 QB, by their /admin position rank) plus anyone on the
+// My players priority list. A benched
 // watched player is only a PROBLEM if he's healthy and a worse-ranked player
 // (or an empty slot) holds a spot he's eligible for; if every eligible spot is
 // held by someone ranked at least as well, he's simply behind better players.
@@ -16,7 +17,11 @@ export interface WatchLeague {
 }
 
 export interface WatchOptions {
-  topN: number;
+  // How many of each position count as "top" (e.g. { QB: 12, RB: 30, WR: 40, TE: 12 });
+  // a position not listed isn't watched.
+  limits: Record<string, number>;
+  // 1-based rank within his position in the owner's /admin rankings.
+  posRankOf: (id: string) => number | undefined;
   // 0-based position in the owner's overall curated rankings; undefined = unranked.
   rankOrder: (id: string) => number | undefined;
   // 0-based position on the My players priority list; undefined = not listed.
@@ -53,8 +58,11 @@ export function findBenchedWatched(leagues: WatchLeague[], opts: WatchOptions): 
     return ro === undefined ? Infinity : ro;
   };
   const watched = (id: string) => {
-    const ro = opts.rankOrder(id);
-    return opts.priorityIndex(id) !== undefined || (ro !== undefined && ro < opts.topN);
+    if (opts.priorityIndex(id) !== undefined) return true;
+    const pos = opts.posOf(id);
+    const pr = opts.posRankOf(id);
+    const limit = pos ? opts.limits[pos] : undefined;
+    return pr !== undefined && limit !== undefined && pr <= limit;
   };
 
   const out: BenchedWatched[] = [];

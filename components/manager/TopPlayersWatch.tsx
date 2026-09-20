@@ -31,7 +31,8 @@ export default function TopPlayersWatch({
   onFix: () => void;
 }) {
   const ranks = useCuratedRanks();
-  const [topN, setTopN] = useState(60);
+  // How many of each position count as "top" — by your /admin position rank.
+  const [limits, setLimits] = useState<Record<string, number>>({ QB: 12, RB: 30, WR: 40, TE: 12 });
   const [open, setOpen] = useState(false);
 
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
@@ -49,7 +50,8 @@ export default function TopPlayersWatch({
         reserve: l.roster!.reserve,
       }));
     return findBenchedWatched(watchLeagues, {
-      topN,
+      limits,
+      posRankOf: (id) => ranks.get(id)?.posRank,
       rankOrder: (id) => ranks.get(id)?.order,
       priorityIndex: (id) => priorityIndex.get(id),
       posOf: (id) => pmap[id]?.p ?? null,
@@ -60,7 +62,7 @@ export default function TopPlayersWatch({
         return e.t && BYE_WEEKS_2026[e.t] === currentWeek ? "bye week" : null;
       },
     });
-  }, [leagues, pmap, ranks, topN, priorityIndex, currentWeek]);
+  }, [leagues, pmap, ranks, limits, priorityIndex, currentWeek]);
 
   if (!rows || !pmap) return null;
 
@@ -73,19 +75,27 @@ export default function TopPlayersWatch({
     return o === undefined ? "unranked" : `#${o + 1}`;
   };
 
+  const label = `QB ${limits.QB} · RB ${limits.RB} · WR ${limits.WR} · TE ${limits.TE}`;
   const topInput = (
-    <label className="portmeta" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-      top
-      <input
-        className="input"
-        type="number"
-        min={5}
-        max={300}
-        value={topN}
-        onChange={(e) => setTopN(Math.min(300, Math.max(5, Number(e.target.value) || 60)))}
-        style={{ width: 64 }}
-      />
-    </label>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span className="portmeta">top</span>
+      {(["QB", "RB", "WR", "TE"] as const).map((pos) => (
+        <label key={pos} className="portmeta" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          {pos}
+          <input
+            className="input"
+            type="number"
+            min={1}
+            max={100}
+            value={limits[pos]}
+            onChange={(e) =>
+              setLimits((prev) => ({ ...prev, [pos]: Math.min(100, Math.max(1, Number(e.target.value) || prev[pos])) }))
+            }
+            style={{ width: 54 }}
+          />
+        </label>
+      ))}
+    </span>
   );
 
   if (problems.length === 0) {
@@ -93,7 +103,7 @@ export default function TopPlayersWatch({
       <div className="card sync" style={{ marginBottom: 16 }}>
         <div className="field" style={{ alignItems: "center" }}>
           <span className="hint" style={{ margin: 0, color: "var(--mint)" }}>
-            ✓ Every healthy top-{topN} player you own is starting wherever he can.
+            ✓ Every healthy top player you own ({label}) is starting wherever he can.
             {unavailable.length > 0 && ` (${unavailable.length} more are benched because they're injured or on bye.)`}
           </span>
           <span style={{ flex: 1 }} />
@@ -107,7 +117,7 @@ export default function TopPlayersWatch({
     <div className="card sync" style={{ marginBottom: 16, borderColor: "var(--amber)" }}>
       <div className="field" style={{ alignItems: "center" }}>
         <span className="hint" style={{ margin: 0, color: "var(--amber)", fontWeight: 600 }}>
-          ⚠ {problems.length} of your top-{topN} players {problems.length === 1 ? "is" : "are"} on the bench in{" "}
+          ⚠ {problems.length} of your top players ({label}) {problems.length === 1 ? "is" : "are"} on the bench in{" "}
           {problemLeagues} league{problemLeagues === 1 ? "" : "s"} while a lower-ranked player starts
         </span>
         <span style={{ flex: 1 }} />
