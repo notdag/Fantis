@@ -21,6 +21,9 @@ import { StatCard, StatCardGrid } from "./StatCard";
 import { BreakdownCard, BreakdownCardGrid } from "./BreakdownCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { SectionHead } from "./PageHead";
+import CommandCenterAI from "./CommandCenterAI";
+import { isBestBall } from "@/lib/manager";
+import type { CcLeague } from "@/lib/commandCenter/types";
 import { LeagueAvatar, PlayerAvatar } from "./Avatar";
 import { Badge } from "./Badge";
 
@@ -507,6 +510,17 @@ export default function ManagerDashboard({
     return { totalLeagues: leagues.length, activeLeagues, upcomingDrafts, completedDrafts };
   }, [leagues, draftsByLeague]);
 
+  const ccLeagues = useMemo<CcLeague[]>(() => {
+    const rosterByLeague = new Map(rosters.map((r) => [r.leagueId, r.rosterId]));
+    const out: CcLeague[] = [];
+    for (const l of leagues) {
+      const rid = rosterByLeague.get(l.id);
+      if (rid == null) continue; // can't tell which roster is mine — never guess
+      out.push({ id: l.id, name: l.name, status: l.status, settings: l.settings, rosterId: rid, ownerId: l.accountId, bestBall: isBestBall(l.settings) });
+    }
+    return out;
+  }, [leagues, rosters]);
+
   return (
     <>
       <section className="sec" style={{ paddingTop: 12, paddingBottom: detailsOpen ? undefined : 12 }}>
@@ -607,6 +621,8 @@ export default function ManagerDashboard({
           </div>
         )}
       </section>
+
+      <CommandCenterAI leagues={ccLeagues} />
 
       {leagues.length > 0 && (
         <section className="sec">

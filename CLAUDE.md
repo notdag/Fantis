@@ -327,3 +327,38 @@ _(fill in once scaffolded, e.g.)_
 - Dev: `npm run dev`
 - Build: `npm run build`
 - DB: `npx prisma migrate dev`
+
+## Command Center AI (2026-09, Phase 1: READ-ONLY)
+
+A natural-language panel at the top of `/manager` (`components/manager/CommandCenterAI.tsx`)
+that scans the owner's in-season, non-best-ball leagues and answers "where is
+player X available / on waivers / would need a drop", suggests drop candidates,
+finds IR opportunities and roster decisions. **Phase 1 cannot change anything on
+Sleeper** — `CURRENT_PERMISSION = "READ_ONLY"` in `lib/commandCenter/types.ts`,
+no module under `lib/commandCenter/` may import `lib/sleeperWrite.ts` or send a
+mutating request, and `scripts/testCommandCenter.ts` (`npx tsx
+scripts/testCommandCenter.ts`, 120 checks) enforces that statically. Write
+phases (PROPOSE_ONLY → EXECUTE_APPROVED) only on the owner's explicit request.
+
+- **No LLM**: no Anthropic key exists in the env, so intent parsing is
+  deterministic (`intent.ts`: phrase patterns + a name dictionary built from
+  Sleeper's player map). Anything that sounds like an instruction to change
+  something becomes `execute_request` → refusal + PREVIEW only. If an LLM is
+  added later it may only pick an intent and call the read-only tools in
+  `tools.ts`; it must never get a write path.
+- **Live reads, not the DB snapshot**: each league is read from Sleeper's public
+  API (rosters + last two legs of transactions), 5-minute cache, concurrency 6
+  (~12s for 210 leagues). States are never collapsed: AVAILABLE / WAIVER /
+  ON_MY_ROSTER / ON_OTHER_ROSTER / NOT_ELIGIBLE / UNKNOWN / SCAN_FAILED. A failed
+  or partial league is UNKNOWN/SCAN_FAILED, never "unavailable". WAIVER = an
+  unrostered player dropped within the league's `waiver_clear_days`
+  (`waiver_clear_days` must stay in `SLIM_INNER_KEYS` in `lib/manager.ts`).
+- **Strict player resolution** (`resolve.ts`): ≥2 current players with a name →
+  ask; team-less namesakes are disclosed, never silently picked; a lone
+  surname is never matched (only a few nicknames like CMC).
+- **Drop candidates** (`drops.ts`): bench only; never starters, IR/taxi, the
+  Priority list or the last QB/TE/K/DEF; Avoid list first, then Fantis value,
+  then FantasyCalc (never blended). Every candidate lists its reasons. Not used
+  (no data loaded here): ADP, recent production, snaps, depth chart, byes.
+- **Audit log**: `CommandAudit` table, `/api/manager/command-audit` (admin
+  cookie), one row per command.

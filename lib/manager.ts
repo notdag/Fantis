@@ -276,6 +276,7 @@ const SLIM_INNER_KEYS = [
   "waiver_type",
   "waiver_budget",
   "waiver_bid_min",
+  "waiver_clear_days", // Command Center AI: how long a dropped player stays on waivers
   "best_ball",
   "taxi_slots",
 ] as const;

@@ -312,3 +312,56 @@
     display:flex;padding:6px}
   .mgrdrawerclose:hover{color:var(--bone)}
 }
+
+/* Command Center AI (Phase 1, read-only) — reuses the panel/line tokens; state
+   chips follow the position-chip pattern (tinted background + colored text). */
+.cc{padding:20px}
+.cchead{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.cctitle{margin:0;font-size:19px;font-weight:600}
+.ccmode{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:12px;color:var(--muted);
+  border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:var(--amber-soft);border-radius:8px;padding:8px 12px}
+.ccmode strong{color:var(--amber);font-size:12px;letter-spacing:.06em}
+.ccexample{appearance:none;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;
+  padding:5px 11px;font-size:12px;cursor:pointer}
+.ccexample:hover:not(:disabled){color:var(--bone);border-color:var(--amber)}
+.ccexample:disabled{opacity:.5;cursor:default}
+.ccprogress{margin-top:14px;border:1px solid var(--line-soft);border-radius:8px;padding:12px}
+.ccprogresstext{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:8px;gap:12px;flex-wrap:wrap}
+.ccbar{height:6px;background:var(--line-soft);border-radius:3px;overflow:hidden}
+.ccbarfill{height:100%;background:var(--amber);transition:width .2s}
+.cccountsrow,.cccounts{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px}
+.ccturns{margin-top:16px;display:flex;flex-direction:column;gap:20px}
+.ccturn{border-top:1px solid var(--line-soft);padding-top:14px}
+.ccuser{font-size:14px;font-weight:600;color:var(--bone);margin-bottom:8px}
+.cctext{font-size:13px;line-height:1.55;margin:6px 0;color:var(--bone)}
+.cctone-info{color:var(--muted)}
+.cctone-good{color:var(--bone)}
+.cctone-warn{color:var(--amber)}
+.cctone-bad{color:var(--red)}
+.ccstate{font-size:12px;font-weight:600;border-radius:5px;padding:2px 8px;white-space:nowrap}
+.ccstate.cczero{opacity:.4}
+.cc-available{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}
+.cc-waiver{color:var(--amber);background:var(--amber-soft)}
+.cc-on-my-roster{color:var(--rb);background:color-mix(in srgb,var(--rb) 14%,transparent)}
+.cc-on-other-roster{color:var(--muted);background:color-mix(in srgb,var(--muted) 14%,transparent)}
+.cc-not-eligible{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
+.cc-unknown{color:var(--te);background:color-mix(in srgb,var(--te) 14%,transparent);outline:1px dashed color-mix(in srgb,var(--te) 55%,transparent)}
+.cc-scan-failed{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent);outline:1px solid color-mix(in srgb,var(--red) 55%,transparent)}
+.ccleague{border-top:1px solid var(--line-soft);padding:10px 0}
+.ccleaguetop{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ccdetail{margin-top:4px;flex:none;font-size:12px}
+.ccdetails{margin-top:6px;font-size:12px;color:var(--muted)}
+.ccdetails summary{cursor:pointer;color:var(--amber)}
+.ccdrop{margin:8px 0 0 4px;font-size:13px}
+.ccdrop ul,.ccdecision ul{margin:4px 0 0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.6}
+.cctally{margin-top:10px}
+.cctallyrow{display:flex;align-items:center;gap:10px;border-top:1px solid var(--line-soft);padding:8px 0;flex-wrap:wrap}
+.ccdecision{border-top:1px solid var(--line-soft);padding:8px 0;font-size:13px}
+.ccclarify{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.ccoption{appearance:none;text-align:left;border:1px solid var(--line);background:var(--ink);color:var(--bone);border-radius:8px;padding:9px 12px;font-size:13px;cursor:pointer}
+.ccoption:hover:not(:disabled){border-color:var(--amber)}
+.ccpreview{margin-top:14px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);border-radius:10px;padding:12px}
+.ccbanner{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--amber)}
+.ccpreviewitem{display:flex;gap:10px;align-items:flex-start;border-top:1px solid var(--line-soft);padding:8px 0;font-size:13px;cursor:pointer}
+.cchistory{margin-top:10px}
+.cchistoryrow{border-top:1px solid var(--line-soft);padding:8px 0;font-size:13px}

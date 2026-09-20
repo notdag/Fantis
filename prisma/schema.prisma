@@ -459,3 +459,29 @@ model AutomationPing {
   lastPingAt DateTime @default(now())
   userAgent  String?
 }
+
+// Command Center AI audit trail (Phase 1 is read-only, so every row is a scan
+// or analysis — never a change). One row per command the owner runs: what was
+// asked, how many leagues were scanned/failed, what was found and recommended.
+// Written by /api/manager/command-audit (admin cookie); no Sleeper token, and
+// no player data beyond names/ids the owner searched.
+model CommandAudit {
+  id                String   @id @default(cuid())
+  createdAt         DateTime @default(now())
+  command           String
+  intent            String
+  permission        String // READ_ONLY in Phase 1
+  players           Json // [{id, name}]
+  leaguesTotal      Int
+  leaguesScanned    Int
+  leaguesPartial    Int
+  leaguesFailed     Int
+  durationMs        Int
+  counts            Json? // per-state totals for the first target
+  actionableLeagues Int?
+  recommendations   Json // short strings, capped
+  errors            Json // short strings, capped
+  toolCalls         Int
+
+  @@index([createdAt])
+}
