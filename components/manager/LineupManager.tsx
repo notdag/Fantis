@@ -11,6 +11,7 @@ import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkIR from "./BulkIR";
 import BulkOptimize from "./BulkOptimize";
 import PlayerPreferences from "./PlayerPreferences";
+import TopPlayersWatch from "./TopPlayersWatch";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import BulkAdd from "./BulkAdd";
 import { PlayerAvatar } from "./Avatar";
@@ -291,6 +292,7 @@ export default function LineupManager({
           right="set starters, IR and adds across every league, in one place"
         />
         <ConnectWriteAccess onTokenReady={setToken} />
+        <TopPlayersWatch leagues={leagues} pmap={pmap} prefs={prefs} currentWeek={currentWeek} onFix={() => go("optimize")} />
         <div className="field" style={{ marginBottom: 16 }}>
           <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => go("lineups")}>
             Lineups
