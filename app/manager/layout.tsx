@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import AdminLogin from "@/components/AdminLogin";
 import ManagerShell from "@/components/manager/ManagerShell";
+import FloatingCommandCenter from "@/components/manager/FloatingCommandCenter";
 import { db } from "@/lib/db";
 import "./manager.css";
 
@@ -54,6 +55,7 @@ export default async function ManagerLayout({ children }: { children: React.Reac
       >
         {children}
       </ManagerShell>
+      <FloatingCommandCenter />
     </div>
   );
 }

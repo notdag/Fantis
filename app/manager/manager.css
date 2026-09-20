@@ -365,3 +365,27 @@
 .ccpreviewitem{display:flex;gap:10px;align-items:flex-start;border-top:1px solid var(--line-soft);padding:8px 0;font-size:13px;cursor:pointer}
 .cchistory{margin-top:10px}
 .cchistoryrow{border-top:1px solid var(--line-soft);padding:8px 0;font-size:13px}
+
+/* Floating Command Center AI launcher + panel (bottom-right, every manager page) */
+.cclauncher{position:fixed;right:20px;bottom:20px;z-index:60;display:inline-flex;align-items:center;gap:8px;
+  background:var(--amber);color:var(--on-accent);border:0;border-radius:999px;padding:11px 16px;font-size:14px;
+  font-weight:600;cursor:pointer;box-shadow:0 6px 24px rgba(0,0,0,.45)}
+.cclauncher:hover{filter:brightness(1.08)}
+.cclaunchermode{font-size:12px;font-weight:600;background:color-mix(in srgb,var(--on-accent) 18%,transparent);border-radius:999px;padding:1px 8px}
+.ccpanel{position:fixed;right:20px;bottom:20px;z-index:60;width:min(460px,calc(100vw - 24px));
+  height:min(720px,calc(100vh - 40px));flex-direction:column;background:var(--panel);border:1px solid var(--line);
+  border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.55);overflow:hidden}
+.ccpanelbar{display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-bottom:1px solid var(--line-soft);flex:none}
+.ccpanelmode{font-size:12px;font-weight:700;letter-spacing:.06em;color:var(--amber);background:var(--amber-soft);border-radius:5px;padding:2px 8px}
+.ccpanelbtn{appearance:none;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:8px;width:32px;height:32px;
+  display:inline-flex;align-items:center;justify-content:center}
+.ccpanelbtn:hover{color:var(--bone);background:var(--line-soft)}
+.ccpanelbody{overflow-y:auto;flex:1;min-height:0}
+.ccpanel .sec{padding:0}
+.ccpanel .card.cc{border:0;background:transparent;border-radius:0;padding:14px 16px 18px}
+.ccpanel .cctitle,.ccpanel .ccmode{display:none}
+.ccpanel .cchead{margin:0}
+@media (max-width:820px){
+  .cclauncher{bottom:76px;right:12px}
+  .ccpanel{right:12px;bottom:76px;height:min(640px,calc(100vh - 96px))}
+}
