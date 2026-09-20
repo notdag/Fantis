@@ -29,6 +29,9 @@ export interface WatchOptions {
   posOf: (id: string) => string | null;
   // Why he can't play this week (out / IR / bye), or null if he's available.
   unavailableReason: (id: string) => string | null;
+  // Optional: projected points for a player in a given league's scoring
+  // (missing = 0). Only used to label each problem, never to decide it.
+  points?: (leagueId: string, id: string) => number;
 }
 
 export interface BenchedWatched {
@@ -44,6 +47,11 @@ export interface BenchedWatched {
   kind: "problem" | "behind_better" | "unavailable";
   reason: string | null; // for "unavailable"
   displaces: string | null; // player id he'd replace (for "problem"); null = empty slot
+  proj: number | null; // his projected points (when projections were supplied)
+  displacedProj: number | null; // the starter's projected points
+  // True when the starter he'd replace projects MORE than he does — i.e. the
+  // current lineup is defensible on projection even though he ranks higher.
+  lowerProj: boolean;
 }
 
 const EMPTY = "0";
@@ -84,7 +92,7 @@ export function findBenchedWatched(leagues: WatchLeague[], opts: WatchOptions): 
 
       const why = opts.unavailableReason(id);
       if (why) {
-        out.push({ ...base, kind: "unavailable", reason: why, displaces: null });
+        out.push({ ...base, kind: "unavailable", reason: why, displaces: null, proj: null, displacedProj: null, lowerProj: false });
         continue;
       }
 
@@ -102,9 +110,20 @@ export function findBenchedWatched(leagues: WatchLeague[], opts: WatchOptions): 
       const w = worst as { slot: number; v: number } | null;
       if (w && w.v > mine) {
         const occupant = lg.starters[w.slot];
-        out.push({ ...base, kind: "problem", reason: null, displaces: isEmpty(occupant) ? null : occupant });
+        const displaces = isEmpty(occupant) ? null : occupant;
+        const proj = opts.points ? opts.points(lg.leagueId, id) : null;
+        const displacedProj = opts.points && displaces ? opts.points(lg.leagueId, displaces) : null;
+        out.push({
+          ...base,
+          kind: "problem",
+          reason: null,
+          displaces,
+          proj,
+          displacedProj,
+          lowerProj: proj !== null && displacedProj !== null && proj < displacedProj,
+        });
       } else {
-        out.push({ ...base, kind: "behind_better", reason: null, displaces: null });
+        out.push({ ...base, kind: "behind_better", reason: null, displaces: null, proj: null, displacedProj: null, lowerProj: false });
       }
     }
   }

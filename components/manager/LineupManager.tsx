@@ -292,7 +292,7 @@ export default function LineupManager({
           right="set starters, IR and adds across every league, in one place"
         />
         <ConnectWriteAccess onTokenReady={setToken} />
-        <TopPlayersWatch leagues={leagues} pmap={pmap} prefs={prefs} currentWeek={currentWeek} onFix={() => go("optimize")} />
+        <TopPlayersWatch leagues={leagues} pmap={pmap} prefs={prefs} currentWeek={currentWeek} season={season} onFix={() => go("optimize")} />
         <div className="field" style={{ marginBottom: 16 }}>
           <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => go("lineups")}>
             Lineups

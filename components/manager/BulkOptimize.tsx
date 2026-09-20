@@ -9,6 +9,7 @@ import { optimizeLineup, type OptimizeResult } from "@/lib/lineupOptimizer";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
+import { scoringKey } from "@/lib/scoringKey";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
 import type { LineupLeague } from "./LineupManager";
 import { StatCard, StatCardGrid } from "./StatCard";
@@ -30,13 +31,6 @@ interface Row {
   result: OptimizeResult;
 }
 
-function scoringKey(settings: unknown): "pts_ppr" | "pts_half_ppr" | "pts_std" {
-  const ss = settings && typeof settings === "object" ? (settings as Record<string, unknown>).scoring_settings : null;
-  const rec = ss && typeof ss === "object" ? (ss as Record<string, unknown>).rec : undefined;
-  if (rec === 0) return "pts_std";
-  if (rec === 0.5) return "pts_half_ppr";
-  return "pts_ppr";
-}
 
 export default function BulkOptimize({
   leagues,
@@ -95,6 +89,10 @@ export default function BulkOptimize({
   // My players priority/avoid lists apply in both.
   const [mode, setMode] = useState<"rankings" | "projections">("rankings");
   const ranks = useCuratedRanks();
+  // Hides lineup changes whose net projection goes DOWN (a ranking or priority
+  // is being followed at a projected cost). Off by default so nothing is
+  // hidden without you choosing it.
+  const [hideLosing, setHideLosing] = useState(false);
   const ranksPending = mode === "rankings" && !ranks;
 
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
@@ -142,13 +140,13 @@ export default function BulkOptimize({
       }
       // A change can come from a preference even when it costs projected
       // points, so key on "is there a change", not on positive gain.
-      if (result.changes.length > 0) {
+      if (result.changes.length > 0 && !(hideLosing && result.gain < -0.05)) {
         out.push({ key: l.league.id, leagueId: l.league.id, leagueName: l.league.name, rosterId: l.roster.rosterId, slotCodes, scoring: key, result });
       }
     }
     out.sort((a, b) => b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek, priorityIndex, avoidSet, mode, ranks, ranksPending]);
+  }, [leagues, pmap, proj, kickoffs, loadedAt, currentWeek, priorityIndex, avoidSet, mode, ranks, ranksPending, hideLosing]);
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
@@ -264,6 +262,14 @@ export default function BulkOptimize({
         </button>
         <button className={`chip-filter ${mode === "projections" ? "on" : ""}`} onClick={() => setMode("projections")}>
           Projections only
+        </button>
+        <span style={{ flex: 1 }} />
+        <button
+          className={`chip-filter ${hideLosing ? "on" : ""}`}
+          onClick={() => setHideLosing((v) => !v)}
+          title="Hide lineup changes that would lower this week's projected points"
+        >
+          {hideLosing ? "Hiding lineups that lose projection" : "Hide lineups that lose projection"}
         </button>
       </div>
       <p className="hint" style={{ margin: "0 0 12px" }}>
