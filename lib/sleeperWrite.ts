@@ -14,12 +14,18 @@
 // with credentials and every write method allowed, so this cross-origin
 // call is genuinely permitted, not a CORS workaround.
 //
+// Call names/arguments are checked against the LIVE schema by
+// scripts/checkSleeperSchema.mjs (run it before trusting a write path): the
+// community reference these were first ported from had gone stale.
+//
 // The mutations below are ported from a real, unofficial community
 // reference (a GitHub PR against an open-source Sleeper SDK) — evidenced,
 // not guessed, but still a single unverified contribution against
 // Sleeper's undocumented private schema. Never assume a call succeeded
 // just because fetch() didn't throw: Sleeper returns errors as HTTP 200
 // with a body `errors` array, not an HTTP error status.
+
+import { getRosters } from "./sleeper";
 
 const SLEEPER_GRAPHQL_URL = "https://sleeper.com/graphql";
 
@@ -137,6 +143,48 @@ export async function setStarters(
   return data.update_matchup_leg;
 }
 
+
+// Sleeper's real schema has no move_to_ir / activate_from_ir (those names came
+// from a stale community reference - checked by introspection). IR is changed
+// by SETTING the whole reserve list: roster_update_reserve(league_id,
+// roster_id, reserve: [player ids]) -> Roster. Because it replaces the list
+// wholesale, the current list is read fresh from Sleeper's public rosters
+// endpoint right before each change - never from Fantis's possibly-stale
+// synced copy, which could silently drop someone who was already on IR.
+async function liveReserve(leagueId: string, rosterId: number): Promise<string[]> {
+  const rosters = await getRosters(leagueId);
+  const mine = rosters.find((r) => r.roster_id === rosterId);
+  if (!mine) throw new Error("Couldn't find your roster in that league on Sleeper.");
+  return mine.reserve ?? [];
+}
+
+async function setReserve(
+  token: string,
+  leagueId: string,
+  rosterId: number,
+  reserve: string[]
+): Promise<{ reserve: string[]; players: string[] }> {
+  const query = `
+    mutation roster_update_reserve($league_id: Snowflake!, $roster_id: Int!, $reserve: [String]) {
+      roster_update_reserve(league_id: $league_id, roster_id: $roster_id, reserve: $reserve) {
+        roster_id
+        reserve
+        players
+      }
+    }
+  `;
+  const data = await gql<{ roster_update_reserve: { reserve: string[] | null; players: string[] | null } }>(
+    token,
+    "roster_update_reserve",
+    query,
+    { league_id: assertNumeric(leagueId, "leagueId"), roster_id: Math.trunc(rosterId), reserve }
+  );
+  return {
+    reserve: data.roster_update_reserve.reserve ?? [],
+    players: data.roster_update_reserve.players ?? [],
+  };
+}
+
 export interface MoveToIRResult {
   reserve: string[];
 }
@@ -146,20 +194,10 @@ export async function moveToIR(
   params: { leagueId: string; rosterId: number; playerId: string }
 ): Promise<MoveToIRResult> {
   assertClientSide();
-  const query = `
-    mutation move_to_ir($league_id: Snowflake!, $roster_id: Int!, $player_id: String!) {
-      move_to_ir(league_id: $league_id, roster_id: $roster_id, player_id: $player_id) {
-        roster_id
-        reserve
-      }
-    }
-  `;
-  const data = await gql<{ move_to_ir: MoveToIRResult }>(token, "move_to_ir", query, {
-    league_id: assertNumeric(params.leagueId, "leagueId"),
-    roster_id: Math.trunc(params.rosterId),
-    player_id: params.playerId,
-  });
-  return data.move_to_ir;
+  const current = await liveReserve(params.leagueId, params.rosterId);
+  const next = current.includes(params.playerId) ? current : [...current, params.playerId];
+  const result = await setReserve(token, params.leagueId, params.rosterId, next);
+  return { reserve: result.reserve };
 }
 
 export interface ActivateFromIRResult {
@@ -172,26 +210,13 @@ export async function activateFromIR(
   params: { leagueId: string; rosterId: number; playerId: string }
 ): Promise<ActivateFromIRResult> {
   assertClientSide();
-  const query = `
-    mutation activate_from_ir($league_id: Snowflake!, $roster_id: Int!, $player_id: String!) {
-      activate_from_ir(league_id: $league_id, roster_id: $roster_id, player_id: $player_id) {
-        roster_id
-        reserve
-        players
-      }
-    }
-  `;
-  const data = await gql<{ activate_from_ir: ActivateFromIRResult }>(
+  const current = await liveReserve(params.leagueId, params.rosterId);
+  return setReserve(
     token,
-    "activate_from_ir",
-    query,
-    {
-      league_id: assertNumeric(params.leagueId, "leagueId"),
-      roster_id: Math.trunc(params.rosterId),
-      player_id: params.playerId,
-    }
+    params.leagueId,
+    params.rosterId,
+    current.filter((id) => id !== params.playerId)
   );
-  return data.activate_from_ir;
 }
 
 export interface TransactionResult {
@@ -202,9 +227,11 @@ export interface TransactionResult {
   drops?: Record<string, number> | null;
 }
 
-// Free-agent add and/or drop in one transaction (either side optional, at
-// least one required). `adds`/`drops` are {playerId: rosterId} maps — the
-// shape the reference client sends. Also used for a pure drop.
+// Free-agent add and/or drop in one transaction. The real mutation is
+// league_create_transaction(type, league_id, k_adds/v_adds, k_drops/v_drops)
+// - parallel arrays of player ids and the roster ids they go to/from (the
+// older create_free_agent name doesn't exist in Sleeper's schema). Also used
+// for a pure drop.
 export async function addDropFreeAgent(
   token: string,
   params: { leagueId: string; rosterId: number; addPlayerId?: string; dropPlayerId?: string }
@@ -215,22 +242,33 @@ export async function addDropFreeAgent(
   }
   const rosterId = Math.trunc(params.rosterId);
   const query = `
-    mutation create_free_agent($league_id: Snowflake!, $roster_id: Int!, $adds: JSON, $drops: JSON) {
-      create_free_agent(league_id: $league_id, roster_id: $roster_id, adds: $adds, drops: $drops) {
-        transaction_id status type created adds drops
-      }
+    mutation league_create_transaction(
+      $league_id: Snowflake!, $k_adds: [String], $v_adds: [Int], $k_drops: [String], $v_drops: [Int]
+    ) {
+      league_create_transaction(
+        type: "free_agent", league_id: $league_id,
+        k_adds: $k_adds, v_adds: $v_adds, k_drops: $k_drops, v_drops: $v_drops
+      ) { transaction_id status type created adds drops }
     }
   `;
-  const data = await gql<{ create_free_agent: TransactionResult }>(token, "create_free_agent", query, {
-    league_id: assertNumeric(params.leagueId, "leagueId"),
-    roster_id: rosterId,
-    adds: params.addPlayerId ? { [params.addPlayerId]: rosterId } : {},
-    drops: params.dropPlayerId ? { [params.dropPlayerId]: rosterId } : {},
-  });
-  return data.create_free_agent;
+  const data = await gql<{ league_create_transaction: TransactionResult }>(
+    token,
+    "league_create_transaction",
+    query,
+    {
+      league_id: assertNumeric(params.leagueId, "leagueId"),
+      k_adds: params.addPlayerId ? [params.addPlayerId] : [],
+      v_adds: params.addPlayerId ? [rosterId] : [],
+      k_drops: params.dropPlayerId ? [params.dropPlayerId] : [],
+      v_drops: params.dropPlayerId ? [rosterId] : [],
+    }
+  );
+  return data.league_create_transaction;
 }
 
-// Waiver claim (FAAB bid in dollars, 0 for priority-based leagues).
+// Waiver claim: submit_waiver_claim with the same parallel-array shape plus
+// the FAAB bid as a setting (waiver_bid - the key Sleeper reports on
+// transactions). Bid is 0 for priority-based leagues.
 export async function claimWaiver(
   token: string,
   params: {
@@ -244,22 +282,112 @@ export async function claimWaiver(
   assertClientSide();
   const rosterId = Math.trunc(params.rosterId);
   const query = `
-    mutation create_waiver_claim($league_id: Snowflake!, $roster_id: Int!, $adds: JSON, $drops: JSON, $waiver_budget: Int) {
-      create_waiver_claim(league_id: $league_id, roster_id: $roster_id, adds: $adds, drops: $drops, waiver_budget: $waiver_budget) {
-        transaction_id status type created adds drops settings
+    mutation submit_waiver_claim(
+      $league_id: Snowflake!, $k_adds: [String], $v_adds: [Int], $k_drops: [String], $v_drops: [Int],
+      $k_settings: [String], $v_settings: [Int]
+    ) {
+      submit_waiver_claim(
+        league_id: $league_id, k_adds: $k_adds, v_adds: $v_adds, k_drops: $k_drops, v_drops: $v_drops,
+        k_settings: $k_settings, v_settings: $v_settings
+      ) { transaction_id status type created adds drops settings }
+    }
+  `;
+  const data = await gql<{ submit_waiver_claim: TransactionResult }>(token, "submit_waiver_claim", query, {
+    league_id: assertNumeric(params.leagueId, "leagueId"),
+    k_adds: [params.addPlayerId],
+    v_adds: [rosterId],
+    k_drops: params.dropPlayerId ? [params.dropPlayerId] : [],
+    v_drops: params.dropPlayerId ? [rosterId] : [],
+    k_settings: ["waiver_bid"],
+    v_settings: [Math.max(0, Math.trunc(params.bid))],
+  });
+  return data.submit_waiver_claim;
+}
+
+// ---- Trades & claims inbox -------------------------------------------------
+
+export interface RawTransaction {
+  transaction_id: string;
+  status: string;
+  type: string;
+  creator?: string | null;
+  consenter_ids?: number[] | null;
+  roster_ids?: number[] | null;
+  created?: number | null;
+  leg: number;
+  adds?: Record<string, number> | null;
+  drops?: Record<string, number> | null;
+  metadata?: unknown;
+  settings?: unknown;
+  draft_picks?: string[] | null;
+  waiver_budget?: string[] | null;
+}
+
+const TXN_FIELDS = `
+  transaction_id status type creator consenter_ids roster_ids created leg
+  adds drops metadata settings draft_picks waiver_budget
+`;
+
+// One request per league (two aliased selections): my proposed trades, and my
+// most recent waiver transactions. Pending waiver status names aren't
+// documented, so waivers are fetched unfiltered by status (recent 50 for MY
+// roster) and classified client-side in lib/inbox.ts. Ids are inlined into
+// the query text, so they're validated as numeric first.
+export async function fetchLeagueTransactions(
+  token: string,
+  params: { leagueId: string; rosterId: number }
+): Promise<{ trades: RawTransaction[]; waivers: RawTransaction[] }> {
+  assertClientSide();
+  const leagueId = assertNumeric(params.leagueId, "leagueId");
+  const rosterId = Math.trunc(params.rosterId);
+  const query = `
+    query inbox_scan {
+      trades: league_transactions_filtered(
+        league_id: "${leagueId}", type_filters: ["trade"], status_filters: ["proposed"],
+        roster_id_filters: [${rosterId}], limit: 50
+      ) { ${TXN_FIELDS} }
+      waivers: league_transactions_filtered(
+        league_id: "${leagueId}", type_filters: ["waiver"],
+        roster_id_filters: [${rosterId}], limit: 50
+      ) { ${TXN_FIELDS} }
+    }
+  `;
+  const data = await gql<{ trades: RawTransaction[] | null; waivers: RawTransaction[] | null }>(
+    token,
+    "inbox_scan",
+    query
+  );
+  return { trades: data.trades ?? [], waivers: data.waivers ?? [] };
+}
+
+async function txnAction(
+  token: string,
+  op: "accept_trade" | "reject_trade" | "cancel_waiver_claim",
+  params: { leagueId: string; transactionId: string; leg: number }
+): Promise<{ transaction_id: string; status: string }> {
+  assertClientSide();
+  const query = `
+    mutation ${op}($league_id: Snowflake!, $transaction_id: Snowflake!, $leg: Int!) {
+      ${op}(league_id: $league_id, transaction_id: $transaction_id, leg: $leg) {
+        transaction_id status type created
       }
     }
   `;
-  const data = await gql<{ create_waiver_claim: TransactionResult }>(token, "create_waiver_claim", query, {
+  const data = await gql<Record<string, { transaction_id: string; status: string }>>(token, op, query, {
     league_id: assertNumeric(params.leagueId, "leagueId"),
-    roster_id: rosterId,
-    adds: { [params.addPlayerId]: rosterId },
-    drops: params.dropPlayerId ? { [params.dropPlayerId]: rosterId } : {},
-    waiver_budget: Math.max(0, Math.trunc(params.bid)),
+    transaction_id: assertNumeric(params.transactionId, "transactionId"),
+    leg: Math.trunc(params.leg),
   });
-  return data.create_waiver_claim;
+  return data[op];
 }
 
+export const acceptTrade = (t: string, p: { leagueId: string; transactionId: string; leg: number }) => txnAction(t, "accept_trade", p);
+export const rejectTrade = (t: string, p: { leagueId: string; transactionId: string; leg: number }) => txnAction(t, "reject_trade", p);
+// Sleeper's schema has no cancel_trade (checked by introspection). Withdrawing
+// your own proposed offer is assumed to go through reject_trade - unverified,
+// so the first real cancel should be checked on sleeper.com.
+export const cancelTrade = (t: string, p: { leagueId: string; transactionId: string; leg: number }) => txnAction(t, "reject_trade", p);
+export const cancelWaiverClaim = (t: string, p: { leagueId: string; transactionId: string; leg: number }) => txnAction(t, "cancel_waiver_claim", p);
+
 // Fast-follow candidates using this same gql() transport, not built yet:
-// cancel_waiver_claim, move_to_taxi, propose_trade/accept_trade/
-// reject_trade/cancel_trade.
+// move_to_taxi, propose_trade.

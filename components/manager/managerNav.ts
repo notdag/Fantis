@@ -30,6 +30,7 @@ export const NAV_ENTRIES: NavEntry[] = [
     label: "Tools",
     links: [
       { href: "/manager/lineups", label: "Lineups" },
+      { href: "/manager/inbox", label: "Trades & Claims" },
       { href: "/manager/transactions", label: "Transactions" },
       { href: "/manager/actions", label: "Action Queue" },
       { href: "/manager/waiver", label: "Waiver Assistant" },
