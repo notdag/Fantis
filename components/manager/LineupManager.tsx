@@ -247,7 +247,15 @@ export default function LineupManager({
   );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [tab, setTab] = useState<"lineups" | "optimize" | "players" | "ir" | "add">("lineups");
+  type Tab = "lineups" | "optimize" | "players" | "ir" | "add";
+  const [tab, setTab] = useState<Tab>("lineups");
+  // Tabs are mounted the first time they're opened and then kept alive
+  // (just hidden), so going back to one is instant instead of rebuilding it.
+  const [visited, setVisited] = useState<Set<Tab>>(new Set<Tab>(["lineups"]));
+  const go = (t: Tab) => {
+    setTab(t);
+    setVisited((prev) => (prev.has(t) ? prev : new Set(prev).add(t)));
+  };
   const { pmap } = usePlayerMap();
 
   // The owner's saved priority/avoid lists, loaded once and shared by the
@@ -284,19 +292,19 @@ export default function LineupManager({
         />
         <ConnectWriteAccess onTokenReady={setToken} />
         <div className="field" style={{ marginBottom: 16 }}>
-          <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => setTab("lineups")}>
+          <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => go("lineups")}>
             Lineups
           </button>
-          <button className={`chip-filter ${tab === "optimize" ? "on" : ""}`} onClick={() => setTab("optimize")}>
+          <button className={`chip-filter ${tab === "optimize" ? "on" : ""}`} onClick={() => go("optimize")}>
             Optimize
           </button>
-          <button className={`chip-filter ${tab === "players" ? "on" : ""}`} onClick={() => setTab("players")}>
+          <button className={`chip-filter ${tab === "players" ? "on" : ""}`} onClick={() => go("players")}>
             My players{prefs.priority.length + prefs.avoid.length > 0 ? ` (${prefs.priority.length + prefs.avoid.length})` : ""}
           </button>
-          <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => setTab("ir")}>
+          <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => go("ir")}>
             Mass IR
           </button>
-          <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => setTab("add")}>
+          <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => go("add")}>
             Mass Add / Claim
           </button>
           <span style={{ flex: 1 }} />
@@ -310,7 +318,8 @@ export default function LineupManager({
             </button>
           )}
         </div>
-        {tab === "optimize" && (
+        {visited.has("optimize") && (
+          <div hidden={tab !== "optimize"}>
           <BulkOptimize
             leagues={leagues}
             pmap={pmap}
@@ -319,17 +328,26 @@ export default function LineupManager({
             season={season}
             prefs={prefs}
             prefsDirty={JSON.stringify(prefs) !== savedJson}
-            onEditPrefs={() => setTab("players")}
+            onEditPrefs={() => go("players")}
           />
+          </div>
         )}
-        {tab === "players" && (
-          <>
+        {visited.has("players") && (
+          <div hidden={tab !== "players"}>
             {prefsError && <div className="err">{prefsError}</div>}
             <PlayerPreferences prefs={prefs} onChange={setPrefs} savedJson={savedJson} onSaved={setSavedJson} pmap={pmap} />
-          </>
+          </div>
         )}
-        {tab === "ir" && <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />}
-        {tab === "add" && <BulkAdd leagues={leagues} pmap={pmap} token={token} />}
+        {visited.has("ir") && (
+          <div hidden={tab !== "ir"}>
+            <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />
+          </div>
+        )}
+        {visited.has("add") && (
+          <div hidden={tab !== "add"}>
+            <BulkAdd leagues={leagues} pmap={pmap} token={token} />
+          </div>
+        )}
         {tab === "lineups" && (
         <>
         <StatCardGrid variant="grid">

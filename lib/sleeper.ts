@@ -69,7 +69,24 @@ export const today = () => new Date().toISOString().slice(0, 10);
 const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
 
 // Sleeper's full player dump is several MB; cache it in localStorage for the day.
-export async function getPlayers(): Promise<PlayerMap> {
+// Resolved map kept in memory so a later caller doesn't re-parse the ~2.4MB
+// localStorage copy (or refetch) every time a component mounts.
+let playersMemo: Promise<PlayerMap> | null = null;
+
+export function getPlayers(): Promise<PlayerMap> {
+  // Browser only: server-side callers (the sync) must always get a fresh
+  // dump — a warm serverless instance would otherwise serve stale injuries.
+  if (typeof window === "undefined") return loadPlayers();
+  if (!playersMemo) {
+    playersMemo = loadPlayers().catch((e) => {
+      playersMemo = null; // don't cache a failure
+      throw e;
+    });
+  }
+  return playersMemo;
+}
+
+async function loadPlayers(): Promise<PlayerMap> {
   if (typeof window !== "undefined") {
     try {
       const cached = window.localStorage.getItem(PLAYERS_CACHE_KEY);

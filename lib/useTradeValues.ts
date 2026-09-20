@@ -13,20 +13,28 @@ import type { SeasonProjectionTotal } from "./types";
 // cached elsewhere in the app (season totals in localStorage for the day,
 // props for 12h server-side), so this doesn't add new network cost beyond
 // what Rankings already pays if it's open in another tab.
+// Module-level so a component that mounts later (e.g. switching a tab) reuses
+// the already-fetched data instead of repeating a Sleeper state call and a
+// player-props round trip every time — that repeat was the tab-switch lag.
+let totalsCache: Record<string, SeasonProjectionTotal> | null = null;
+let propsCache: Record<string, PropLine[]> | null = null;
+
 export function useTradeValues(): Record<string, TradeValueResult> {
   const PLAYERS = usePlayers();
   const idMaps = useSleeperIdMaps();
   const [seasonTotals, setSeasonTotals] = useState<Record<string, SeasonProjectionTotal> | null>(
-    null
+    totalsCache
   );
-  const [props, setProps] = useState<Record<string, PropLine[]>>({});
+  const [props, setProps] = useState<Record<string, PropLine[]>>(propsCache ?? {});
 
   useEffect(() => {
+    if (totalsCache) return;
     let cancelled = false;
     (async () => {
       try {
         const state = await getState();
         const totals = await getSeasonProjectionTotals(state.season);
+        totalsCache = totals;
         if (!cancelled) setSeasonTotals(totals);
       } catch {
         // trade values just won't be available — Trade.tsx handles this gracefully
@@ -38,9 +46,11 @@ export function useTradeValues(): Record<string, TradeValueResult> {
   }, []);
 
   useEffect(() => {
+    if (propsCache) return;
     let cancelled = false;
     getPlayerProps()
       .then((p) => {
+        propsCache = p;
         if (!cancelled) setProps(p);
       })
       .catch(() => {
