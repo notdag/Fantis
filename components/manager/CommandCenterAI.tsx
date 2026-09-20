@@ -426,29 +426,30 @@ function BlockView({ block, onAsk, disabled }: { block: Block; onAsk: (s: string
 function LeagueRows({ block }: { block: Extract<Block, { t: "leagues" }> }) {
   const [all, setAll] = useState(false);
   const rows = all ? block.rows : block.rows.slice(0, 15);
+  const multi = new Set(block.rows.map((r) => r.playerName)).size > 1;
   return (
     <div className="cctally">
       <p className="cctext"><strong>{block.title}</strong></p>
       {block.rows.length === 0 && <p className="hint">No leagues match.</p>}
       {rows.map((r, i) => (
         <div key={`${r.leagueId}:${r.playerName}:${i}`} className="ccleague">
-          <div className="ccleaguetop">
-            <span className="tname">{r.leagueName}</span>
-            {r.playerName && <span className="portmeta">{r.playerName}</span>}
-            <span style={{ flex: 1 }} />
-            <span className={stateClass(r.state)}>{STATE_LABEL[r.state]}</span>
+          <div className="ccrow">
+            <span className={`${stateClass(r.state)} ccstatecol`}>{STATE_LABEL[r.state]}</span>
+            <span className="ccname">
+              {r.leagueName}
+              {multi && r.playerName && <span className="portmeta"> · {r.playerName}</span>}
+            </span>
+            {(r.state === "AVAILABLE" || r.state === "WAIVER") ? (
+              <span className={`ccneed ${r.needsDrop === true ? "ccneed-drop" : r.needsDrop === false ? "ccneed-open" : "ccneed-unk"}`}>
+                {r.needsDrop === true ? "Drop required" : r.needsDrop === false ? "No drop needed" : "Drop unknown"}
+              </span>
+            ) : (
+              <span />
+            )}
           </div>
-          {r.detail && <div className="portmeta ccdetail">{r.detail}</div>}
-          {(r.state === "AVAILABLE" || r.state === "WAIVER") && (
-            <div className="portmeta ccdetail">
-              Roster requirement:{" "}
-              <strong style={{ color: r.needsDrop ? "var(--amber)" : r.needsDrop === false ? "var(--mint)" : "var(--dim)" }}>
-                {r.needsDrop === true ? "DROP REQUIRED" : r.needsDrop === false ? "NO DROP REQUIRED" : "UNKNOWN"}
-              </strong>
-            </div>
-          )}
+          {r.detail && <div className="portmeta ccindent">{r.detail}</div>}
           {r.drops && r.drops.candidates.length > 0 && (
-            <details className="ccdetails">
+            <details className="ccdetails ccindent">
               <summary>
                 Suggested drop candidates: {r.drops.candidates.map((c) => c.name).join(" · ")}
               </summary>
@@ -467,7 +468,7 @@ function LeagueRows({ block }: { block: Extract<Block, { t: "leagues" }> }) {
               </p>
             </details>
           )}
-          {r.drops && r.drops.candidates.length === 0 && r.drops.note && <div className="portmeta ccdetail" style={{ color: "var(--amber)" }}>{r.drops.note}</div>}
+          {r.drops && r.drops.candidates.length === 0 && r.drops.note && <div className="portmeta ccindent" style={{ color: "var(--amber)" }}>{r.drops.note}</div>}
         </div>
       ))}
       {block.rows.length > 15 && (

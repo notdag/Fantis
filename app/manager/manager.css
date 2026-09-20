@@ -389,3 +389,14 @@
   .cclauncher{bottom:76px;right:12px}
   .ccpanel{right:12px;bottom:76px;height:min(640px,calc(100vh - 96px))}
 }
+
+/* League result rows: fixed columns so the state badge, name and drop
+   requirement line up identically on every row. */
+.ccrow{display:grid;grid-template-columns:110px minmax(0,1fr) auto;column-gap:10px;align-items:start}
+.ccstatecol{justify-self:start;text-align:center;width:110px}
+.ccname{font-size:14px;font-weight:600;color:var(--bone);line-height:1.35;min-width:0;overflow-wrap:anywhere}
+.ccindent{margin-left:120px;margin-top:4px}
+.ccneed{font-size:12px;font-weight:600;border-radius:5px;padding:2px 8px;white-space:nowrap}
+.ccneed-drop{color:var(--amber);background:var(--amber-soft)}
+.ccneed-open{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}
+.ccneed-unk{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
