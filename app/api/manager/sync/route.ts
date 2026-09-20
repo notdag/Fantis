@@ -20,8 +20,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not authorized." }, { status: 401 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { accountId?: string };
+  const body = (await req.json().catch(() => ({}))) as { accountId?: string; leagueIds?: unknown };
   const scopedAccountId = body.accountId ?? null;
+
+  // Partial refresh of specific leagues (right after a change made through
+  // Fantis). Ids are validated as plain numeric strings; capped so it can't be
+  // used as an unbounded full sync.
+  let onlyLeagueIds: string[] | undefined;
+  if (body.leagueIds !== undefined) {
+    const ids = body.leagueIds;
+    if (
+      !Array.isArray(ids) ||
+      ids.length === 0 ||
+      ids.length > 250 ||
+      !ids.every((x) => typeof x === "string" && /^[0-9]+$/.test(x))
+    ) {
+      return NextResponse.json({ error: "leagueIds must be a non-empty list of league ids." }, { status: 400 });
+    }
+    onlyLeagueIds = ids as string[];
+  }
 
   const accounts = scopedAccountId
     ? await db.sleeperAccount.findMany({ where: { id: scopedAccountId } })
@@ -34,6 +51,17 @@ export async function POST(req: Request) {
   const state = await getState().catch(() => null);
   const season = state?.season ?? new Date().getFullYear().toString();
   const week = state ? currentProjectionWeek(state) : 1;
+
+  // A partial refresh deliberately does NOT create or touch a SyncRun: the
+  // header's "synced X ago" must keep meaning "the last FULL sync".
+  if (onlyLeagueIds) {
+    let refreshed = 0;
+    for (const account of accounts) {
+      const result = await syncAccount(account.id, season, week, onlyLeagueIds);
+      refreshed += result.leaguesOk;
+    }
+    return NextResponse.json({ ok: true, partial: true, leaguesRefreshed: refreshed });
+  }
 
   const run = await db.syncRun.create({
     data: { accountId: scopedAccountId, status: "running" },

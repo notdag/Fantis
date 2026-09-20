@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { classifyTransactions, type Claim, type Trade, type TradeSide } from "@/lib/inbox";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import {
@@ -22,6 +22,7 @@ import { SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
+import { useRefreshLeagues } from "./useRefreshLeagues";
 
 export interface InboxLeague {
   id: string;
@@ -68,10 +69,26 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [action, setAction] = useState<Action | null>(null);
+  // Accept needs one more deliberate step beyond the button: ticking that the
+  // trade was reviewed. Reset every time a new action is started.
+  const [reviewed, setReviewed] = useState(false);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  const startAction = (a: Action) => {
+    setReviewed(false);
+    setAction(a);
+  };
+  // Multi-item confirms render at the top of the list; bring them into view so
+  // clicking a button never looks like nothing happened.
+  useEffect(() => {
+    if (action && (action.kind === "cancelClaim" || action.items.length > 1)) {
+      confirmRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
+  }, [action]);
   const [status, setStatus] = useState<Record<string, TaskStatus>>({});
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState("");
   const runAbort = useRef({ aborted: false });
+  const refresh = useRefreshLeagues();
 
   const runScan = async () => {
     if (!token) return;
@@ -130,6 +147,8 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
   const incoming = trades.filter((t) => t.direction === "incoming" && !finished(t.key));
   const outgoing = trades.filter((t) => t.direction === "outgoing" && !finished(t.key));
   const openClaims = claims.filter((c) => !finished(c.key));
+  const incomingAll = trades.filter((t) => t.direction === "incoming");
+  const outgoingAll = trades.filter((t) => t.direction === "outgoing");
 
   const name = (id: string | null) => (id ? pmap?.[id]?.n ?? id : "—");
   const leagueName = (id: string) => leagueById.get(id)?.name ?? id;
@@ -189,18 +208,26 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
         else await cancelWaiverClaim(token, params);
       },
     }));
+    const doneKeys: string[] = [];
     const result = await runBulk(tasks, {
       // A single accept is deliberately one-at-a-time.
       concurrency: a.kind === "accept" ? 1 : 3,
       signal: runAbort.current,
-      onStatus: (key, s) => setStatus((prev) => ({ ...prev, [key]: s })),
+      onStatus: (key, s) => {
+        if (s.kind === "done") doneKeys.push(key);
+        setStatus((prev) => ({ ...prev, [key]: s }));
+      },
     });
     setRunning(false);
     setSelected(new Set());
+    // Trades change rosters: re-sync just the affected leagues right away.
+    const refreshed = result.done > 0 ? await refresh(doneKeys.map((k) => k.split(":")[0])) : null;
     setSummary(
       `${ACTION_LABEL[a.kind]}: ${result.done} done${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
-      }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}`
+      }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}${
+        refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right)."
+      }`
     );
   };
 
@@ -250,17 +277,53 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
           Fantis value: give {Math.round(g.fantis)} · get {Math.round(r.fantis)} ({diff(r.fantis - g.fantis)}) &nbsp;|&nbsp;
           FantasyCalc: give {Math.round(g.fc)} · get {Math.round(r.fc)} ({diff(r.fc - g.fc)}) &nbsp;|&nbsp; picks/FAAB not valued
         </div>
-        <div className="field">
-          {opts.primary === "accept" ? (
+        {(() => {
+          const st = status[t.key];
+          if (st?.kind === "done") return null; // result already shown in the header
+          const inline =
+            action && action.kind !== "cancelClaim" && action.items.length === 1 && action.items[0].key === t.key ? action : null;
+          return (
             <>
-              <button className="btn sm" disabled={!token || running} onClick={() => setAction({ kind: "accept", items: [t] })}>Accept</button>
-              <button className="btn ghost sm" disabled={!token || running} onClick={() => setAction({ kind: "reject", items: [t] })}>Decline</button>
+              {st?.kind === "failed" && <div className="err" style={{ marginBottom: 8 }}>{st.message}</div>}
+              {inline ? (
+                <div style={{ border: "1px solid var(--amber)", borderRadius: 8, padding: 12 }}>
+                  <p className="hint" style={{ margin: 0, color: "var(--bone)", fontWeight: 600 }}>
+                    {inline.kind === "accept" ? "Accept this trade?" : inline.kind === "reject" ? "Decline this trade?" : "Cancel this offer?"}
+                  </p>
+                  <p className="hint" style={{ margin: "6px 0" }}>
+                    {leagueName(t.leagueId)} · {teamName(t)}: you give {sideText(t.give)}; you get {sideText(t.get)}.
+                    This happens on Sleeper immediately and can&rsquo;t be undone from here.
+                  </p>
+                  {inline.kind === "accept" && (
+                    <label className="hint" style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 10px" }}>
+                      <input type="checkbox" checked={reviewed} onChange={(e) => setReviewed(e.target.checked)} />
+                      I&rsquo;ve reviewed what I give and get, and I want to accept this trade.
+                    </label>
+                  )}
+                  <div className="field">
+                    <button className="btn" disabled={running || (inline.kind === "accept" && !reviewed)} onClick={confirmAction}>
+                      {running ? "Sending…" : inline.kind === "accept" ? "Yes, accept trade" : inline.kind === "reject" ? "Yes, decline trade" : "Yes, cancel offer"}
+                    </button>
+                    <button className="btn ghost" disabled={running} onClick={() => setAction(null)}>Go back</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="field" style={{ alignItems: "center" }}>
+                  {opts.primary === "accept" ? (
+                    <>
+                      <button className="btn sm" disabled={!token || running} onClick={() => startAction({ kind: "accept", items: [t] })}>Accept</button>
+                      <button className="btn ghost sm" disabled={!token || running} onClick={() => startAction({ kind: "reject", items: [t] })}>Decline</button>
+                    </>
+                  ) : (
+                    <button className="btn ghost sm" disabled={!token || running} onClick={() => startAction({ kind: "cancelTrade", items: [t] })}>Cancel offer</button>
+                  )}
+                  {!token && <span className="portmeta" style={{ color: "var(--red)" }}>Connect write access above to enable</span>}
+                  <span className="portmeta" style={{ marginLeft: "auto" }} title="Sleeper's raw status, kept for calibration">status: {t.status}</span>
+                </div>
+              )}
             </>
-          ) : (
-            <button className="btn ghost sm" disabled={!token || running} onClick={() => setAction({ kind: "cancelTrade", items: [t] })}>Cancel offer</button>
-          )}
-          <span className="portmeta" style={{ marginLeft: "auto" }} title="Sleeper's raw status, kept for calibration">status: {t.status}</span>
-        </div>
+          );
+        })()}
       </div>
     );
   };
@@ -318,7 +381,8 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
           <button className={`chip-filter ${tab === "claims" ? "on" : ""}`} onClick={() => setTab("claims")}>Pending claims{scanned ? ` (${openClaims.length})` : ""}</button>
         </div>
 
-        {action && (
+        {action && (action.kind === "cancelClaim" || action.items.length > 1) && (
+          <div ref={confirmRef}>
           <BulkConfirm
             title={`${ACTION_LABEL[action.kind]}: ${action.items.length} ${action.kind === "cancelClaim" ? "claim" : "trade"}${action.items.length === 1 ? "" : "s"}`}
             lines={describe(action)}
@@ -326,13 +390,14 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
             onConfirm={confirmAction}
             onCancel={() => setAction(null)}
           />
+          </div>
         )}
 
         {!scanned && !scanning && <p className="hint">Run a scan to load your pending offers and claims.</p>}
 
         {scanned && tab === "incoming" && (
           <>
-            {incoming.length === 0 ? (
+            {incomingAll.length === 0 ? (
               <p className="hint">No pending offers waiting on you.</p>
             ) : (
               <>
@@ -340,13 +405,13 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
                   <button
                     className="btn ghost sm"
                     disabled={!token || running || selectedTrades(incoming).length === 0}
-                    onClick={() => setAction({ kind: "reject", items: selectedTrades(incoming) })}
+                    onClick={() => startAction({ kind: "reject", items: selectedTrades(incoming) })}
                   >
                     Decline selected ({selectedTrades(incoming).length})
                   </button>
                   <span className="portmeta">Accepting is always one trade at a time.</span>
                 </div>
-                <div style={{ display: "grid", gap: 10 }}>{incoming.map((t) => tradeCard(t, { primary: "accept" }))}</div>
+                <div style={{ display: "grid", gap: 10 }}>{incomingAll.map((t) => tradeCard(t, { primary: "accept" }))}</div>
               </>
             )}
           </>
@@ -354,7 +419,7 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
 
         {scanned && tab === "outgoing" && (
           <>
-            {outgoing.length === 0 ? (
+            {outgoingAll.length === 0 ? (
               <p className="hint">You have no offers out.</p>
             ) : (
               <>
@@ -362,12 +427,12 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
                   <button
                     className="btn ghost sm"
                     disabled={!token || running || selectedTrades(outgoing).length === 0}
-                    onClick={() => setAction({ kind: "cancelTrade", items: selectedTrades(outgoing) })}
+                    onClick={() => startAction({ kind: "cancelTrade", items: selectedTrades(outgoing) })}
                   >
                     Cancel selected ({selectedTrades(outgoing).length})
                   </button>
                 </div>
-                <div style={{ display: "grid", gap: 10 }}>{outgoing.map((t) => tradeCard(t, { primary: "cancel" }))}</div>
+                <div style={{ display: "grid", gap: 10 }}>{outgoingAll.map((t) => tradeCard(t, { primary: "cancel" }))}</div>
               </>
             )}
           </>
@@ -383,7 +448,7 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
                   <button
                     className="btn ghost sm"
                     disabled={!token || running || selectedClaims.length === 0}
-                    onClick={() => setAction({ kind: "cancelClaim", items: selectedClaims })}
+                    onClick={() => startAction({ kind: "cancelClaim", items: selectedClaims })}
                   >
                     Cancel selected ({selectedClaims.length})
                   </button>

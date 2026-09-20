@@ -12,6 +12,7 @@ import { Badge } from "./Badge";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
+import { useRefreshLeagues } from "./useRefreshLeagues";
 import { useDropRank } from "./useDropRank";
 
 const INJ_TONE = {
@@ -70,6 +71,7 @@ export default function BulkIR({
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState("");
   const abortRef = useRef({ aborted: false });
+  const refresh = useRefreshLeagues();
 
   const dropFor = (r: IrRow) => (r.key in dropOverride ? dropOverride[r.key] : r.dropId);
   const finished = (r: IrRow) => status[r.key]?.kind === "done";
@@ -140,16 +142,23 @@ export default function BulkIR({
       },
     }));
 
+    const doneKeys: string[] = [];
     const result = await runBulk(tasks, {
       signal: abortRef.current,
-      onStatus: (key, s) => setStatus((prev) => ({ ...prev, [key]: s })),
+      onStatus: (key, s) => {
+        if (s.kind === "done") doneKeys.push(key);
+        setStatus((prev) => ({ ...prev, [key]: s }));
+      },
     });
     setRunning(false);
+    // Re-sync just the leagues that changed so the Action Queue, banners and
+    // rosters reflect it right away (keys are "leagueId" or "leagueId:playerId").
+    const refreshed = result.done > 0 ? await refresh(doneKeys.map((k) => k.split(":")[0])) : null;
     setSummary(
       `${result.done} moved${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
-        (result.done ? " Run Sync now on the Command Center to refresh Fantis's own data before another pass." : "")
+        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
     );
   };
 

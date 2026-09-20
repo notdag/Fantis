@@ -117,7 +117,11 @@ export interface SyncResult {
 export async function syncAccount(
   accountId: string,
   season: string,
-  week: number
+  week: number,
+  // Re-sync only these leagues (used to refresh the leagues a lineup/IR/trade
+  // change just touched). Every write inside the loop below is already scoped
+  // to one league, so a subset is safe. Omit for the normal full sync.
+  onlyLeagueIds?: string[]
 ): Promise<SyncResult> {
   let leagues: Awaited<ReturnType<typeof getLeagues>>;
   try {
@@ -134,6 +138,11 @@ export async function syncAccount(
       errors: [],
       fatal: e instanceof Error ? e.message : "Couldn't reach Sleeper for this account's leagues.",
     };
+  }
+
+  if (onlyLeagueIds) {
+    const only = new Set(onlyLeagueIds);
+    leagues = leagues.filter((lg) => only.has(lg.league_id));
   }
 
   // Upsert every summary immediately — rows exist in the DB even before the

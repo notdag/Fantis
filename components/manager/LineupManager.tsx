@@ -9,6 +9,7 @@ import { isBestBall, type ManagedLeague, type ManagedRoster } from "@/lib/manage
 import type { PlayerMap } from "@/lib/types";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkIR from "./BulkIR";
+import { useRefreshLeagues } from "./useRefreshLeagues";
 import BulkOptimize from "./BulkOptimize";
 import PlayerPreferences from "./PlayerPreferences";
 import TopPlayersWatch from "./TopPlayersWatch";
@@ -54,6 +55,7 @@ function LeagueRow({
   const [starters, setStartersLocal] = useState<string[]>(item.roster?.starters ?? []);
   const [reserve, setReserveLocal] = useState<string[]>(item.roster?.reserve ?? []);
   const [state, setState] = useState<RowState>({ kind: "idle" });
+  const refresh = useRefreshLeagues();
 
   const slots = useMemo(() => buildStartingSlots(item.rosterPositions), [item.rosterPositions]);
   const roster = item.roster;
@@ -82,6 +84,7 @@ function LeagueRow({
       });
       setStartersLocal(result.starters);
       setState({ kind: "applied", at: Date.now() });
+      void refresh([item.league.id]); // keep Fantis's own data (alerts, banners) in step
     } catch (e) {
       setStartersLocal(roster.starters); // revert optimistic edit to last-known-good
       setState({ kind: "error", message: e instanceof SleeperGraphQLError ? e.message : String(e) });
@@ -95,6 +98,7 @@ function LeagueRow({
       const result = await moveToIR(token, { leagueId: item.league.id, rosterId: roster.rosterId, playerId });
       setReserveLocal(result.reserve);
       setState({ kind: "applied", at: Date.now() });
+      void refresh([item.league.id]);
     } catch (e) {
       setState({ kind: "error", message: e instanceof SleeperGraphQLError ? e.message : String(e) });
     }
@@ -107,6 +111,7 @@ function LeagueRow({
       const result = await activateFromIR(token, { leagueId: item.league.id, rosterId: roster.rosterId, playerId });
       setReserveLocal(result.reserve);
       setState({ kind: "applied", at: Date.now() });
+      void refresh([item.league.id]);
     } catch (e) {
       setState({ kind: "error", message: e instanceof SleeperGraphQLError ? e.message : String(e) });
     }
