@@ -143,7 +143,7 @@ export default function TopPlayersWatch({
 
   if (problems.length === 0) {
     return (
-      <div className="card sync" style={{ marginBottom: 16 }}>
+      <div className="card sync" style={{ maxWidth: "none", marginBottom: 16 }}>
         <div className="field" style={{ alignItems: "center" }}>
           <span className="hint" style={{ margin: 0, color: "var(--mint)" }}>
             {hideLower && lowerCount > 0
@@ -160,7 +160,7 @@ export default function TopPlayersWatch({
   }
 
   return (
-    <div className="card sync" style={{ marginBottom: 16, borderColor: "var(--amber)" }}>
+    <div className="card sync" style={{ maxWidth: "none", marginBottom: 16, borderColor: "var(--amber)" }}>
       <div className="field" style={{ alignItems: "center" }}>
         <span className="hint" style={{ margin: 0, color: "var(--amber)", fontWeight: 600 }}>
           ⚠ {problems.length} of your top players ({label}) {problems.length === 1 ? "is" : "are"} on the bench in{" "}
