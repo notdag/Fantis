@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import ManagerDashboard from "@/components/manager/ManagerDashboard";
 import { db } from "@/lib/db";
-import { getState, currentProjectionWeek } from "@/lib/sleeper";
+import { currentProjectionWeek } from "@/lib/sleeper";
+import { getStateCached } from "@/lib/stateCache";
+import { slimLeagueSettings } from "@/lib/manager";
 import type {
   ManagedAccount,
   ManagedDraft,
@@ -99,7 +101,7 @@ export default async function ManagerPage() {
     season: lg.season,
     totalRosters: lg.totalRosters,
     status: lg.status,
-    settings: lg.settings,
+    settings: slimLeagueSettings(lg.settings),
     group: lg.group,
     lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
   }));
@@ -135,7 +137,7 @@ export default async function ManagerPage() {
   // Real current NFL week (same getState()/currentProjectionWeek() pattern
   // app/api/manager/sync/route.ts already uses) — one cheap Sleeper call at
   // page load, not per-league, used for the real Playoff % estimate.
-  const state = await getState().catch(() => null);
+  const state = await getStateCached();
   const currentWeek = state ? currentProjectionWeek(state) : 1;
 
   return (

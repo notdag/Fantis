@@ -78,6 +78,20 @@ export default function BulkIR({
   const leaguesAffected = new Set(rows.map((r) => r.leagueId)).size;
   const dropCount = selectedRows.filter((r) => r.needsDrop).length;
 
+  // One-click case: players Sleeper lists as "IR" that fit in an open IR slot.
+  // Leagues whose IR is already full are never touched by this — they're
+  // reported instead, so nothing gets dropped without you choosing it.
+  const openRows = rows.filter((r) => !finished(r));
+  const irQuick = openRows.filter((r) => !r.needsDrop); // every eligible player that fits
+  const irStatusQuick = irQuick.filter((r) => r.injury === "IR"); // just Sleeper's literal "IR" status
+  const irBlocked = openRows.filter((r) => r.needsDrop); // IR full in that league
+  const blockedLeagues = new Set(irBlocked.map((r) => r.leagueId)).size;
+  const moveOnly = (keepRows: IrRow[]) => {
+    const keep = new Set(keepRows.map((r) => r.key));
+    setDeselected(new Set(rows.filter((r) => !keep.has(r.key)).map((r) => r.key)));
+    setConfirming(true);
+  };
+
   const toggle = (key: string) =>
     setDeselected((prev) => {
       const next = new Set(prev);
@@ -166,6 +180,16 @@ export default function BulkIR({
             <button className="chip-filter" onClick={() => setDeselected(new Set())}>Select all</button>
             <button className="chip-filter" onClick={() => setDeselected(new Set(rows.map((r) => r.key)))}>Select none</button>
             <span style={{ flex: 1 }} />
+            {!running && (
+              <>
+                <button className="btn ghost" disabled={!token || irStatusQuick.length === 0 || confirming} onClick={() => moveOnly(irStatusQuick)}>
+                  IR-status only ({irStatusQuick.length})
+                </button>
+                <button className="btn" disabled={!token || irQuick.length === 0 || confirming} onClick={() => moveOnly(irQuick)}>
+                  Move all eligible to IR ({irQuick.length})
+                </button>
+              </>
+            )}
             {running ? (
               <button className="btn ghost" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
             ) : (
@@ -195,6 +219,20 @@ export default function BulkIR({
               onConfirm={start}
               onCancel={() => setConfirming(false)}
             />
+          )}
+          {irBlocked.length > 0 && (
+            <div className="card sync" style={{ marginBottom: 12, borderColor: "var(--amber)" }}>
+              <p className="hint" style={{ margin: 0, color: "var(--amber)", fontWeight: 600 }}>
+                {blockedLeagues} league{blockedLeagues === 1 ? "" : "s"} already ha{blockedLeagues === 1 ? "s" : "ve"} IR full
+              </p>
+              <p className="hint" style={{ margin: "6px 0 0" }}>
+                {irBlocked.length} eligible player{irBlocked.length === 1 ? "" : "s"} can&rsquo;t go to IR without
+                dropping someone, so the quick buttons skip them:{" "}
+                {irBlocked.slice(0, 6).map((r) => `${nameOf(pmap, r.playerId)} (${r.leagueName})`).join("; ")}
+                {irBlocked.length > 6 ? ` and ${irBlocked.length - 6} more` : ""}. To include one, pick who to drop
+                in its row below and check it.
+              </p>
+            </div>
           )}
           {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
 

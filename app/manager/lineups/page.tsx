@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import LineupManager from "@/components/manager/LineupManager";
 import { db } from "@/lib/db";
-import { getState, currentProjectionWeek } from "@/lib/sleeper";
-import { rosterPositionsFromSettings, type ManagedLeague } from "@/lib/manager";
+import { currentProjectionWeek } from "@/lib/sleeper";
+import { getStateCached } from "@/lib/stateCache";
+import { rosterPositionsFromSettings, slimLeagueSettings, type ManagedLeague } from "@/lib/manager";
 import type { LineupLeague } from "@/components/manager/LineupManager";
 
 export const metadata: Metadata = {
@@ -43,7 +44,7 @@ export default async function LineupsPage() {
     // Same "any unresolved alert = needs attention" signal ActionQueue.tsx
     // already uses — no new alert-type assumptions.
     db.alert.findMany({ where: { resolvedAt: null } }),
-    getState().catch(() => null),
+    getStateCached(),
   ]);
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
@@ -63,7 +64,7 @@ export default async function LineupsPage() {
       season: lg.season,
       totalRosters: lg.totalRosters,
       status: lg.status,
-      settings: lg.settings,
+      settings: slimLeagueSettings(lg.settings),
       group: lg.group,
       lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
     };

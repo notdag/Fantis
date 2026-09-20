@@ -256,6 +256,48 @@ export function isBestBall(settings: unknown): boolean {
   return !!inner && typeof inner === "object" && (inner as Record<string, unknown>).best_ball === 1;
 }
 
+// A league's raw Sleeper settings JSON is several KB; the portfolio-wide
+// pages (Command Center, Lineups) hand it to the browser for every one of
+// 200+ leagues, which made each page ~1MB and slow to load on every click.
+// Those pages only read a small fixed set of fields, so keep just those (same
+// nested shape, so every reader above works unchanged). Per-league detail
+// pages still get the full blob.
+const SLIM_TOP_KEYS = ["avatar", "roster_positions"] as const;
+const SLIM_INNER_KEYS = [
+  "playoff_teams",
+  "playoff_week_start",
+  "reserve_slots",
+  "reserve_allow_out",
+  "reserve_allow_doubtful",
+  "reserve_allow_sus",
+  "reserve_allow_na",
+  "reserve_allow_dnr",
+  "reserve_allow_cov",
+  "waiver_type",
+  "waiver_budget",
+  "waiver_bid_min",
+  "best_ball",
+  "taxi_slots",
+] as const;
+
+export function slimLeagueSettings(settings: unknown): unknown {
+  if (!settings || typeof settings !== "object") return settings;
+  const s = settings as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of SLIM_TOP_KEYS) if (k in s) out[k] = s[k];
+  const scoring = s.scoring_settings;
+  if (scoring && typeof scoring === "object" && "rec" in scoring) {
+    out.scoring_settings = { rec: (scoring as Record<string, unknown>).rec };
+  }
+  const inner = s.settings;
+  if (inner && typeof inner === "object") {
+    const slim: Record<string, unknown> = {};
+    for (const k of SLIM_INNER_KEYS) if (k in (inner as Record<string, unknown>)) slim[k] = (inner as Record<string, unknown>)[k];
+    out.settings = slim;
+  }
+  return out;
+}
+
 export interface PlayoffFormat {
   playoffTeams: number | null;
   playoffWeekStart: number | null;
