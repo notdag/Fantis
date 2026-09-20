@@ -56,7 +56,9 @@ export function irAllowed(settings: unknown, injuryStatus: string | null | undef
     case "Out":
       return num(settings, "reserve_allow_out") === 1;
     case "Doubtful":
-      return num(settings, "reserve_allow_doubtful") === 1;
+      // Owner's choice: a Doubtful player might still play, so he's never
+      // moved to IR in bulk — even in leagues whose rules would allow it.
+      return false;
     case "Sus":
       return num(settings, "reserve_allow_sus") === 1;
     case "NA":

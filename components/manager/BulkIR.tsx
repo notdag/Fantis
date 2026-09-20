@@ -167,7 +167,8 @@ export default function BulkIR({
         />
       </StatCardGrid>
       <p className="hint" style={{ margin: "8px 0 12px" }}>
-        Injured players who your league&rsquo;s own IR rules allow, one row each. When a league&rsquo;s
+        Out, IR, NA and other ruled-out players your league&rsquo;s own IR rules allow, one row each
+        (Doubtful players are never included). When a league&rsquo;s
         IR is full, Fantis proposes dropping the lowest-value player currently on IR (dropping a
         bench player wouldn&rsquo;t free an IR slot) — change any pick, or uncheck the row.
       </p>
