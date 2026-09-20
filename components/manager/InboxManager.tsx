@@ -38,6 +38,13 @@ type Action =
   | { kind: "accept" | "reject" | "cancelTrade"; items: Trade[] }
   | { kind: "cancelClaim"; items: Claim[] };
 
+const STALE_DAYS = 7;
+const ageText = (created: number | null) => {
+  if (created == null) return "";
+  const d = Math.floor((Date.now() - created) / 86400000);
+  return d < 1 ? "today" : d === 1 ? "1 day ago" : d + " days ago";
+};
+
 const ACTION_LABEL: Record<Action["kind"], string> = {
   accept: "Accept",
   reject: "Decline",
@@ -58,7 +65,14 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
   );
   const leagueById = useMemo(() => new Map(leagues.map((l) => [l.id, l])), [leagues]);
 
-  const [trades, setTrades] = useState<Trade[]>([]);
+  const [allTrades, setTrades] = useState<Trade[]>([]);
+  // Sleeper leaves unanswered proposals as "proposed" indefinitely, so old dead
+  // offers pile up. Hide anything older than STALE_DAYS by default (toggle to see).
+  const [showOld, setShowOld] = useState(false);
+  const [now] = useState(() => Date.now());
+  const isOld = (t: Trade) => t.created != null && now - t.created > STALE_DAYS * 86400000;
+  const oldCount = allTrades.filter(isOld).length;
+  const trades = showOld ? allTrades : allTrades.filter((t) => !isOld(t));
   const [claims, setClaims] = useState<Claim[]>([]);
   const [scanned, setScanned] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -261,7 +275,7 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
             aria-label="Select"
           />
           <strong style={{ flex: 1, fontSize: 13 }}>
-            {leagueName(t.leagueId)} <span className="portmeta">· {opts.primary === "accept" ? "from" : "to"} {teamName(t)}</span>
+            {leagueName(t.leagueId)} <span className="portmeta">· {opts.primary === "accept" ? "from" : "to"} {teamName(t)}{t.created != null ? " · proposed " + ageText(t.created) : ""}</span>
           </strong>
           <StatusCell status={status[t.key]} />
         </div>
@@ -375,6 +389,12 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
         )}
         {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
 
+        {scanned && oldCount > 0 && (
+          <p className="hint" style={{ margin: "0 0 12px" }}>
+            {showOld ? "Showing" : "Hiding"} {oldCount} offer{oldCount === 1 ? "" : "s"} older than {STALE_DAYS} days (likely expired or forgotten).{" "}
+            <button className="btn ghost sm" onClick={() => setShowOld((v) => !v)}>{showOld ? "Hide old" : "Show old"}</button>
+          </p>
+        )}
         <div className="field" style={{ margin: "12px 0" }}>
           <button className={`chip-filter ${tab === "incoming" ? "on" : ""}`} onClick={() => setTab("incoming")}>Offers to me{scanned ? ` (${incoming.length})` : ""}</button>
           <button className={`chip-filter ${tab === "outgoing" ? "on" : ""}`} onClick={() => setTab("outgoing")}>My offers{scanned ? ` (${outgoing.length})` : ""}</button>
