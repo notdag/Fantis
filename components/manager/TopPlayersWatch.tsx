@@ -91,7 +91,7 @@ export default function TopPlayersWatch({
             onChange={(e) =>
               setLimits((prev) => ({ ...prev, [pos]: Math.min(100, Math.max(1, Number(e.target.value) || prev[pos])) }))
             }
-            style={{ width: 54 }}
+            style={{ width: 54, flex: "none", minWidth: 0 }}
           />
         </label>
       ))}
@@ -127,21 +127,28 @@ export default function TopPlayersWatch({
       </div>
       {unavailable.length > 0 && (
         <p className="portmeta" style={{ margin: "6px 0 0" }}>
-          {unavailable.length} more top player{unavailable.length === 1 ? " is" : "s are"} benched because
-          they&rsquo;re injured or on bye — not counted.
+          {unavailable.length} more top player{unavailable.length === 1 ? " is" : "s are"}{" "}
+          benched because they&rsquo;re injured or on bye — not counted.
         </p>
       )}
       {open && (
-        <div style={{ marginTop: 10, maxHeight: 360, overflowY: "auto" }}>
+        <div style={{ marginTop: 12, maxHeight: "72vh", overflowY: "auto" }}>
           {problems.map((r) => (
-            <div key={r.key} className="mgrrow static" style={{ minHeight: 40 }}>
-              <PlayerAvatar playerId={r.playerId} pos={pmap[r.playerId]?.p} size={24} />
-              <span className="tname" style={{ flex: 1 }}>
+            <div
+              key={r.key}
+              className="mgrrow static"
+              style={{ height: "auto", minHeight: 56, flexWrap: "wrap", rowGap: 4, columnGap: 12, padding: "10px 12px" }}
+            >
+              <PlayerAvatar playerId={r.playerId} pos={pmap[r.playerId]?.p} size={28} />
+              <span
+                className="tname"
+                style={{ flex: "1 1 220px", minWidth: 0, whiteSpace: "normal", overflow: "visible", textOverflow: "clip" }}
+              >
                 {name(r.playerId)} <span className="portmeta">{r.priority ? "★ priority" : rankText(r.playerId)}</span>
-                <span className="portmeta" style={{ display: "block", fontWeight: 400 }}>{r.leagueName}</span>
+                <span className="portmeta" style={{ display: "block", fontWeight: 400, whiteSpace: "normal" }}>{r.leagueName}</span>
               </span>
               {pmap[r.playerId]?.p && <span className="pos" style={posChipStyle(pmap[r.playerId].p)}>{pmap[r.playerId].p}</span>}
-              <span className="portmeta" style={{ minWidth: 220 }}>
+              <span className="portmeta" style={{ flex: "1 1 260px", minWidth: 0, whiteSpace: "normal", color: "var(--bone)" }}>
                 {r.displaces
                   ? `${name(r.displaces)} (${rankText(r.displaces)}) is starting in his spot`
                   : "an eligible slot is empty"}
