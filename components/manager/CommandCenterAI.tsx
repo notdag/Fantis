@@ -646,7 +646,7 @@ function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "m
                 )}
                 {!decided && r.source === "sleeper" && r.estMine != null && r.estOpp != null && Math.sign(r.estMine - r.estOpp) !== Math.sign((r.projMine ?? 0) - (r.projOpp ?? 0)) && Math.abs(r.estMine - r.estOpp) >= 3 && (
                   <div className="portmeta ccindent" style={{ color: "var(--amber)" }}>
-                    Fantis's own estimate disagrees: {fmt(r.estMine)} – {fmt(r.estOpp)}
+                    Fantis&rsquo;s own estimate disagrees: {fmt(r.estMine)} – {fmt(r.estOpp)}
                   </div>
                 )}
                 <div className="portmeta ccindent">
