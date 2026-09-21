@@ -61,7 +61,9 @@ export function analyzeDrops(
   }
 
   const val = (id: string) => signals.fantisValue(id) ?? 0;
-  const fc = (id: string) => signals.fcValue(id) ?? 0;
+  // FantasyCalc value in this league's own format when we have it, else the fixed-format fallback.
+  const fcRaw = (id: string) => signals.fcValueFor?.(snap.league.id, id) ?? signals.fcValue(id);
+  const fc = (id: string) => fcRaw(id) ?? 0;
   const sorted = [...pool].sort(
     (a, b) =>
       Number(signals.avoid.has(b)) - Number(signals.avoid.has(a)) ||
@@ -83,13 +85,13 @@ export function analyzeDrops(
     const info = signals.info(id);
     const reasons: string[] = [];
     const fv = signals.fantisValue(id);
-    const cv = signals.fcValue(id);
+    const cv = fcRaw(id);
     const cur = signals.curated(id);
     if (signals.avoid.has(id)) reasons.push("On your Avoid list");
     reasons.push("Bench player — not in your starting lineup");
     if (fv != null && fv > 0) reasons.push(`Fantis value ${Math.round(fv)} (lowest ranks first among droppable bench players)`);
     else reasons.push("No Fantis value — not in the curated player list");
-    if (cv != null && cv > 0) reasons.push(`FantasyCalc value ${Math.round(cv)}`);
+    if (cv != null && cv > 0) reasons.push(`FantasyCalc value ${Math.round(cv)}${signals.fcValueFor ? " (this league's format)" : ""}`);
     if (cur) reasons.push(`Your /admin ranking: #${cur.order + 1} overall, tier ${cur.tier}, pos rank ${cur.posRank}`);
     else reasons.push("Not ranked in your /admin rankings");
     if (info?.injury) reasons.push(`Injury status: ${info.injury}`);

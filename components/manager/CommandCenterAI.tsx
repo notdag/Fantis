@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMatchups, getProjections, getRosters, getState, getTransactions } from "@/lib/sleeper";
 import { getWeekGameStates, getWeekKickoffs } from "@/lib/espnGames";
 import { fetchMatchupLegs } from "@/lib/sleeperWrite";
+import { useLeagueFcValues } from "@/lib/useLeagueFcValues";
 import { getStoredToken } from "@/lib/sleeperToken";
 import type { ProjectionMap } from "@/lib/types";
 import { usePlayerMap } from "@/lib/usePlayerMap";
@@ -18,6 +19,8 @@ import {
   type AuditRecord,
   type Block,
   type MatchupVerdict,
+  type PlayoffStatus,
+  ordinal,
   type EngineEnv,
   type Progress,
   type Session,
@@ -29,6 +32,7 @@ const EXAMPLES = [
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
   "How many leagues am I winning this week?",
+  "Where do I stand for the playoffs?",
   "Fix my lineups",
   "Show me my weakest players",
   "Find leagues where I have an injured player who could go on IR",
@@ -69,6 +73,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
   const tradeValues = useTradeValues();
   const fc = useFantasyCalcValues();
   const curated = useCuratedRanks();
+  const leagueFc = useLeagueFcValues();
   const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
   const [prefsOk, setPrefsOk] = useState<boolean | null>(null);
   const [leg, setLeg] = useState<number | null>(null);
@@ -128,11 +133,13 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
         return e && fc ? fantasyCalcValue(fc, { name: e.n, pos: e.p }) || null : null;
       },
       curated: (id) => curated?.get(id) ?? null,
+      // FantasyCalc values for THIS league's format, from our database, matched by Sleeper id.
+      fcValueFor: leagueFc.ready ? (leagueId, id) => leagueFc.value(leagueId, id) : undefined,
       avoid: new Set(prefs.avoid),
       priority: new Set(prefs.priority),
       priorityOrder: prefs.priority,
     };
-  }, [pmap, tradeValues, fc, curated, prefs]);
+  }, [pmap, tradeValues, fc, curated, prefs, leagueFc]);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -314,6 +321,10 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
           ))}
         </div>
 
+        <p className="portmeta" style={{ margin: "14px 0 0" }}>
+          Trade values and roster-strength ranks from{" "}
+          <a className="link" href="https://fantasycalc.com" target="_blank" rel="noreferrer">FantasyCalc.com</a>.
+        </p>
         <div style={{ marginTop: 14 }}>
           <button
             className="linklike"
@@ -481,6 +492,8 @@ function BlockView({ block, onAsk, disabled, ctx }: { block: Block; onAsk: (s: s
       return <PreviewView block={block} />;
     case "drafts":
       return <DraftsView block={block} ctx={ctx} />;
+    case "standings":
+      return <StandingsRows block={block} onAsk={onAsk} disabled={disabled} />;
     case "matchups":
       return <MatchupRows block={block} onAsk={onAsk} disabled={disabled} />;
   }
@@ -728,6 +741,60 @@ function DraftsView({ block, ctx }: { block: Extract<Block, { t: "drafts" }>; ct
         </button>
         {result && <span className="portmeta">{result}</span>}
       </div>
+    </div>
+  );
+}
+
+const STATUS_LABEL: Record<PlayoffStatus, string> = { IN: "In a playoff spot", BUBBLE: "On the bubble", OUT: "Outside the line", UNKNOWN: "Unknown" };
+const STATUS_ASK: Partial<Record<PlayoffStatus, string>> = { IN: "Only the leagues I'm in", BUBBLE: "Only the bubble leagues", OUT: "Only the leagues I'm out of" };
+
+function StandingsRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "standings" }>; onAsk: (s: string) => void; disabled: boolean }) {
+  const [all, setAll] = useState(false);
+  const rows = all ? block.rows : block.rows.slice(0, 15);
+  const c = block.counts;
+  return (
+    <div className="cctally">
+      <div className="cccounts">
+        {(["IN", "BUBBLE", "OUT", "UNKNOWN"] as PlayoffStatus[]).map((k) => (
+          <button
+            key={k}
+            className={`ccstate ccs-${k.toLowerCase()} ${c[k] === 0 ? "cczero" : ""}`}
+            disabled={disabled || c[k] === 0 || !STATUS_ASK[k]}
+            onClick={() => STATUS_ASK[k] && onAsk(STATUS_ASK[k] as string)}
+            style={{ border: 0, cursor: STATUS_ASK[k] && c[k] ? "pointer" : "default" }}
+          >
+            {STATUS_LABEL[k]} {c[k]}
+          </button>
+        ))}
+      </div>
+      <p className="cctext" style={{ marginTop: 10 }}><strong>{block.title}</strong></p>
+      {block.rows.length === 0 && <p className="hint">No leagues match.</p>}
+      {rows.map((r) => (
+        <div key={r.leagueId} className="ccleague">
+          <div className="ccrow">
+            <span className={`ccstate ccstatecol ccs-${r.status.toLowerCase()}`}>{STATUS_LABEL[r.status]}</span>
+            <span className="ccname">{r.leagueName}</span>
+            <span className="ccscore">{r.rank != null ? `${ordinal(r.rank)} of ${r.of}` : "—"}</span>
+          </div>
+          <div className="portmeta ccindent">
+            Record <strong className="ccnum">{r.record}</strong>
+            {r.playoffTeams != null && <> · top {r.playoffTeams} make the playoffs</>}
+            {r.gamesFromLine != null && (
+              <span style={{ color: r.gamesFromLine >= 0 ? "var(--mint)" : "var(--red)" }}> · {r.gamesFromLine >= 0 ? "+" : ""}{r.gamesFromLine.toFixed(1)} games {r.gamesFromLine >= 0 ? "ahead of the line" : "behind the line"}</span>
+            )}
+          </div>
+          {r.fcRank != null && (
+            <div className="portmeta ccindent">
+              FantasyCalc roster value: <strong className="ccnum">{ordinal(r.fcRank)}</strong> of {r.of}
+              {r.status === "OUT" && r.fcRank <= 3 && <span style={{ color: "var(--amber)" }}> — strong roster, behind on record</span>}
+              {r.status === "IN" && r.fcRank > r.of / 2 && <span style={{ color: "var(--amber)" }}> — in on record, but a weaker roster</span>}
+            </div>
+          )}
+          {r.warnings.map((w, i) => <div key={i} className="portmeta ccindent" style={{ color: "var(--amber)" }}>{w}</div>)}
+        </div>
+      ))}
+      {block.rows.length > 15 && <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>}
+      {block.truncated > 0 && <p className="hint">+{block.truncated} more not shown.</p>}
     </div>
   );
 }

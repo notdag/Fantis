@@ -27,6 +27,7 @@ import {
   type LeagueSnapshot,
   type Permission,
   type PlayerCard,
+  type SnapRoster,
 } from "./types";
 import type { PlayerMap, ProjectionMap } from "../types";
 import type { GameState } from "../espnGames";
@@ -77,6 +78,21 @@ export interface SleeperInfo {
   failed: number; // leagues where the read failed (fell back to Fantis's estimate)
 }
 
+export type PlayoffStatus = "IN" | "BUBBLE" | "OUT" | "UNKNOWN";
+export interface StandingRow {
+  leagueId: string;
+  leagueName: string;
+  record: string; // "3-1" or "3-1-1"
+  rank: number | null;
+  of: number;
+  playoffTeams: number | null;
+  status: PlayoffStatus;
+  gamesFromLine: number | null; // + = games ahead of the first team out; − = games behind the last team in
+  fcRank: number | null; // my roster's FantasyCalc value rank among this league's rosters (1 = strongest)
+  fcTotal: number | null;
+  warnings: string[];
+}
+
 export interface PreviewAction {
   op: "ADD" | "WAIVER CLAIM" | "DROP";
   playerName: string;
@@ -114,6 +130,7 @@ export type Block =
   | { t: "decisions"; title: string; rows: { leagueId: string; leagueName: string; items: string[] }[]; truncated: number }
   | { t: "preview"; banner: string; items: PreviewItem[]; truncated: number }
   | { t: "drafts"; drafts: ProposalDraft[]; note: string }
+  | { t: "standings"; title: string; counts: Record<PlayoffStatus, number>; fc: { top3: number; bottomHalf: number; scored: number }; rows: StandingRow[]; truncated: number }
   | {
       t: "matchups";
       title: string;
@@ -159,9 +176,10 @@ export interface Session {
   dropsScope: string;
   pending: Pending | null;
   matchups: { week: number; rows: MatchupRow[]; at: number; games: GameCounts; sleeper: SleeperInfo } | null;
+  standings: { rows: StandingRow[]; at: number } | null;
 }
 
-export const newSession = (): Session => ({ targets: [], results: null, meta: null, filter: {}, drops: null, dropsScope: "", pending: null, matchups: null });
+export const newSession = (): Session => ({ targets: [], results: null, meta: null, filter: {}, drops: null, dropsScope: "", pending: null, matchups: null, standings: null });
 
 export interface Progress {
   done: number;
@@ -353,6 +371,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     hasDrops: !!prev.drops && Object.keys(prev.drops).length > 0,
     pending: !!prev.pending,
     hasMatchups: !!prev.matchups,
+    hasStandings: !!prev.standings,
   });
 
   // Any new non-choice command abandons a pending clarification (user changed their mind).
@@ -873,6 +892,40 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "standings": {
+      let rows: StandingRow[];
+      const st = session.standings;
+      if (st && !intent.fresh && now() - st.at < 5 * 60_000) rows = st.rows;
+      else {
+        const { snaps, meta } = await scanAll(env, false, "Reading standings");
+        session = { ...session, meta };
+        blocks.push({ t: "scanStatus", meta });
+        rows = snaps.filter((sn) => sn.status !== "FAILED" && sn.rosters).map((sn) => standingRow(env, sn));
+        session = { ...session, standings: { rows, at: now() } };
+      }
+      const counts: Record<PlayoffStatus, number> = { IN: 0, BUBBLE: 0, OUT: 0, UNKNOWN: 0 };
+      for (const r of rows) counts[r.status]++;
+      const scored = rows.filter((r) => r.fcRank != null);
+      const top3 = scored.filter((r) => (r.fcRank as number) <= 3).length;
+      const bottomHalf = scored.filter((r) => (r.fcRank as number) > r.of / 2).length;
+      const early = rows.filter((r) => r.warnings.some((w) => /games played/.test(w))).length;
+      const mismatch = rows.filter((r) => r.status === "OUT" && r.fcRank != null && r.fcRank <= 3).length;
+      const shown = intent.filter ? rows.filter((r) => r.status === intent.filter) : rows;
+      blocks.push({
+        t: "text",
+        tone: "good",
+        text:
+          (early >= rows.length / 2 ? `Very early read — most leagues have fewer than 3 games played, so standings are thin and will move. ` : "") +
+          `Playoff position right now (real Sleeper records): in a playoff spot in ${counts.IN} of ${rows.length} leagues, on the bubble (within a game of the line) in ${counts.BUBBLE}, outside in ${counts.OUT}${counts.UNKNOWN ? `, ${counts.UNKNOWN} unknown (no playoff-team count on file)` : ""}. ` +
+          (scored.length ? `By FantasyCalc roster value your team ranks top-3 in ${top3} leagues and bottom-half in ${bottomHalf} (of ${scored.length} with values). ` : "FantasyCalc values aren't loaded yet, so roster strength isn't shown. ") +
+          (mismatch ? `${mismatch} league${mismatch === 1 ? "" : "s"} where you're outside the line despite a top-3 roster — likely bad luck, not a weak team. ` : "") +
+          (early && early < rows.length / 2 ? `${early} leagues have fewer than 3 games played, so their standings are thin.` : ""),
+      });
+      blocks.push({ t: "standings", title: intent.filter ? `Leagues — ${intent.filter === "IN" ? "in a playoff spot" : intent.filter === "OUT" ? "outside the playoff line" : "on the bubble"} (${shown.length})` : `Every league (${rows.length})`, counts, fc: { top3, bottomHalf, scored: scored.length }, rows: shown.slice(0, ROW_CAP), truncated: Math.max(0, shown.length - ROW_CAP) });
+      recs.push(`playoffs: ${counts.IN} in, ${counts.BUBBLE} bubble, ${counts.OUT} out`);
+      break;
+    }
+
     case "lineup_improvements": {
       const proj = env.projections;
       const week = env.week;
@@ -1013,6 +1066,65 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
 
   blocks.push({ t: "text", tone: "info", text: READ_ONLY_LINE });
   return finish();
+}
+
+// -------------------------------------------------------------- standings
+
+const winPct = (r: { wins?: number; losses?: number; ties?: number }) => {
+  const g = (r.wins ?? 0) + (r.losses ?? 0) + (r.ties ?? 0);
+  return g === 0 ? 0 : ((r.wins ?? 0) + 0.5 * (r.ties ?? 0)) / g;
+};
+const ordinal = (n: number) => `${n}${["th", "st", "nd", "rd"][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;
+export { ordinal };
+
+// One league: my rank by real record (win%, then points for), against the league's
+// own playoff_teams. No probabilities — only what the standings and roster values say.
+function standingRow(env: EngineEnv, snap: LeagueSnapshot): StandingRow {
+  const lg = snap.league;
+  const rosters = snap.rosters ?? [];
+  const me = rosters.find((r) => r.rosterId === lg.rosterId);
+  const warnings: string[] = [];
+  const base = { leagueId: lg.id, leagueName: lg.name, of: rosters.length };
+  if (!me) return { ...base, record: "—", rank: null, playoffTeams: null, status: "UNKNOWN", gamesFromLine: null, fcRank: null, fcTotal: null, warnings: ["couldn't identify your roster"] };
+
+  const ordered = [...rosters].sort((a, b) => winPct(b) - winPct(a) || (b.fpts ?? 0) - (a.fpts ?? 0));
+  const rank = ordered.findIndex((r) => r.rosterId === me.rosterId) + 1;
+  const P = numSetting(lg.settings, "playoff_teams") || null;
+  const games = (me.wins ?? 0) + (me.losses ?? 0) + (me.ties ?? 0);
+  if (games < 3) warnings.push(`only ${games} games played`);
+  const record = `${me.wins ?? 0}-${me.losses ?? 0}${me.ties ? `-${me.ties}` : ""}`;
+
+  let status: PlayoffStatus = "UNKNOWN";
+  let gamesFromLine: number | null = null;
+  if (P && P < rosters.length) {
+    const lastIn = ordered[P - 1];
+    const firstOut = ordered[P];
+    // Games ahead of / behind the line, as (wins − losses) difference / 2.
+    const diff = (a: SnapRoster, b: SnapRoster) => ((a.wins ?? 0) - (b.wins ?? 0) + (b.losses ?? 0) - (a.losses ?? 0)) / 2;
+    if (rank <= P) {
+      gamesFromLine = diff(me, firstOut);
+      status = gamesFromLine >= 1 ? "IN" : "BUBBLE";
+    } else {
+      gamesFromLine = -diff(lastIn, me);
+      status = -gamesFromLine < 1 ? "BUBBLE" : "OUT";
+    }
+  } else if (P) {
+    status = "IN"; // everyone makes it
+  } else warnings.push("no playoff-team count on file for this league");
+
+  let fcRank: number | null = null;
+  let fcTotal: number | null = null;
+  const fv = env.signals.fcValueFor;
+  if (fv) {
+    const total = (r: SnapRoster) => r.players.reduce((sum, id) => sum + (fv(lg.id, id) ?? 0), 0);
+    const totals = rosters.map((r) => ({ id: r.rosterId, t: total(r) }));
+    if (totals.some((x) => x.t > 0)) {
+      totals.sort((a, b) => b.t - a.t);
+      fcRank = totals.findIndex((x) => x.id === me.rosterId) + 1;
+      fcTotal = totals.find((x) => x.id === me.rosterId)?.t ?? null;
+    }
+  }
+  return { ...base, record, rank, playoffTeams: P, status, gamesFromLine, fcRank, fcTotal, warnings };
 }
 
 // ---------------------------------------------------------------- drafts

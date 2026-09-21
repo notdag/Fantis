@@ -26,6 +26,7 @@ function ok(cond: unknown, name: string, extra = "") {
 const NOW = Date.parse("2026-09-20T12:00:00Z");
 const ME = "me";
 
+const RP_FC = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN", "BN", "BN", "BN", "BN"];
 const WR_ROSTER = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF", "BN", "BN", "BN", "BN", "BN"]; // 14 spots
 const NO_WR_ROSTER = ["QB", "RB", "RB", "TE", "K", "DEF", "BN", "BN"];
 const mkSettings = (rp: string[], clear = 2) => ({ roster_positions: rp, settings: { waiver_clear_days: clear, waiver_type: 0, reserve_slots: 1 } });
@@ -635,6 +636,75 @@ async function main() {
     luNoKo.kickoffs = async () => null;
     const nk = await handleCommand("Fix my lineups", newSession(), luNoKo);
     ok(draftsOf(nk.blocks).length === 0 && /couldn't load kickoff times/.test(textOf(nk.blocks)), "no kickoff times → no lineup proposals");
+  }
+
+  // ---------- 14. FantasyCalc per-league values + playoff standings
+  {
+    const pm: PlayerMap = {};
+    for (const id of ["a1", "a2", "a3", "b1", "b2", "b3", "c1", "c2", "c3", "d1"]) pm[id] = { n: "P " + id, p: "WR", t: "DAL" };
+    const rec = (id: number, owner: string, w: number, l: number, fpts: number, players: string[]): RawRoster => ({
+      roster_id: id, owner_id: owner, players, starters: [], reserve: [], taxi: [], settings: { wins: w, losses: l, ties: 0, fpts },
+    });
+    const mkLg = (id: string, name: string, playoffTeams: number | null): CcLeague => ({
+      ...lg(id, name),
+      settings: { roster_positions: RP_FC, settings: { reserve_slots: 1, ...(playoffTeams ? { playoff_teams: playoffTeams } : {}) } },
+    });
+    // A: I'm 3-0 with 2 playoff spots → comfortably IN.
+    const A = { league: mkLg("1", "A comfortably in", 2), rosters: [rec(1, ME, 3, 0, 300, ["a1", "a2"]), rec(2, "x", 2, 1, 250, ["a3"]), rec(3, "y", 1, 2, 200, []), rec(4, "z", 0, 3, 150, [])], txns: [] as RawTxn[] };
+    // B: I'm 1-2, the last team in is 2-1 → a game behind → OUT (but my roster is the strongest).
+    const B = { league: mkLg("2", "B out", 2), rosters: [rec(1, ME, 1, 2, 200, ["b1", "b2", "b3"]), rec(2, "x", 3, 0, 300, []), rec(3, "y", 2, 1, 250, []), rec(4, "z", 0, 3, 100, [])], txns: [] as RawTxn[] };
+    // C: tied on record with the last team in, behind on points → BUBBLE.
+    const C = { league: mkLg("3", "C bubble", 2), rosters: [rec(1, ME, 2, 1, 240, ["c1", "c2", "c3"]), rec(2, "x", 3, 0, 300, []), rec(3, "y", 2, 1, 260, []), rec(4, "z", 0, 3, 100, [])], txns: [] as RawTxn[] };
+    // D: no playoff-team count on file → UNKNOWN, never a guess.
+    const D = { league: mkLg("4", "D unknown", null), rosters: [rec(1, ME, 2, 1, 240, ["d1"]), rec(2, "x", 1, 2, 200, [])], txns: [] as RawTxn[] };
+    const fx = [A, B, C, D];
+    const fcTable: Record<string, Record<string, number>> = {
+      "1": { a1: 5000, a2: 3000, a3: 2000 }, // mine 8000 vs 2000 → 1st
+      "2": { b1: 6000, b2: 4000, b3: 2000 }, // mine 12000 → 1st (strong roster, behind on record)
+      "3": { c1: 100 }, // mine 100, others 0 → 1st
+      "4": {},
+    };
+    const sig = { ...signals(pm), fcValueFor: (lid: string, id: string) => fcTable[lid]?.[id] ?? null };
+    const env = makeEnv(fx, pm, sig);
+    const out = await handleCommand("Where do I stand for the playoffs?", newSession(), env);
+    const sb = out.blocks.find((b): b is Extract<Block, { t: "standings" }> => b.t === "standings")!;
+    ok(!!sb, "standings block produced");
+    const by = Object.fromEntries((sb?.rows ?? []).map((r) => [r.leagueName, r]));
+    ok(by["A comfortably in"]?.status === "IN" && by["A comfortably in"]?.rank === 1 && by["A comfortably in"]?.record === "3-0", "A: in a playoff spot", JSON.stringify(by["A comfortably in"]));
+    ok((by["A comfortably in"]?.gamesFromLine ?? 0) >= 1, "A: games ahead of the line is positive");
+    ok(by["B out"]?.status === "OUT" && by["B out"]?.rank === 3, "B: outside the line", JSON.stringify(by["B out"]));
+    ok((by["B out"]?.gamesFromLine ?? 0) <= -1, "B: a game or more behind");
+    ok(by["C bubble"]?.status === "BUBBLE" && by["C bubble"]?.rank === 3, "C: level with the last team in → bubble", JSON.stringify(by["C bubble"]));
+    ok(by["D unknown"]?.status === "UNKNOWN" && by["D unknown"].warnings.some((w) => /no playoff-team count/.test(w)), "D: no playoff count → UNKNOWN with a reason");
+    ok(sb.counts.IN === 1 && sb.counts.BUBBLE === 1 && sb.counts.OUT === 1 && sb.counts.UNKNOWN === 1, "status counts", JSON.stringify(sb.counts));
+    ok(by["A comfortably in"]?.fcRank === 1 && by["B out"]?.fcRank === 1 && by["C bubble"]?.fcRank === 1, "roster strength ranked by this league's FantasyCalc values", JSON.stringify([by["A comfortably in"]?.fcRank, by["B out"]?.fcRank]));
+    ok(by["D unknown"]?.fcRank == null || by["D unknown"]?.fcRank === 1, "no crash when a league has no FC values");
+    const txt = textOf(out.blocks);
+    ok(/in a playoff spot in 1 of 4 leagues, on the bubble .* in 1, outside in 1/.test(txt), "headline counts", txt.slice(0, 260));
+    ok(/strong|top-3 roster/.test(txt), "flags a strong roster that is behind on record");
+    ok(!/probab|chance of/i.test(txt), "no invented playoff probabilities");
+    // follow-up filter without re-reading
+    const before = env.calls.rosters;
+    const f = await handleCommand("Only the leagues I'm out of", out.session, env);
+    const fb = f.blocks.find((b): b is Extract<Block, { t: "standings" }> => b.t === "standings")!;
+    ok(env.calls.rosters === before && fb.rows.length === 1 && fb.rows[0].status === "OUT", "follow-up filters the stored standings (no re-read)");
+    for (const v of ["Where do I stand?", "What's my playoff picture", "Which leagues am I in a playoff spot", "How strong are my teams", "show me the standings"]) {
+      const o = await handleCommand(v, newSession(), makeEnv(fx, pm, sig));
+      ok(o.audit.intent === "standings", `phrasing → standings: "${v}"`, o.audit.intent);
+    }
+    ok(/READ-ONLY MODE/.test(txt), "read-only line present");
+
+    // per-league FantasyCalc values drive drop candidates
+    const dropPm: PlayerMap = { s: { n: "Starter", p: "RB", t: "DAL" }, x: { n: "Bench X", p: "RB", t: "DAL" }, y: { n: "Bench Y", p: "RB", t: "DAL" } };
+    const dropLeague = lg("9", "Drop League", ["RB", "BN", "BN"]);
+    const snap9: LeagueSnapshot = { league: dropLeague, status: "SUCCESS", fetchedAt: NOW, rosters: [{ rosterId: 1, ownerId: ME, players: ["s", "x", "y"], starters: ["s"], reserve: [], taxi: [] }], recentDrops: {} };
+    const base = signals(dropPm);
+    const withLeague = { ...base, fcValue: () => null, fcValueFor: (lid: string, id: string) => (lid === "9" ? ({ x: 900, y: 100 } as Record<string, number>)[id] ?? null : null) };
+    const d = analyzeDrops(snap9, withLeague)!;
+    ok(d.candidates[0].playerId === "y" && d.candidates[0].fcValue === 100, "the league's own FantasyCalc value orders the drops (lowest first)", JSON.stringify(d.candidates.map((c) => [c.playerId, c.fcValue])));
+    ok(d.candidates[0].reasons.some((r) => /FantasyCalc value 100 \(this league's format\)/.test(r)), "reason names the league-format FantasyCalc value");
+    const fallback = analyzeDrops(snap9, { ...base, fcValue: (id: string) => ({ x: 50, y: 700 } as Record<string, number>)[id] ?? null })!;
+    ok(fallback.candidates[0].playerId === "x", "no per-league values → falls back to the fixed-format value");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

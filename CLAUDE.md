@@ -398,3 +398,29 @@ Separation that must not be broken:
   `npx tsx scripts/testCommandCenterExec.ts` (proposals/executor/auto, 83). Live writes
   against a real Sleeper account have NOT been exercised by tests — do the first real one
   on a single low-stakes proposal.
+
+### FantasyCalc in the database (2026-09)
+
+FantasyCalc data is now stored in Postgres (`FantasyCalcPlayer`, `FantasyCalcValue`,
+`FantasyCalcFetch`) and read per league, replacing the single fixed-format snapshot for
+anything that opts in. **Their API docs (fantasycalc.com/api-docs) set hard rules:**
+- **Only two endpoints may ever be called: `GET /players` (≤ once a day) and
+  `GET /values/current` (≤ once an hour per format).** Anything else risks a permanent IP
+  ban. `lib/fantasyCalcSync.ts` is the only code that calls them; `scripts/testFantasyCalc.ts`
+  fails if it ever references another path. The hour/day limits are enforced in the DB
+  (`FantasyCalcFetch`, atomically claimed before each call; failures back off too), not in
+  memory. Never add a client-side or per-request call to FantasyCalc.
+- **Attribution + link to fantasycalc.com must be visible wherever FantasyCalc data (or
+  anything derived from it) is shown.** The Command Center panel has it; when adding FC data
+  to a new surface, add the credit there too.
+- They ask to be emailed before a *publicly facing* site launches with their data (see docs)
+  — the owner's call, not something to do on their behalf.
+- Each league maps to the nearest supported format (`lib/fantasyCalcFormat.ts`:
+  dynasty/1-or-2QB/8·10·12·14-team/0·0.5·1 PPR/TE premium) — an approximation, labelled as such.
+  Rows are keyed by **Sleeper id** (their `sleeperId`), so matching is exact — no name guessing.
+- Read path: `GET /api/fantasycalc/league-values` (owner-only; serves from DB, refreshes stale
+  formats in the background via `after()`); `POST /api/fantasycalc/refresh` forces a check
+  (still bounded by the limits). Client hook: `lib/useLeagueFcValues.ts`.
+- Consumers so far: Command Center drop candidates (per-league value) and the "where do I
+  stand" workflow (real records vs each league's `playoff_teams`, plus FC roster-strength rank).
+  The older name-keyed `/api/fantasycalc-values` proxy still serves Trade/Rankings/Portfolio.

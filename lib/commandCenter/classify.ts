@@ -9,6 +9,7 @@ export interface RawRoster {
   starters: string[] | null;
   reserve: string[] | null;
   taxi?: string[] | null;
+  settings?: { wins?: number; losses?: number; ties?: number; fpts?: number; fpts_decimal?: number } | null;
 }
 
 export interface RawTxn {
@@ -56,6 +57,10 @@ export async function fetchSnapshot(
       starters: r.starters ?? [],
       reserve: r.reserve ?? [],
       taxi: r.taxi ?? [],
+      wins: r.settings?.wins,
+      losses: r.settings?.losses,
+      ties: r.settings?.ties,
+      fpts: typeof r.settings?.fpts === "number" ? r.settings.fpts + (r.settings.fpts_decimal ?? 0) / 100 : undefined,
     }));
   } catch (e) {
     return { league, status: "FAILED", fetchedAt: now, rosters: null, recentDrops: null, error: msg(e) };

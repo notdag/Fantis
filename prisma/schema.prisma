@@ -512,3 +512,62 @@ model CommandProposal {
   @@index([createdAt])
   @@index([dedupeKey])
 }
+
+// FantasyCalc (fantasycalc.com) data, stored so features can read it from our own
+// DB instead of hitting their API. Only their two DOCUMENTED endpoints are ever
+// called (GET /players — at most daily; GET /values/current — at most hourly per
+// format), per their API docs; anything derived from this data must carry a visible
+// attribution + link to fantasycalc.com. See lib/fantasyCalcSync.ts.
+
+// Their player directory. sleeperId is what lets us match a FantasyCalc row to a
+// Sleeper player exactly (instead of by name + position).
+model FantasyCalcPlayer {
+  fcId          Int      @id
+  name          String
+  position      String // QB | RB | WR | TE | PICK
+  team          String?
+  age           Float?
+  birthday      String?
+  college       String?
+  draftInfo     Json?
+  sleeperId     String?
+  mflId         String?
+  espnId        String?
+  fleaflickerId String?
+  updatedAt     DateTime @updatedAt
+
+  @@index([sleeperId])
+}
+
+// One row per player per league format. formatKey encodes the query
+// (dynasty/qbs/teams/ppr/tep) — see lib/fantasyCalcFormat.ts.
+model FantasyCalcValue {
+  id            String   @id @default(cuid())
+  formatKey     String
+  fcId          Int
+  sleeperId     String?
+  name          String
+  position      String
+  team          String?
+  value         Int
+  overallRank   Int
+  positionRank  Int
+  trend30Day    Int?
+  starter       Boolean  @default(false)
+  redraftValue  Int?
+  combinedValue Int?
+  fetchedAt     DateTime @default(now())
+
+  @@unique([formatKey, fcId])
+  @@index([formatKey, sleeperId])
+}
+
+// Bookkeeping so we never call their API more often than they allow, and can
+// show how fresh each format is. key is a formatKey, or "players" for the directory.
+model FantasyCalcFetch {
+  key       String   @id
+  fetchedAt DateTime // when we last ATTEMPTED (success or not) — failures back off too
+  ok        Boolean
+  count     Int      @default(0)
+  error     String?
+}

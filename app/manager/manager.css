@@ -444,3 +444,9 @@
 .ccp-rejected,.ccp-expired{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
 .ccp-failed{color:var(--red);background:color-mix(in srgb,var(--red) 16%,transparent)}
 .ccp-verify-failed{color:var(--te);background:color-mix(in srgb,var(--te) 14%,transparent);outline:1px dashed color-mix(in srgb,var(--te) 55%,transparent)}
+
+/* playoff position chips */
+.ccs-in{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}
+.ccs-bubble{color:var(--amber);background:var(--amber-soft)}
+.ccs-out{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
+.ccs-unknown{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}

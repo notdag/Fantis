@@ -63,6 +63,11 @@ export interface SnapRoster {
   starters: string[];
   reserve: string[];
   taxi: string[];
+  // Real season record (Sleeper's own numbers), when the roster read carried them.
+  wins?: number;
+  losses?: number;
+  ties?: number;
+  fpts?: number;
 }
 
 export type ScanStatus = "SUCCESS" | "PARTIAL" | "FAILED";
@@ -136,5 +141,8 @@ export interface DropSignals {
   curated: (id: string) => { order: number; tier: number; posRank: number } | null;
   avoid: ReadonlySet<string>;
   priority: ReadonlySet<string>;
+  // FantasyCalc value in THIS league's own format (from our DB, matched by Sleeper id). When absent,
+  // callers fall back to the single fixed-format `fcValue`.
+  fcValueFor?: (leagueId: string, id: string) => number | null;
   priorityOrder?: string[]; // the owner's Priority list in order (index 0 = top pick), for lineup proposals
 }

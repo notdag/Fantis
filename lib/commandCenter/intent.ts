@@ -16,6 +16,7 @@ export type MatchupVerdictFilter = "WIN" | "LOSS" | "TOSS_UP" | "WON" | "LOST" |
 export type Intent =
   | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
   | { kind: "lineup_improvements" }
+  | { kind: "standings"; filter?: "IN" | "BUBBLE" | "OUT"; fresh: boolean }
   | { kind: "choice"; n: number }
   | { kind: "scan_player"; mentions: Mention[]; filter: ViewFilter; wantDrops: boolean }
   | { kind: "scan_leagues" }
@@ -63,7 +64,7 @@ export function parseFilter(t: string): ViewFilter {
 
 const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
 
-export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean; hasMatchups?: boolean }): Intent {
+export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean; hasMatchups?: boolean; hasStandings?: boolean }): Intent {
   const text = raw.trim();
   const t = text.toLowerCase().replace(/[?!]+$/g, "").trim();
   if (!t) return { kind: "unknown" };
@@ -80,6 +81,16 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (/^(show )?(all|everything)$|^(clear|remove|reset) (the )?filters?$|^show all( leagues)?$/.test(t)) return { kind: "clear_filter" };
 
   const mentions = findMentions(text, index);
+
+  // Playoff position + roster strength. With a result on screen, "only the ones I'm out of" filters it.
+  const standingsWord = /\b(where (do )?i stand|standings?|playoff (picture|outlook|position|chances|spot|race|line)|in (a )?playoff (spot|position)|make (the )?playoffs|power rankings?|team strength|how (strong|good) (are|is) my (teams?|rosters?)|roster strength|bubble)\b/.test(t);
+  if (standingsWord && mentions.length === 0) {
+    const filter = /\b(out|missing|behind|outside|below)\b.*\b(playoff|line|cut)/.test(t) || /\bout of (the )?playoffs?\b/.test(t) ? "OUT" : /\bbubble\b/.test(t) ? "BUBBLE" : /\b(in|making|inside)\b.*\bplayoff/.test(t) && !/how many|where/.test(t) ? "IN" : undefined;
+    return { kind: "standings", filter, fresh: !(ctx.hasStandings && filter) };
+  }
+  if (ctx.hasStandings && mentions.length === 0 && /^(only |just |show |now )?(the )?(leagues )?(i'?m |i am )?(in|out|on the bubble|bubble)\b/.test(t)) {
+    return { kind: "standings", filter: /\bout\b/.test(t) ? "OUT" : /\bbubble\b/.test(t) ? "BUBBLE" : "IN", fresh: false };
+  }
 
   if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i start\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
     return { kind: "lineup_improvements" };
