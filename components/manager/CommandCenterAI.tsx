@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMatchups, getProjections, getRosters, getState, getTransactions } from "@/lib/sleeper";
+import { getWeekGameStates } from "@/lib/espnGames";
 import type { ProjectionMap } from "@/lib/types";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useTradeValues } from "@/lib/useTradeValues";
@@ -24,7 +25,7 @@ import { CURRENT_PERMISSION, STATE_LABEL, STATE_ORDER, type AvailState, type CcL
 const EXAMPLES = [
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
-  "How many leagues am I projected to win this week?",
+  "How many leagues am I winning this week?",
   "Show me my weakest players",
   "Find leagues where I have an injured player who could go on IR",
   "Show me every league where I have a roster decision to make",
@@ -63,6 +64,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
   const [prefsOk, setPrefsOk] = useState<boolean | null>(null);
   const [leg, setLeg] = useState<number | null>(null);
   const [week, setWeek] = useState<number | null>(null);
+  const [season, setSeason] = useState<string | null>(null);
   const [projections, setProjections] = useState<ProjectionMap | null>(null);
 
   useEffect(() => {
@@ -72,6 +74,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         setLeg(s.leg || s.week || 1);
         const w = Math.max(1, s.week || 1);
         setWeek(w);
+        setSeason(s.season);
         // This week's per-player point projections, for the "who am I projected to beat" question.
         getProjections(s.season, w).then(setProjections).catch(() => setProjections(null));
       })
@@ -145,6 +148,8 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         },
         projections,
         week,
+        // Which games are done / in progress / still to come — fetched fresh each time it's needed.
+        getGameStates: season && week ? () => getWeekGameStates(season, week).catch(() => null) : undefined,
         onProgress: setProgress,
       };
       try {
@@ -167,7 +172,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         setProgress(null);
       }
     },
-    [tools, signals, pmap, running, curated, tradeValues, fc, projections, week]
+    [tools, signals, pmap, running, curated, tradeValues, fc, projections, week, season]
   );
 
   const loadHistory = async () => {
@@ -556,27 +561,36 @@ function PreviewView({ block }: { block: Extract<Block, { t: "preview" }> }) {
 }
 
 const VERDICT_LABEL: Record<MatchupVerdict, string> = {
+  WON: "Won",
+  LOST: "Lost",
+  TIED: "Tied",
   WIN: "Projected win",
   TOSS_UP: "Too close",
   LOSS: "Projected loss",
-  INCOMPLETE: "Lineup gap",
   NO_OPPONENT: "No opponent",
   UNKNOWN: "Couldn't read",
 };
 const VERDICT_ASK: Partial<Record<MatchupVerdict, string>> = {
+  WON: "Which leagues have I already won",
+  LOST: "Which leagues have I already lost",
+  WIN: "Show me the leagues I'm projected to win",
   LOSS: "Show me the leagues I'm projected to lose",
   TOSS_UP: "Show me the close ones",
-  INCOMPLETE: "Show me the incomplete lineups",
 };
+
+const fmt = (n: number | null) => (n == null ? "—" : n.toFixed(1));
+const signed = (n: number) => (n > 0 ? "+" : "") + n.toFixed(1);
+const marginColor = (n: number) => (n > 0 ? "var(--mint)" : n < 0 ? "var(--red)" : "var(--dim)");
 
 function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "matchups" }>; onAsk: (s: string) => void; disabled: boolean }) {
   const [all, setAll] = useState(false);
   const rows = all ? block.rows : block.rows.slice(0, 15);
   const c = block.counts;
+  const lv = block.live;
   return (
     <div className="cctally">
       <div className="cccounts">
-        {(["WIN", "TOSS_UP", "LOSS", "INCOMPLETE", "NO_OPPONENT", "UNKNOWN"] as MatchupVerdict[]).map((v) => (
+        {(["WON", "LOST", "TIED", "WIN", "TOSS_UP", "LOSS", "NO_OPPONENT", "UNKNOWN"] as MatchupVerdict[]).map((v) => (
           <button
             key={v}
             className={`ccstate ccv-${v.toLowerCase().replace(/_/g, "-")} ${c[v] === 0 ? "cczero" : ""}`}
@@ -588,23 +602,47 @@ function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "m
           </button>
         ))}
       </div>
+      <div className="cccounts">
+        <button className="ccexample" disabled={disabled || lv.leading === 0} onClick={() => onAsk("Which leagues am I leading right now")}>Leading now {lv.leading}</button>
+        <button className="ccexample" disabled={disabled || lv.trailing === 0} onClick={() => onAsk("Which leagues am I trailing right now")}>Trailing now {lv.trailing}</button>
+        <span className="portmeta">Starters still to finish — you {lv.leftMine} · opponents {lv.leftOpp}</span>
+      </div>
       <p className="cctext" style={{ marginTop: 10 }}><strong>{block.title}</strong></p>
       {block.rows.length === 0 && <p className="hint">No leagues match.</p>}
-      {rows.map((r) => (
-        <div key={r.leagueId} className="ccleague">
-          <div className="ccrow">
-            <span className={`ccstate ccstatecol ccv-${r.verdict.toLowerCase().replace(/_/g, "-")}`}>{VERDICT_LABEL[r.verdict]}</span>
-            <span className="ccname">{r.leagueName}</span>
-            <span className="ccscore">
-              {r.mine != null ? r.mine.toFixed(1) : "—"} <span className="portmeta">vs</span> {r.opp != null ? r.opp.toFixed(1) : "—"}
-              {r.margin != null && (
-                <span style={{ color: r.margin > 0 ? "var(--mint)" : r.margin < 0 ? "var(--red)" : "var(--dim)" }}> {r.margin > 0 ? "+" : ""}{r.margin.toFixed(1)}</span>
-              )}
-            </span>
+      {rows.map((r) => {
+        const nowMargin = r.nowMine != null && r.nowOpp != null ? Math.round((r.nowMine - r.nowOpp) * 10) / 10 : null;
+        const projMargin = r.projMine != null && r.projOpp != null ? Math.round((r.projMine - r.projOpp) * 10) / 10 : null;
+        const decided = r.verdict === "WON" || r.verdict === "LOST" || r.verdict === "TIED";
+        return (
+          <div key={r.leagueId} className="ccleague">
+            <div className="ccrow">
+              <span className={`ccstate ccstatecol ccv-${r.verdict.toLowerCase().replace(/_/g, "-")}`}>{VERDICT_LABEL[r.verdict]}</span>
+              <span className="ccname">{r.leagueName}</span>
+              <span className="ccscore" style={{ color: marginColor((decided ? nowMargin : projMargin) ?? 0) }}>
+                {(decided ? nowMargin : projMargin) != null ? signed((decided ? nowMargin : projMargin) as number) : "—"}
+              </span>
+            </div>
+            {r.verdict !== "UNKNOWN" && (
+              <>
+                <div className="portmeta ccindent">
+                  Now <strong className="ccnum">{fmt(r.nowMine)}</strong> – <strong className="ccnum">{fmt(r.nowOpp)}</strong>
+                  {nowMargin != null && <span style={{ color: marginColor(nowMargin) }}> ({signed(nowMargin)})</span>}
+                </div>
+                {!decided && r.verdict !== "NO_OPPONENT" && (
+                  <div className="portmeta ccindent">
+                    Projected final <strong className="ccnum">{fmt(r.projMine)}</strong> – <strong className="ccnum">{fmt(r.projOpp)}</strong>
+                    {projMargin != null && <span style={{ color: marginColor(projMargin) }}> ({signed(projMargin)})</span>}
+                  </div>
+                )}
+                <div className="portmeta ccindent">
+                  Starters — you: {r.playedMine} played · {r.leftMine} left{r.verdict !== "NO_OPPONENT" ? ` | opp: ${r.playedOpp} played · ${r.leftOpp} left` : ""}
+                </div>
+              </>
+            )}
+            {r.warnings.map((w, i) => <div key={i} className="portmeta ccindent" style={{ color: "var(--amber)" }}>{w}</div>)}
           </div>
-          {r.warnings.map((w, i) => <div key={i} className="portmeta ccindent">{w}</div>)}
-        </div>
-      ))}
+        );
+      })}
       {block.rows.length > 15 && (
         <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>
       )}

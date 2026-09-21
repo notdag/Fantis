@@ -92,6 +92,7 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
 }
 
 interface MatchupExtra {
+  states?: Record<string, { state: "pre" | "in" | "post"; elapsed: number }> | null;
   matchups?: Record<string, RawMatchup[] | Error>;
   projections?: ProjectionMap | null;
   week?: number;
@@ -126,7 +127,7 @@ function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { ros
       },
     },
   });
-  return { tools, signals: sig ?? signals(pm), pmap: pm, curatedIds: null, rank: () => [0, 0], now: () => NOW, calls, projections: extra.projections ?? null, week: extra.week ?? 3 };
+  return { tools, signals: sig ?? signals(pm), pmap: pm, curatedIds: null, rank: () => [0, 0], now: () => NOW, calls, projections: extra.projections ?? null, week: extra.week ?? 3, getGameStates: async () => extra.states ?? null };
 }
 
 const textOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "text" }> => b.t === "text").map((b) => b.text).join("\n");
@@ -397,65 +398,107 @@ async function main() {
     ok(rd.audit.intent === "roster_decisions", "roster decisions workflow");
   }
 
-  // ---------- 12. "how many leagues am I projected to win this week?"
+  // ---------- 12. LIVE matchups: scores so far, players played / left, projected finish
   {
+    // Fixture players, each on a team whose game state we control.
     const pm = basePmap();
-    const half = { ...lg("8", "L8 free agent full roster"), settings: { ...mkSettings(WR_ROSTER), scoring_settings: { rec: 0.5 } } };
-    const fx = scenario().map((f) => (f.league.id === "8" ? { ...f, league: half } : f));
+    const team = (id: string, t: string) => (pm[id] = { n: "P " + id, p: "WR", t });
+    team("a", "DAL"); // game over
+    team("b", "KC"); //  in progress, halfway
+    team("c", "BAL"); // not started
+    team("d", "DEN"); // not started
+    team("e", "DAL"); // game over
+    team("x", "BAL");
+    team("y", "DEN");
+    team("bye", "MIA"); // no game this week
+    const states = {
+      DAL: { state: "post" as const, elapsed: 1 },
+      KC: { state: "in" as const, elapsed: 0.5 },
+      BAL: { state: "pre" as const, elapsed: 0 },
+      DEN: { state: "pre" as const, elapsed: 0 },
+    };
     const proj: ProjectionMap = {
-      a: { pts_ppr: 20 }, b: { pts_ppr: 20 }, c: { pts_ppr: 10 }, d: { pts_ppr: 10 },
-      e: { pts_ppr: 10 }, f: { pts_ppr: 30 },
-      g: { pts_ppr: 20 }, h: { pts_ppr: 21 },
-      // L8 half-PPR: PPR would say WIN (30 vs 5), half-PPR says LOSS (10 vs 15)
+      a: { pts_ppr: 99 }, // finished — projection must be ignored, actual used
+      b: { pts_ppr: 20 }, c: { pts_ppr: 15 }, d: { pts_ppr: 10 }, e: { pts_ppr: 99 },
       x: { pts_ppr: 30, pts_half_ppr: 10 }, y: { pts_ppr: 5, pts_half_ppr: 15 },
     };
-    const row = (id: number, mid: number | null, starters: string[]): RawMatchup => ({ roster_id: id, matchup_id: mid, starters, points: 0 });
+    const half = { ...lg("8", "L8 free agent full roster"), settings: { ...mkSettings(WR_ROSTER), scoring_settings: { rec: 0.5 } } };
+    const fx = scenario().map((f) => (f.league.id === "8" ? { ...f, league: half } : f));
+    const row = (id: number, mid: number | null, starters: string[], pts: number[]): RawMatchup => ({
+      roster_id: id, matchup_id: mid, starters, starters_points: pts, points: pts.reduce((x, y) => x + y, 0),
+    });
     const matchups: Record<string, RawMatchup[] | Error> = {
-      "1": [row(1, 1, ["a", "b"]), row(2, 1, ["c", "d"])], // 40 vs 20  → WIN
-      "2": [row(1, 1, ["e"]), row(2, 1, ["f"])], // 10 vs 30 → LOSS
-      "3": [row(1, 1, ["g"]), row(2, 1, ["h"])], // 20 vs 21 → TOSS_UP
-      "4": [row(1, 1, ["a", "0"]), row(2, 1, ["c", "d"])], // empty slot → INCOMPLETE
+      // L1: a (final, 20) + b (halfway, 10 so far, proj 20) + c (pre, proj 15) vs d (pre, proj 10) + e (final, 12)
+      //     me: now 30, final 20 + (10+20*.5) + 15 = 55 ; opp: now 12, final 12+10 = 22  → WIN
+      "1": [row(1, 1, ["a", "b", "c"], [20, 10, 0]), row(2, 1, ["d", "e"], [0, 12])],
+      // L2: everyone finished, 100 vs 90 → WON (a fact)
+      "2": [row(1, 1, ["a", "e"], [60, 40]), row(2, 1, ["a", "e"], [50, 40])],
+      // L3: everyone finished, 80 vs 90 → LOST
+      "3": [row(1, 1, ["a", "e"], [40, 40]), row(2, 1, ["a", "e"], [50, 40])],
+      // L4: finished tie
+      "4": [row(1, 1, ["a"], [70]), row(2, 1, ["e"], [70])],
       "5": new Error("503"), // → UNKNOWN
-      "6": [row(1, null, ["a"]), row(2, null, ["c"])], // bye → NO_OPPONENT
-      "7": [row(1, 1, ["a", "b"]), row(2, 1, ["c", "zzz"])], // opponent starter has no projection → INCOMPLETE
-      "8": [row(1, 1, ["x"]), row(2, 1, ["y"])], // half PPR → LOSS
+      // L6: bye week, no opponent
+      "6": [row(1, null, ["a"], [10]), row(2, null, ["e"], [10])],
+      // L7: I'm LEADING now (30 vs 0) but the opponent still has c (15) and d (10) to play … projected 30 vs 25 → WIN? make it a loss:
+      //     opp has two unplayed starters projected 15 + 10 = 25 vs my 30 → still a win; use bigger: see L7b below
+      "7": [row(1, 1, ["a"], [30]), row(2, 1, ["c", "d", "b"], [0, 0, 0])], // opp: 15+10+20 = 45 vs my 30 → LOSS while leading nothing (0<30 now)
+      // L8: half-PPR field must be used (x=10 vs y=15 → LOSS; full PPR would say WIN 30 vs 5)
+      "8": [row(1, 1, ["x"], [0]), row(2, 1, ["y"], [5])],
     };
     const calls = { rosters: 0, txns: 0, matchups: 0 };
-    const env = makeEnv(fx, pm, undefined, calls, { matchups, projections: proj });
-    const out = await handleCommand("How many leagues am I predicted to win this week?", newSession(), env);
+    const env = makeEnv(fx, pm, undefined, calls, { matchups, projections: proj, states });
+    const out = await handleCommand("How many leagues am I winning this week?", newSession(), env);
     const mb = out.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!;
     ok(!!mb, "matchup block produced");
-    const c = mb?.counts;
-    ok(c?.WIN === 1 && c?.LOSS === 2 && c?.TOSS_UP === 1 && c?.INCOMPLETE === 2 && c?.UNKNOWN === 1 && c?.NO_OPPONENT === 1, "verdict counts", JSON.stringify(c));
-    ok(/projected to win 1 of 8 leagues and to lose 2/.test(textOf(out.blocks)), "headline states wins and losses", textOf(out.blocks).slice(0, 220));
-    ok(/NOT counted as wins or losses/.test(textOf(out.blocks)), "unreadable league is not counted as a win or loss");
-    const by = Object.fromEntries(mb.rows.map((r) => [r.leagueName, r]));
-    ok(by["L8 free agent full roster"].verdict === "LOSS", "scoring format honored (half-PPR field used, not PPR)", by["L8 free agent full roster"].verdict);
-    ok(by["L1 free agent"].mine === 40 && by["L1 free agent"].opp === 20 && by["L1 free agent"].margin === 20, "sums starter projections");
-    ok(by["L4 on other roster"].verdict === "INCOMPLETE" && by["L4 on other roster"].warnings.length > 0, "empty slot → INCOMPLETE with a warning, never a guess");
-    ok(by["L5 scan fails"].verdict === "UNKNOWN", "failed matchup read → UNKNOWN");
-    ok(by["L6 tx fails"].verdict === "NO_OPPONENT", "no opponent (bye) is its own bucket");
-    ok(/not a win probability|projection, not/.test(textOf(out.blocks)), "states it is a projection, not a probability");
-    ok(out.audit.recommendations.some((r) => /1 projected wins, 2 losses/.test(r)), "audit records the result", out.audit.recommendations.join());
+    const by = Object.fromEntries((mb?.rows ?? []).map((r) => [r.leagueName, r]));
+    const L = (n: string) => by[n];
+    // L1: exact live math
+    ok(L("L1 free agent")?.nowMine === 30 && L("L1 free agent")?.nowOpp === 12, "points so far are the real scores", JSON.stringify(L("L1 free agent")));
+    ok(L("L1 free agent")?.projMine === 55 && L("L1 free agent")?.projOpp === 22, "finished=actual, mid-game=actual+proj×time left, unplayed=projection", `${L("L1 free agent")?.projMine}/${L("L1 free agent")?.projOpp}`);
+    ok(L("L1 free agent")?.verdict === "WIN", "L1 projected win");
+    ok(L("L1 free agent")?.playedMine === 1 && L("L1 free agent")?.leftMine === 2 && L("L1 free agent")?.playedOpp === 1 && L("L1 free agent")?.leftOpp === 1, "players played / left counted per side", JSON.stringify(L("L1 free agent")));
+    ok(L("L2 waiver full roster")?.verdict === "WON", "everyone finished and ahead → WON (a fact)");
+    ok(L("L3 on my roster")?.verdict === "LOST", "everyone finished and behind → LOST");
+    ok(L("L4 on other roster")?.verdict === "TIED", "finished level → TIED");
+    ok(L("L5 scan fails")?.verdict === "UNKNOWN", "unreadable league → UNKNOWN");
+    ok(L("L6 tx fails")?.verdict === "NO_OPPONENT", "bye → NO_OPPONENT");
+    ok(L("L7 no WR slot")?.verdict === "LOSS", "leading now but opponent has more still to come → projected LOSS", JSON.stringify(L("L7 no WR slot")));
+    ok(L("L8 free agent full roster")?.verdict === "LOSS", "league scoring format honored (half-PPR field)", L("L8 free agent full roster")?.verdict);
+    const c = mb.counts;
+    ok(c.WON === 1 && c.LOST === 1 && c.TIED === 1 && c.WIN === 1 && c.LOSS === 2 && c.NO_OPPONENT === 1 && c.UNKNOWN === 1, "verdict counts", JSON.stringify(c));
+    const txt = textOf(out.blocks);
+    ok(/3 matchups are already decided \(1 won, 1 lost, 1 tied\)/.test(txt), "headline: already decided", txt.slice(0, 200));
+    ok(/projected to win 1, lose 2/.test(txt), "headline: projected win/loss among live");
+    ok(/leading in .* and trailing in/.test(txt), "headline: leading/trailing right now");
+    ok(/Starters still to finish/.test(txt), "headline: players left");
+    ok(/NOT counted as wins or losses/.test(txt), "unreadable leagues never counted as wins/losses");
+    ok(/not a win probability/.test(txt), "says it is a projection");
+    ok(mb.live.leftMine > 0 && mb.live.leftOpp > 0, "aggregate starters left");
 
-    // follow-ups filter the stored result without re-reading
+    // filters, no re-read
     const before = calls.matchups;
-    const lose = await handleCommand("Show me the leagues I'm projected to lose", out.session, env);
-    ok(calls.matchups === before, "losing follow-up reused the result (no re-read)");
-    const lb = lose.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!;
-    ok(lb.rows.length === 2 && lb.rows.every((r) => r.verdict === "LOSS"), "only projected losses shown");
-    const close = await handleCommand("only show the close ones", out.session, env);
-    ok(close.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows.length === 1, "toss-up follow-up");
+    const f1 = await handleCommand("Which leagues have I already won", out.session, env);
+    ok(calls.matchups === before, "follow-up reused the result (no re-read)");
+    ok(f1.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows.every((r) => r.verdict === "WON"), "'already won' shows only WON");
+    const f2 = await handleCommand("Which leagues am I trailing right now", out.session, env);
+    const tr = f2.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows;
+    ok(tr.length > 0 && tr.every((r) => r.nowMine! < r.nowOpp! && !["WON", "LOST", "TIED"].includes(r.verdict)), "'trailing right now' uses current score, excludes finished matchups", String(tr.length));
+    const f3 = await handleCommand("Show me the leagues I'm projected to lose", out.session, env);
+    ok(f3.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows.length === 2 && calls.matchups === before, "projected-loss follow-up");
 
-    for (const v of ["Am I going to win this week?", "How many leagues am I projected to win?", "how many leagues will I win this week", "What are my matchups this week", "Which leagues am I losing this week?"]) {
-      const o = await handleCommand(v, newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj }));
-      ok(o.audit.intent === "win_projection", `phrasing → win_projection: "${v}"`, o.audit.intent);
+    for (const v of ["Am I going to win this week?", "How many leagues am I projected to win?", "How many leagues am I winning this week", "What are my matchups this week", "Who's winning in my leagues this week", "Which leagues am I losing this week?"]) {
+      const o = await handleCommand(v, newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states }));
+      ok(o.audit.intent === "win_projection", `phrasing → matchups: "${v}"`, o.audit.intent);
     }
-    // projections not loaded → says so, counts nothing
-    const none = await handleCommand("How many leagues am I projected to win this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: null }));
-    ok(!none.blocks.some((b) => b.t === "matchups") && /haven't loaded/.test(textOf(none.blocks)), "no projections → no answer invented");
-    // no fake success / read-only line
+
+    // game status unavailable → does NOT guess who has played
+    const noStates = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states: null }));
+    ok(!noStates.blocks.some((b) => b.t === "matchups") && /couldn't load which NFL games/.test(textOf(noStates.blocks)), "no game status → refuses to guess");
+    const noProj = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: null, states }));
+    ok(!noProj.blocks.some((b) => b.t === "matchups"), "no projections → no answer invented");
     ok(/READ-ONLY MODE/.test(textOf(out.blocks)), "read-only line on matchup answer");
+    ok(out.audit.recommendations.some((r) => /won\/projected wins/.test(r)), "audit records the matchup result");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

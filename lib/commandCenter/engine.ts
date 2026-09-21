@@ -24,6 +24,8 @@ import {
   type PlayerCard,
 } from "./types";
 import type { PlayerMap, ProjectionMap } from "../types";
+import type { GameState } from "../espnGames";
+import type { RawMatchup } from "./tools";
 
 // ------------------------------------------------------------------ output
 
@@ -40,14 +42,21 @@ export interface ScanMeta {
   fetchedAt: number;
 }
 
-export type MatchupVerdict = "WIN" | "TOSS_UP" | "LOSS" | "INCOMPLETE" | "NO_OPPONENT" | "UNKNOWN";
+// WON/LOST/TIED = every starter on both sides is done (a fact, not a projection).
+// WIN/LOSS/TOSS_UP = still in play: projected from points so far + what's left.
+export type MatchupVerdict = "WON" | "LOST" | "TIED" | "WIN" | "TOSS_UP" | "LOSS" | "NO_OPPONENT" | "UNKNOWN";
 export interface MatchupRow {
   leagueId: string;
   leagueName: string;
   verdict: MatchupVerdict;
-  mine: number | null;
-  opp: number | null;
-  margin: number | null;
+  nowMine: number | null; // real points so far
+  nowOpp: number | null;
+  projMine: number | null; // projected final (real points + what's left)
+  projOpp: number | null;
+  leftMine: number; // starters whose game isn't finished yet (incl. in progress)
+  leftOpp: number;
+  playedMine: number;
+  playedOpp: number;
   warnings: string[];
 }
 
@@ -87,7 +96,15 @@ export type Block =
   | { t: "suggest"; title: string; rows: { name: string; pos: string; free: number; waiver: number; needDrop: number }[] }
   | { t: "decisions"; title: string; rows: { leagueId: string; leagueName: string; items: string[] }[]; truncated: number }
   | { t: "preview"; banner: string; items: PreviewItem[]; truncated: number }
-  | { t: "matchups"; title: string; week: number; counts: Record<MatchupVerdict, number>; rows: MatchupRow[]; truncated: number };
+  | {
+      t: "matchups";
+      title: string;
+      week: number;
+      counts: Record<MatchupVerdict, number>;
+      live: { leading: number; trailing: number; even: number; leftMine: number; leftOpp: number; games: { pre: number; inPlay: number; post: number } };
+      rows: MatchupRow[];
+      truncated: number;
+    };
 
 export interface AuditRecord {
   command: string;
@@ -123,7 +140,7 @@ export interface Session {
   drops: Record<string, DropAnalysis> | null;
   dropsScope: string;
   pending: Pending | null;
-  matchups: { week: number; rows: MatchupRow[]; at: number } | null;
+  matchups: { week: number; rows: MatchupRow[]; at: number; games: GameCounts } | null;
 }
 
 export const newSession = (): Session => ({ targets: [], results: null, meta: null, filter: {}, drops: null, dropsScope: "", pending: null, matchups: null });
@@ -143,6 +160,7 @@ export interface EngineEnv {
   curatedIds: string[] | null;
   rank: DropRank; // [fantisValue, fcValue], higher = keep
   projections?: ProjectionMap | null; // Sleeper's single-week point projections for `week`
+  getGameStates?: () => Promise<Record<string, GameState> | null>; // live NFL game status (ESPN), fetched fresh per question
   week?: number | null;
   onProgress?: (p: Progress) => void;
   concurrency?: number;
@@ -716,45 +734,73 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         break;
       }
       let rows: MatchupRow[];
+      let games: GameCounts;
       const stored = session.matchups;
-      // A stored result is only reused for a few minutes — lineups change.
-      if (stored && stored.week === week && !intent.fresh && intent.verdict && now() - stored.at < 5 * 60_000) {
+      // A stored result is only reused for a minute — scores change live.
+      if (stored && stored.week === week && !intent.fresh && intent.verdict && now() - stored.at < 60_000) {
         rows = stored.rows; // follow-up: filter what we already read, no re-scan
+        games = stored.games;
       } else {
-        rows = await scanMatchups(env, proj, week, (meta) => {
+        const states = env.getGameStates ? await env.getGameStates().catch(() => null) : null;
+        if (!states) {
+          blocks.push({
+            t: "text",
+            tone: "warn",
+            text: "I couldn't load which NFL games are played, in progress or still to come (ESPN's scoreboard didn't respond), so I can't tell who has played. I won't guess — nothing was counted. Try again in a moment.",
+          });
+          break;
+        }
+        const scanned = await scanMatchups(env, proj, states, (meta) => {
           session = { ...session, meta };
         });
-        session = { ...session, matchups: { week, rows, at: now() } };
+        rows = scanned.rows;
+        games = scanned.games;
+        session = { ...session, matchups: { week, rows, at: now(), games } };
       }
       const counts = countVerdicts(rows);
-      const shown = intent.verdict ? rows.filter((r) => r.verdict === intent.verdict) : rows;
+      const live = summarizeLive(rows, games);
+      const matches = (r: MatchupRow) => {
+        switch (intent.verdict) {
+          case undefined: return true;
+          case "LEADING": return r.nowMine != null && r.nowOpp != null && r.nowMine > r.nowOpp && !["WON", "LOST", "TIED"].includes(r.verdict);
+          case "TRAILING": return r.nowMine != null && r.nowOpp != null && r.nowMine < r.nowOpp && !["WON", "LOST", "TIED"].includes(r.verdict);
+          default: return r.verdict === intent.verdict;
+        }
+      };
+      const shown = rows.filter(matches);
       const total = rows.length;
-      const decided = counts.WIN + counts.LOSS;
-      const readable = total - counts.UNKNOWN;
+      const inPlay = counts.WIN + counts.LOSS + counts.TOSS_UP;
+      const final = counts.WON + counts.LOST + counts.TIED;
       blocks.push({
         t: "text",
         tone: "good",
         text:
-          `Week ${week}: projected to win ${counts.WIN} of ${total} leagues and to lose ${counts.LOSS}. ` +
-          `${counts.TOSS_UP} are too close to call (within ${TOSS_UP_PTS} pts), ${counts.INCOMPLETE} can't be judged because a lineup has an empty slot or a starter with no projection, ` +
-          `and ${counts.NO_OPPONENT} have no opponent this week. ` +
-          (counts.UNKNOWN > 0 ? `${counts.UNKNOWN} league${counts.UNKNOWN === 1 ? "" : "s"} could not be read and are NOT counted as wins or losses. ` : "") +
-          `${readable} of ${total} leagues were readable, ${decided} clear calls.`,
+          `Week ${week}, live: ${final} matchup${final === 1 ? " is" : "s are"} already decided (${counts.WON} won, ${counts.LOST} lost, ${counts.TIED} tied). ` +
+          `Of the ${inPlay} still in play, you're projected to win ${counts.WIN}, lose ${counts.LOSS}, and ${counts.TOSS_UP} are too close to call (within ${TOSS_UP_PTS} pts). ` +
+          `Right now you're leading in ${live.leading} and trailing in ${live.trailing}${live.even ? ` (${live.even} level)` : ""}. ` +
+          `Starters still to finish: yours ${live.leftMine}, opponents' ${live.leftOpp}. ` +
+          `Projected total if it ends as expected: ${counts.WON + counts.WIN} wins, ${counts.LOST + counts.LOSS} losses, ${counts.TIED + counts.TOSS_UP} tied/too close${counts.NO_OPPONENT ? `, ${counts.NO_OPPONENT} with no opponent` : ""}. ` +
+          (counts.UNKNOWN > 0 ? `${counts.UNKNOWN} league${counts.UNKNOWN === 1 ? "" : "s"} could not be read and are NOT counted as wins or losses.` : ""),
       });
       blocks.push({
         t: "text",
         tone: "info",
-        text: "How to read this: each side is the sum of Sleeper's own single-week point projections for the starters currently set (using each league's PPR/half/standard setting; custom scoring isn't applied). It is a projection, not a win probability, and live scores from games already played are not included.",
+        text: "How this is built: points so far are your real Sleeper scores. A starter whose game is over counts exactly what he scored; one who hasn't played counts Sleeper's projection for the week; one mid-game counts points so far plus the projection scaled by game time remaining (an approximation). Projections use each league's PPR/half/standard setting; custom scoring isn't applied. It's a projection, not a win probability.",
       });
       blocks.push({
         t: "matchups",
-        title: intent.verdict ? `Leagues — ${VERDICT_LABEL[intent.verdict].toLowerCase()} (${shown.length})` : `Every league — week ${week} (${total})`,
+        title: intent.verdict ? `Leagues — ${describeVerdictFilter(intent.verdict)} (${shown.length})` : `Every league — week ${week} (${total})`,
         week,
         counts,
+        live,
         rows: shown.slice(0, ROW_CAP),
         truncated: Math.max(0, shown.length - ROW_CAP),
       });
-      recs.push(`week ${week}: ${counts.WIN} projected wins, ${counts.LOSS} losses, ${counts.TOSS_UP} toss-ups, ${counts.INCOMPLETE} incomplete`);
+      const gapLeagues = rows.filter((r) => r.warnings.some((w) => /no projection|empty/.test(w))).length;
+      if (gapLeagues > 0) {
+        blocks.push({ t: "text", tone: "warn", text: `${gapLeagues} league${gapLeagues === 1 ? " has" : "s have"} an empty starter slot or a starter with no projection — those count as 0 and are flagged on the row.` });
+      }
+      recs.push(`week ${week}: ${counts.WON + counts.WIN} won/projected wins, ${counts.LOST + counts.LOSS} lost/projected losses, ${counts.TOSS_UP} toss-ups`);
       break;
     }
 
@@ -798,19 +844,40 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
 // ------------------------------------------------------------- matchups
 
 const TOSS_UP_PTS = 3;
-const VERDICT_LABEL: Record<MatchupVerdict, string> = {
-  WIN: "Projected win",
-  TOSS_UP: "Too close to call",
-  LOSS: "Projected loss",
-  INCOMPLETE: "Lineup incomplete",
-  NO_OPPONENT: "No opponent",
-  UNKNOWN: "Couldn't read",
+type GameCounts = { pre: number; inPlay: number; post: number };
+
+const VERDICT_FILTER_LABEL: Record<string, string> = {
+  WIN: "projected wins",
+  LOSS: "projected losses",
+  TOSS_UP: "too close to call",
+  WON: "already won",
+  LOST: "already lost",
+  LEADING: "leading right now",
+  TRAILING: "trailing right now",
 };
+const describeVerdictFilter = (v: string) => VERDICT_FILTER_LABEL[v] ?? v;
 
 function countVerdicts(rows: MatchupRow[]): Record<MatchupVerdict, number> {
-  const c: Record<MatchupVerdict, number> = { WIN: 0, TOSS_UP: 0, LOSS: 0, INCOMPLETE: 0, NO_OPPONENT: 0, UNKNOWN: 0 };
+  const c: Record<MatchupVerdict, number> = { WON: 0, LOST: 0, TIED: 0, WIN: 0, TOSS_UP: 0, LOSS: 0, NO_OPPONENT: 0, UNKNOWN: 0 };
   for (const r of rows) c[r.verdict]++;
   return c;
+}
+
+function summarizeLive(rows: MatchupRow[], games: GameCounts) {
+  let leading = 0;
+  let trailing = 0;
+  let even = 0;
+  let leftMine = 0;
+  let leftOpp = 0;
+  for (const r of rows) {
+    if (r.nowMine == null || r.nowOpp == null || r.verdict === "UNKNOWN" || r.verdict === "NO_OPPONENT") continue;
+    if (r.nowMine > r.nowOpp) leading++;
+    else if (r.nowMine < r.nowOpp) trailing++;
+    else even++;
+    leftMine += r.leftMine;
+    leftOpp += r.leftOpp;
+  }
+  return { leading, trailing, even, leftMine, leftOpp, games };
 }
 
 // Sleeper's projection field that matches a league's reception scoring.
@@ -824,9 +891,9 @@ function scoringField(settings: unknown): { key: "pts_ppr" | "pts_half_ppr" | "p
 async function scanMatchups(
   env: EngineEnv,
   proj: ProjectionMap,
-  week: number,
+  states: Record<string, GameState>,
   onMeta: (m: ScanMeta) => void
-): Promise<MatchupRow[]> {
+): Promise<{ rows: MatchupRow[]; games: GameCounts }> {
   const now = env.now ?? (() => Date.now());
   const started = now();
   const all = env.tools.get_my_leagues();
@@ -835,24 +902,30 @@ async function scanMatchups(
   let done = 0;
   let failed = 0;
   let next = 0;
+  const label = "Reading this week's live matchups";
   const worker = async () => {
     while (next < scope.length) {
       const i = next++;
       const lg = scope[i];
       try {
         const { mine, opp } = await env.tools.get_matchup(lg.id);
-        rows[i] = judgeMatchup(lg, mine.starters ?? [], opp ? opp.starters ?? [] : null, proj);
+        rows[i] = judgeMatchup(lg, mine, opp, proj, states, env.pmap);
       } catch (e) {
         failed++;
-        rows[i] = { leagueId: lg.id, leagueName: lg.name, verdict: "UNKNOWN", mine: null, opp: null, margin: null, warnings: [e instanceof Error ? e.message : "could not be read"] };
+        rows[i] = { leagueId: lg.id, leagueName: lg.name, verdict: "UNKNOWN", nowMine: null, nowOpp: null, projMine: null, projOpp: null, leftMine: 0, leftOpp: 0, playedMine: 0, playedOpp: 0, warnings: [e instanceof Error ? e.message : "could not be read"] };
       }
       done++;
-      env.onProgress?.({ done, total: scope.length, label: "Checking this week's matchups", failed });
+      env.onProgress?.({ done, total: scope.length, label, failed });
     }
   };
-  env.onProgress?.({ done: 0, total: scope.length, label: "Checking this week's matchups", failed: 0 });
+  env.onProgress?.({ done: 0, total: scope.length, label, failed: 0 });
   await Promise.all(Array.from({ length: Math.min(env.concurrency ?? 6, Math.max(1, scope.length)) }, worker));
   const bad = rows.filter((r) => r.verdict === "UNKNOWN");
+  const games: GameCounts = {
+    pre: new Set(Object.entries(states).filter(([, g]) => g.state === "pre").map(([t]) => t)).size,
+    inPlay: new Set(Object.entries(states).filter(([, g]) => g.state === "in").map(([t]) => t)).size,
+    post: new Set(Object.entries(states).filter(([, g]) => g.state === "post").map(([t]) => t)).size,
+  };
   onMeta({
     inScope: scope.length,
     ok: scope.length - bad.length,
@@ -865,40 +938,88 @@ async function scanMatchups(
     durationMs: now() - started,
     fetchedAt: started,
   });
-  void week;
-  return rows;
+  return { rows, games };
 }
 
-function judgeMatchup(lg: CcLeague, mine: string[], opp: string[] | null, proj: ProjectionMap): MatchupRow {
-  const { key, assumed } = scoringField(lg.settings);
-  const sum = (ids: string[]) => {
-    let total = 0;
-    let gaps = 0;
-    for (const id of ids) {
-      if (!id || id === "0") {
-        gaps++;
-        continue;
-      }
-      const v = proj[id]?.[key];
-      if (typeof v === "number") total += v;
-      else gaps++;
+interface SideResult {
+  now: number;
+  final: number;
+  left: number; // starters whose game isn't over
+  played: number; // starters whose game is over
+  gaps: number;
+  emptySlots: number;
+}
+
+// One team's starters → points so far and projected final. Finished games count
+// exactly what was scored; unplayed ones count the projection; in-progress ones
+// count points so far plus the projection scaled by game time remaining. A
+// starter on a bye counts 0 and as "done".
+function projectSide(m: RawMatchup, proj: ProjectionMap, key: "pts_ppr" | "pts_half_ppr" | "pts_std", states: Record<string, GameState>, pmap: PlayerMap): SideResult {
+  const starters = m.starters ?? [];
+  const pts = m.starters_points ?? [];
+  const r: SideResult = { now: 0, final: 0, left: 0, played: 0, gaps: 0, emptySlots: 0 };
+  starters.forEach((id, i) => {
+    if (!id || id === "0") {
+      r.emptySlots++;
+      return;
     }
-    return { total, gaps };
-  };
-  const base = { leagueId: lg.id, leagueName: lg.name };
+    const actual = typeof pts[i] === "number" ? pts[i] : 0;
+    const team = pmap[id]?.t || (/^[A-Z]{2,3}$/.test(id) ? id : "");
+    const g = team ? states[team] : undefined;
+    r.now += actual;
+    if (!g) {
+      // Not playing this week (bye) — or a player we can't place on a team.
+      r.final += actual;
+      r.played++;
+      return;
+    }
+    if (g.state === "post") {
+      r.final += actual;
+      r.played++;
+      return;
+    }
+    const p = proj[id]?.[key];
+    if (typeof p !== "number") r.gaps++;
+    const projected = typeof p === "number" ? p : 0;
+    r.left++;
+    r.final += g.state === "pre" ? actual + projected : actual + projected * (1 - g.elapsed);
+  });
+  return r;
+}
+
+function judgeMatchup(
+  lg: CcLeague,
+  mine: RawMatchup,
+  opp: RawMatchup | null,
+  proj: ProjectionMap,
+  states: Record<string, GameState>,
+  pmap: PlayerMap
+): MatchupRow {
+  const { key, assumed } = scoringField(lg.settings);
+  const a = projectSide(mine, proj, key, states, pmap);
   const warnings: string[] = [];
-  if (assumed) warnings.push("scoring format not found — assumed full PPR");
-  const m = sum(mine);
-  if (opp === null) return { ...base, verdict: "NO_OPPONENT", mine: round1(m.total), opp: null, margin: null, warnings };
-  const o = sum(opp);
-  const mineTotal = round1(m.total);
-  const oppTotal = round1(o.total);
-  if (m.gaps > 0) warnings.push(`your lineup has ${m.gaps} empty slot${m.gaps === 1 ? "" : "s"} or starter${m.gaps === 1 ? "" : "s"} with no projection`);
-  if (o.gaps > 0) warnings.push(`opponent's lineup has ${o.gaps} empty slot${o.gaps === 1 ? "" : "s"} or starter${o.gaps === 1 ? "" : "s"} with no projection`);
-  const margin = round1(mineTotal - oppTotal);
-  if (m.gaps > 0 || o.gaps > 0) return { ...base, verdict: "INCOMPLETE", mine: mineTotal, opp: oppTotal, margin, warnings };
-  const verdict: MatchupVerdict = Math.abs(margin) < TOSS_UP_PTS ? "TOSS_UP" : margin > 0 ? "WIN" : "LOSS";
-  return { ...base, verdict, mine: mineTotal, opp: oppTotal, margin, warnings };
+  if (assumed) warnings.push("scoring format not found — projections assume full PPR");
+  if (a.emptySlots > 0) warnings.push(`you have ${a.emptySlots} empty starter slot${a.emptySlots === 1 ? "" : "s"} (counted as 0)`);
+  if (a.gaps > 0) warnings.push(`${a.gaps} of your starters yet to play ${a.gaps === 1 ? "has" : "have"} no projection (counted as 0)`);
+  const base = { leagueId: lg.id, leagueName: lg.name };
+  if (opp === null) {
+    return { ...base, verdict: "NO_OPPONENT", nowMine: round1(a.now), nowOpp: null, projMine: round1(a.final), projOpp: null, leftMine: a.left, leftOpp: 0, playedMine: a.played, playedOpp: 0, warnings };
+  }
+  const b = projectSide(opp, proj, key, states, pmap);
+  if (b.emptySlots > 0) warnings.push(`opponent has ${b.emptySlots} empty starter slot${b.emptySlots === 1 ? "" : "s"}`);
+  if (b.gaps > 0) warnings.push(`${b.gaps} of the opponent's starters yet to play ${b.gaps === 1 ? "has" : "have"} no projection (counted as 0)`);
+  const nowMine = round1(a.now);
+  const nowOpp = round1(b.now);
+  const projMine = round1(a.final);
+  const projOpp = round1(b.final);
+  const decided = a.left === 0 && b.left === 0;
+  let verdict: MatchupVerdict;
+  if (decided) verdict = nowMine > nowOpp ? "WON" : nowMine < nowOpp ? "LOST" : "TIED";
+  else {
+    const margin = projMine - projOpp;
+    verdict = Math.abs(margin) < TOSS_UP_PTS ? "TOSS_UP" : margin > 0 ? "WIN" : "LOSS";
+  }
+  return { ...base, verdict, nowMine, nowOpp, projMine, projOpp, leftMine: a.left, leftOpp: b.left, playedMine: a.played, playedOpp: b.played, warnings };
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;

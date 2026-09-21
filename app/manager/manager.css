@@ -409,3 +409,9 @@
 .ccv-no-opponent{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
 .ccv-unknown{color:var(--red);background:transparent;outline:1px solid color-mix(in srgb,var(--red) 55%,transparent)}
 .ccscore{font-size:13px;font-weight:600;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}
+
+/* live matchup verdicts (won/lost/tied are facts; the ccv-* projections above are estimates) */
+.ccv-won{color:var(--mint);background:color-mix(in srgb,var(--mint) 22%,transparent);font-weight:700}
+.ccv-lost{color:var(--red);background:color-mix(in srgb,var(--red) 22%,transparent);font-weight:700}
+.ccv-tied{color:var(--muted);background:color-mix(in srgb,var(--muted) 18%,transparent)}
+.ccnum{color:var(--bone);font-variant-numeric:tabular-nums}

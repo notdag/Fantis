@@ -178,3 +178,42 @@ export function impliedTeamTotal(ctx: TeamGameContext): number | null {
   if (ctx.overUnder == null || ctx.spread == null) return null;
   return (ctx.overUnder - ctx.spread) / 2;
 }
+
+export interface GameState {
+  state: "pre" | "in" | "post";
+  // Fraction of regulation already played (0–1); 1 once it's over. Only
+  // meaningful while "in" — computed from the period + game clock.
+  elapsed: number;
+}
+
+// Live status of every NFL game this week, keyed by team (ESPN's "WSH" →
+// Sleeper's "WAS"). A team missing from the map is on a bye. Not cached beyond
+// a few seconds: the whole point is to be current.
+let statesCache: { key: string; at: number; data: Record<string, GameState> } | null = null;
+
+export async function getWeekGameStates(season: string, week: number): Promise<Record<string, GameState>> {
+  const key = `${season}-${week}`;
+  if (statesCache && statesCache.key === key && Date.now() - statesCache.at < 20_000) return statesCache.data;
+  const res = await fetch(
+    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?seasontype=2&week=${week}&dates=${season}`
+  );
+  if (!res.ok) throw new Error("Couldn't reach ESPN scoreboard.");
+  const json = await res.json();
+  const out: Record<string, GameState> = {};
+  for (const event of json.events ?? []) {
+    const st = event.status;
+    const state = st?.type?.state as "pre" | "in" | "post" | undefined;
+    if (state !== "pre" && state !== "in" && state !== "post") continue;
+    const period: number = st?.period ?? 0;
+    const [mm, ss] = String(st?.displayClock ?? "0:00").split(":");
+    const clock = Number(mm) * 60 + Number(ss ?? 0);
+    const elapsed =
+      state === "pre" ? 0 : state === "post" ? 1 : period > 4 ? 0.99 : Math.min(1, Math.max(0, ((period - 1) * 900 + (900 - (Number.isFinite(clock) ? clock : 0))) / 3600));
+    for (const c of (event.competitions?.[0]?.competitors ?? []) as ScoreboardCompetitor[]) {
+      const abbr = c.team?.abbreviation;
+      if (abbr) out[abbr === "WSH" ? "WAS" : abbr] = { state, elapsed };
+    }
+  }
+  statesCache = { key, at: Date.now(), data: out };
+  return out;
+}

@@ -13,6 +13,7 @@ export interface RawMatchup {
   roster_id: number;
   matchup_id: number | null;
   starters: string[] | null;
+  starters_points?: number[] | null; // points so far, same order as `starters`
   points: number | null;
 }
 
