@@ -15,6 +15,7 @@ export type MatchupVerdictFilter = "WIN" | "LOSS" | "TOSS_UP" | "WON" | "LOST" |
 
 export type Intent =
   | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
+  | { kind: "lineup_improvements" }
   | { kind: "choice"; n: number }
   | { kind: "scan_player"; mentions: Mention[]; filter: ViewFilter; wantDrops: boolean }
   | { kind: "scan_leagues" }
@@ -79,6 +80,10 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (/^(show )?(all|everything)$|^(clear|remove|reset) (the )?filters?$|^show all( leagues)?$/.test(t)) return { kind: "clear_filter" };
 
   const mentions = findMentions(text, index);
+
+  if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i start\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
+    return { kind: "lineup_improvements" };
+  }
 
   // Imperative "do it" phrasing → never executed; the engine refuses + previews.
   const verb = t.match(/^(?:please\s+|now\s+|then\s+|ok(?:ay)?,?\s+)?(add|drop|claim|submit|execute|approve|confirm|place|send|release|cut|pick up|put|move|activate|start|bench)\b/);

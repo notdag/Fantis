@@ -485,3 +485,30 @@ model CommandAudit {
 
   @@index([createdAt])
 }
+
+// Command Center AI proposals (Phase 2+): a reviewable change Fantis could make
+// to one league. Created by the read-only engine's drafts (chat) or by a trusted
+// auto rule; moved forward ONLY by explicit user actions in the UI, with legal
+// transitions enforced server-side (lib/commandCenter/proposals.ts canTransition).
+// Execution itself happens in the browser (the Sleeper login token never reaches
+// the server); this table records what was proposed, approved and what happened.
+model CommandProposal {
+  id         String   @id @default(cuid())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  kind       String // ADD | IR_MOVE | SET_LINEUP
+  leagueId   String
+  leagueName String
+  rosterId   Int
+  params     Json
+  rationale  Json
+  origin     String // chat | auto
+  command    String
+  status     String // proposed | approved | rejected | expired | executing | executed | submitted | failed | verify_failed
+  dedupeKey  String
+  events     Json // [{at, status, message}]
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([dedupeKey])
+}

@@ -362,3 +362,39 @@ phases (PROPOSE_ONLY → EXECUTE_APPROVED) only on the owner's explicit request.
   (no data loaded here): ADP, recent production, snaps, depth chart, byes.
 - **Audit log**: `CommandAudit` table, `/api/manager/command-audit` (admin
   cookie), one row per command.
+
+### Command Center AI — Phases 2–5 (2026-09; requested explicitly by the owner)
+
+The panel's mode ladder (`lib/commandCenter/proposals.ts`): **Read-only** (default) →
+**Propose only** → **Execute approved** → **Auto-execute (trusted rules)**. The mode is a
+browser-local setting (`components/manager/ccStore.ts`) changed only by clicking
+`PermissionBar` — never by chat text. Going up to Execute/Auto needs an explicit
+confirmation (Auto also needs typing AUTO); "Stop" drops to Read-only and turns every
+auto rule off.
+
+Separation that must not be broken:
+- `lib/commandCenter/**` (the chat engine) has **no write path and cannot import
+  `lib/sleeperWrite.ts` or `lib/commandCenterExec.ts`**. It only produces *drafts*.
+  Both test suites enforce this statically.
+- `lib/commandCenterExec.ts` is the **only** code that sends a change to Sleeper, and it
+  only calls injected writers (the schema-checked `lib/sleeperWrite.ts`). Gates in order:
+  mode allows it → proposal is `approved` → Sleeper access connected → **re-validate
+  against a fresh live read** (stale → `expired`, nothing sent) → one write, **no auto
+  retry** → **verify by re-reading** (unconfirmed = `verify_failed`, never "done"). A
+  waiver claim can only reach `submitted` (seen pending), not "executed". Per-proposal
+  in-flight guard stops a double-click sending twice.
+- Proposals live in `CommandProposal` (`/api/manager/proposals`); the server enforces the
+  legal status transitions (`canTransition`). Human-origin proposals always start
+  `proposed`; only origin `auto` may be created pre-approved.
+- Phase 3 = per-proposal Approve → "Execute…" → checkbox + "Yes, send". Phase 4 = bulk,
+  its own switch, max 25, one confirmation, sequential, stops on the first unverified
+  result or rejected token. Phase 5 = ONE trusted rule (IR/PUP player → open IR slot in a
+  league whose rules allow it; never Out/Doubtful, never a drop/lineup/waiver), runs on a
+  timer only while the page is open (the Sleeper token is browser-only), caps per run/day,
+  and switches itself OFF at the first problem.
+- Proposal kinds: ADD (add or waiver claim, with a suggested drop), IR_MOVE, SET_LINEUP
+  (from `lib/lineupOptimizer.ts`, started games frozen).
+- Tests: `npx tsx scripts/testCommandCenter.ts` (engine, 187) and
+  `npx tsx scripts/testCommandCenterExec.ts` (proposals/executor/auto, 83). Live writes
+  against a real Sleeper account have NOT been exercised by tests — do the first real one
+  on a single low-stakes proposal.

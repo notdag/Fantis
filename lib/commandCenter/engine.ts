@@ -9,10 +9,14 @@ import { classifyPlayer, positionEligible, rosterPositions, activeCount } from "
 import { analyzeDrops } from "./drops";
 import { countStates, leaguesWhereCandidate, tallyDrops, type DropTally } from "./aggregate";
 import { parseIntent, type ViewFilter } from "./intent";
+import { buildStartingSlots } from "../rosterSlots";
+import { optimizeLineup } from "../lineupOptimizer";
+import { scoringKey } from "../scoringKey";
+import { BYE_WEEKS_2026 } from "../byeWeeks";
+import { addDraft, canPropose, irDraft, type ProposalDraft } from "./proposals";
 import { cardOf, describeCard, normName, resolveName } from "./resolve";
 import type { ReadOnlyTools } from "./tools";
 import {
-  CURRENT_PERMISSION,
   canExecute,
   STATE_ORDER,
   type AvailState,
@@ -21,6 +25,7 @@ import {
   type DropSignals,
   type LeagueResult,
   type LeagueSnapshot,
+  type Permission,
   type PlayerCard,
 } from "./types";
 import type { PlayerMap, ProjectionMap } from "../types";
@@ -108,6 +113,7 @@ export type Block =
   | { t: "suggest"; title: string; rows: { name: string; pos: string; free: number; waiver: number; needDrop: number }[] }
   | { t: "decisions"; title: string; rows: { leagueId: string; leagueName: string; items: string[] }[]; truncated: number }
   | { t: "preview"; banner: string; items: PreviewItem[]; truncated: number }
+  | { t: "drafts"; drafts: ProposalDraft[]; note: string }
   | {
       t: "matchups";
       title: string;
@@ -172,6 +178,8 @@ export interface EngineEnv {
   curatedIds: string[] | null;
   rank: DropRank; // [fantisValue, fcValue], higher = keep
   projections?: ProjectionMap | null; // Sleeper's single-week point projections for `week`
+  permission?: Permission; // the owner's chosen mode; defaults to READ_ONLY. The engine never executes in any mode.
+  kickoffs?: () => Promise<Record<string, string> | null>; // team → kickoff ISO, to freeze started games in lineup proposals
   getGameStates?: () => Promise<Record<string, GameState> | null>; // live NFL game status (ESPN), fetched fresh per question
   week?: number | null;
   onProgress?: (p: Progress) => void;
@@ -360,7 +368,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       audit: {
         command: text,
         intent: intent.kind,
-        permission: CURRENT_PERMISSION,
+        permission,
         players: session.targets.map((p) => ({ id: p.id, name: p.name })),
         leaguesTotal: meta?.inScope ?? 0,
         leaguesScanned: meta?.ok ?? 0,
@@ -376,9 +384,10 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     };
   };
 
-  // Hard guard: even if a later phase flips the permission constant, this
-  // build has no write implementation. Belt and braces.
-  if (canExecute()) throw new Error("Write permissions are not implemented in Phase 1.");
+  // The engine has NO write path in any permission mode. Execution lives in
+  // lib/commandCenterExec.ts and only ever runs a proposal a person approved in the UI.
+  const permission: Permission = env.permission ?? "READ_ONLY";
+  void canExecute;
 
   // ---- resolve player names for intents that carry them
   const resolveMentions = async (
@@ -475,6 +484,9 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     void wantDrops;
     if (view.some((r) => ACTIONABLE.includes(r.state))) {
       blocks.push(previewFor(env, view, drops));
+      const d = addDraftsFromScan(env, view, drops, text);
+      const b = draftsBlock(env, permission, d.drafts, d.skipped);
+      if (b) blocks.push(b);
     }
   };
   const liveTotals: AvailState[] = [];
@@ -548,7 +560,12 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       blocks.push({ t: "text", text: `Filtered the previous scan (no new scan): ${describeFilter(filter)} — ${n} result${n === 1 ? "" : "s"}.${all.some((r) => r.needsDrop === null && ACTIONABLE.includes(r.state)) && filter.needsDrop !== undefined ? " Leagues whose roster size couldn't be read match neither drop filter." : ""}` });
       const lr = resultRows(env, session, view);
       blocks.push({ t: "leagues", title: `Leagues — ${describeFilter(filter)} (${n})`, rows: lr.rows, truncated: lr.truncated });
-      if (view.some((r) => ACTIONABLE.includes(r.state))) blocks.push(previewFor(env, view, session.drops));
+      if (view.some((r) => ACTIONABLE.includes(r.state))) {
+        blocks.push(previewFor(env, view, session.drops));
+        const d = addDraftsFromScan(env, view, session.drops, text);
+        const b = draftsBlock(env, permission, d.drafts, d.skipped);
+        if (b) blocks.push(b);
+      }
       break;
     }
 
@@ -701,6 +718,22 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       const list = [...byLeague.values()];
       blocks.push({ t: "text", tone: list.length ? "good" : "info", text: `${rows.length} player${rows.length === 1 ? "" : "s"} across ${list.length} league${list.length === 1 ? "" : "s"} could be moved to IR under each league's own IR rules (Doubtful is never suggested). Nothing has been moved.` });
       blocks.push({ t: "decisions", title: "IR opportunities", rows: list.slice(0, ROW_CAP), truncated: Math.max(0, list.length - ROW_CAP) });
+      const irDrafts: ProposalDraft[] = [];
+      for (const r of rows) {
+        if (r.needsDrop) continue; // IR is full — never auto-proposed
+        irDrafts.push(
+          irDraft({
+            league: env.tools.get_league_details(r.leagueId),
+            playerId: r.playerId,
+            playerName: posName(env, r.playerId),
+            injury: r.injury,
+            rationale: [`Sleeper lists ${posName(env, r.playerId)} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
+            command: text,
+          })
+        );
+      }
+      const irb = draftsBlock(env, permission, irDrafts);
+      if (irb) blocks.push(irb);
       recs.push(`${rows.length} IR-eligible players in ${list.length} leagues`);
       break;
     }
@@ -840,11 +873,116 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "lineup_improvements": {
+      const proj = env.projections;
+      const week = env.week;
+      if (!proj || week == null) {
+        blocks.push({ t: "text", tone: "warn", text: "This week's Sleeper projections haven't loaded yet, so I can't compare lineups. Try again in a moment." });
+        break;
+      }
+      const kickoffs = env.kickoffs ? await env.kickoffs().catch(() => null) : null;
+      if (!kickoffs) {
+        blocks.push({ t: "text", tone: "warn", text: "I couldn't load kickoff times, so I can't tell which games have already started. I won't propose lineup changes without that — try again in a moment." });
+        break;
+      }
+      const { snaps, meta } = await scanAll(env, false, "Checking lineups");
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+      const nowMs = now();
+      const isLocked = (id: string) => {
+        const team = env.pmap[id]?.t;
+        const ko = team ? kickoffs[team] : undefined;
+        return !!ko && Date.parse(ko) <= nowMs;
+      };
+      const OUT = new Set(["Out", "IR", "PUP", "Sus", "Doubtful"]);
+      const isUnavailable = (id: string) => {
+        const e = env.pmap[id];
+        if (!e) return true;
+        if (e.inj && OUT.has(e.inj)) return true;
+        return !!e.t && BYE_WEEKS_2026[e.t] === week;
+      };
+      const order = env.signals.priorityOrder ?? [...env.signals.priority];
+      const prio = new Map(order.map((id, i) => [id, i]));
+      const found: { draft: ProposalDraft; league: string; gain: number }[] = [];
+      for (const snap of snaps) {
+        if (snap.status === "FAILED" || !snap.rosters) continue;
+        const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId)!;
+        const rp = rosterPositions(snap.league.settings);
+        if (!rp) continue;
+        const slots = buildStartingSlots(rp).map((x) => x.code);
+        if (slots.length === 0) continue;
+        const off = new Set([...me.reserve, ...me.taxi]);
+        const key = scoringKey(snap.league.settings);
+        const res = optimizeLineup({
+          slotCodes: slots,
+          starters: me.starters,
+          candidates: me.players.filter((id) => !off.has(id)),
+          posOf: (id) => env.pmap[id]?.p ?? null,
+          points: (id) => proj[id]?.[key] ?? 0,
+          unavailable: isUnavailable,
+          locked: isLocked,
+          priorityRank: (id) => prio.get(id),
+          avoid: (id) => env.signals.avoid.has(id),
+        });
+        if (res.changes.length === 0 || res.gain < 0.05) continue;
+        const nm = (id: string | null) => (id ? posName(env, id) : null);
+        found.push({
+          league: snap.league.name,
+          gain: res.gain,
+          draft: {
+            kind: "SET_LINEUP",
+            leagueId: snap.league.id,
+            leagueName: snap.league.name,
+            rosterId: snap.league.rosterId,
+            params: {
+              week,
+              fromStarters: me.starters.map((x) => x || "0"),
+              toStarters: res.starters,
+              changes: res.changes.map((c) => ({ slot: c.slotCode, outName: nm(c.out), inName: nm(c.in) })),
+              gain: Math.round(res.gain * 10) / 10,
+            },
+            rationale: [
+              `Projected +${res.gain.toFixed(1)} using Sleeper's own weekly projections (${key})`,
+              ...res.changes.map((c) => `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}${c.out && isUnavailable(c.out) ? " (unavailable)" : ""}`),
+              "Players whose games have started are left in place; injured and bye-week players are never started",
+            ],
+            origin: "chat",
+            command: text,
+          },
+        });
+      }
+      found.sort((a, b) => b.gain - a.gain);
+      blocks.push({
+        t: "text",
+        tone: found.length ? "good" : "info",
+        text: found.length
+          ? `${found.length} of ${meta.ok + meta.partial} leagues have a better lineup available (best first, +${found[0].gain.toFixed(1)}). These use your Priority/Avoid lists and Sleeper's projections; started games are frozen. Nothing has been changed.`
+          : "No lineup improvements found — every lineup already matches the best legal one right now.",
+      });
+      blocks.push({
+        t: "decisions",
+        title: "Lineup improvements",
+        rows: found.slice(0, ROW_CAP).map((f) => ({ leagueId: f.draft.leagueId, leagueName: f.league, items: (f.draft.params as { changes: { slot: string; outName: string | null; inName: string | null }[] }).changes.map((c) => `${c.slot}: ${c.inName ?? "empty"} for ${c.outName ?? "empty"}`).concat([`+${f.gain.toFixed(1)} projected`]) })),
+        truncated: Math.max(0, found.length - ROW_CAP),
+      });
+      const lb = draftsBlock(env, permission, found.map((f) => f.draft));
+      if (lb) blocks.push(lb);
+      recs.push(`${found.length} leagues with a better lineup`);
+      break;
+    }
+
     case "execute_request": {
+      if (canPropose(permission)) {
+        blocks.push({
+          t: "text",
+          tone: "warn",
+          text: `I don't ${intent.verb} anything from chat, in any mode. What I can do is turn it into a proposal for you to review: below are the changes I'd propose. Nothing has been sent to Sleeper — save them, then approve and execute each one yourself from the Proposals tab.`,
+        });
+      } else
       blocks.push({
         t: "text",
         tone: "bad",
-        text: `I can't ${intent.verb} anything — Command Center is in READ-ONLY mode (Phase 1). I never add, drop, claim, move IR, set lineups or change anything on Sleeper, and no message can switch that on. Nothing has been changed. Below is only a preview of what a future approved action could look like.`,
+        text: `I can't ${intent.verb} anything — Command Center is in READ-ONLY mode. I never add, drop, claim, move IR, set lineups or change anything on Sleeper from chat, and no message can switch modes. Nothing has been changed. Below is only a preview of what an approved action could look like.`,
       });
       if (intent.mentions.length > 0) {
         const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false, execVerb: intent.verb });
@@ -875,6 +1013,72 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
 
   blocks.push({ t: "text", tone: "info", text: READ_ONLY_LINE });
   return finish();
+}
+
+// ---------------------------------------------------------------- drafts
+
+const numSetting = (settings: unknown, key: string): number => {
+  const inner = settings && typeof settings === "object" ? (settings as Record<string, unknown>).settings : null;
+  const v = inner && typeof inner === "object" ? (inner as Record<string, unknown>)[key] : undefined;
+  return typeof v === "number" ? v : 0;
+};
+
+// ADD / waiver-claim drafts from a scan. Only where the answer is certain: the
+// player is free or on waivers AND we know whether a drop is needed AND (if one
+// is) a droppable candidate exists. Anything uncertain is left out and counted.
+function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<string, DropAnalysis> | null, command: string): { drafts: ProposalDraft[]; skipped: number } {
+  const drafts: ProposalDraft[] = [];
+  let skipped = 0;
+  const seen = new Set<string>();
+  for (const r of rows) {
+    if (!ACTIONABLE.includes(r.state)) continue;
+    const key = `${r.leagueId}:${r.playerId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const league = env.tools.get_league_details(r.leagueId);
+    let drop: { id: string; name: string } | null = null;
+    const rationale = [r.detail];
+    if (r.needsDrop === true) {
+      const cand = drops?.[r.leagueId]?.candidates[0];
+      if (!cand) {
+        skipped++;
+        continue;
+      }
+      drop = { id: cand.playerId, name: cand.name };
+      rationale.push(`Roster is full — suggested drop: ${cand.name}`, ...cand.reasons.slice(0, 4));
+    } else if (r.needsDrop === null) {
+      skipped++;
+      continue;
+    } else {
+      rationale.push("Open roster spot — no drop needed");
+    }
+    drafts.push(
+      addDraft({
+        league,
+        addId: r.playerId,
+        addName: posName(env, r.playerId),
+        drop,
+        waiver: r.state === "WAIVER",
+        faab: r.faab,
+        bid: r.faab ? numSetting(league.settings, "waiver_bid_min") : 0,
+        rationale,
+        command,
+      })
+    );
+  }
+  return { drafts, skipped };
+}
+
+function draftsBlock(env: EngineEnv, permission: Permission, drafts: ProposalDraft[], skipped = 0): Block | null {
+  if (drafts.length === 0) return null;
+  const extra = skipped > 0 ? ` ${skipped} leagues were left out because the drop requirement or a droppable player couldn't be determined.` : "";
+  return {
+    t: "drafts",
+    drafts,
+    note: canPropose(permission)
+      ? `${drafts.length} change${drafts.length === 1 ? "" : "s"} drafted as proposals. Nothing has been saved or sent to Sleeper — save the ones you want, then approve and execute each from the Proposals tab.${extra}`
+      : `${drafts.length} change${drafts.length === 1 ? "" : "s"} could be proposed. You're in Read-only mode, so they can't be saved — switch to Propose only (top of this panel) to save them for review.${extra}`,
+  };
 }
 
 // ------------------------------------------------------------- matchups

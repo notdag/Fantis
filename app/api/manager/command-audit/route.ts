@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import { db } from "@/lib/db";
+import { isPermission } from "@/lib/commandCenter/proposals";
 
 // Command Center AI audit trail. Records what was asked and what a READ-ONLY
 // scan found — never a change (Phase 1 has none). Admin-cookie gated like every
@@ -38,9 +39,8 @@ export async function POST(req: Request) {
     data: {
       command: b.command.slice(0, 500),
       intent: b.intent.slice(0, 40),
-      // The server records the mode the client says it ran in, but Phase 1 can
-      // only ever be READ_ONLY — refuse anything else rather than log a lie.
-      permission: "READ_ONLY",
+      // The mode the owner had selected when the command ran (chat itself never writes in any mode).
+      permission: isPermission(b.permission) ? b.permission : "READ_ONLY",
       players,
       leaguesTotal: int(b.leaguesTotal),
       leaguesScanned: int(b.leaguesScanned),

@@ -2,6 +2,10 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import CommandCenterAI from "./CommandCenterAI";
+import ProposalsPanel from "./ProposalsPanel";
+import PermissionBar from "./PermissionBar";
+import { usePermission } from "./ccStore";
+import { PERMISSION_LABEL } from "@/lib/commandCenter/proposals";
 import type { CcLeague } from "@/lib/commandCenter/types";
 
 const KEY = "fantis_cc_open_v1";
@@ -33,6 +37,9 @@ export default function FloatingCommandCenter() {
   const mounted = everOpened || open;
   const [leagues, setLeagues] = useState<CcLeague[] | null>(null);
   const [error, setError] = useState("");
+  const permission = usePermission();
+  const [tab, setTab] = useState<"chat" | "proposals">("chat");
+  const [version, setVersion] = useState(0); // bumps when chat saves proposals so the Proposals tab reloads
 
   useEffect(() => {
     if (!mounted || leagues) return;
@@ -66,7 +73,7 @@ export default function FloatingCommandCenter() {
         <div className="ccpanel" style={{ display: open ? "flex" : "none" }} role="dialog" aria-label="Command Center AI">
           <div className="ccpanelbar">
             <strong>Command Center AI</strong>
-            <span className="ccpanelmode">READ-ONLY</span>
+            <span className={`ccpanelmode ${permission === "READ_ONLY" ? "" : "live"}`}>{PERMISSION_LABEL[permission].toUpperCase()}</span>
             <span style={{ flex: 1 }} />
             <button className="ccpanelbtn" onClick={() => toggle(false)} aria-label="Collapse Command Center AI" title="Collapse">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -75,9 +82,24 @@ export default function FloatingCommandCenter() {
             </button>
           </div>
           <div className="ccpanelbody">
+            <PermissionBar />
+            <div className="cctabs" role="tablist">
+              <button role="tab" aria-selected={tab === "chat"} className={`chip-filter ${tab === "chat" ? "on" : ""}`} onClick={() => setTab("chat")}>Chat</button>
+              <button role="tab" aria-selected={tab === "proposals"} className={`chip-filter ${tab === "proposals" ? "on" : ""}`} onClick={() => setTab("proposals")}>Proposals</button>
+            </div>
             {error && <div className="err" style={{ margin: 14 }}>{error}</div>}
             {!leagues && !error && <p className="hint" style={{ margin: 14 }}>Loading your leagues…</p>}
-            {leagues && <CommandCenterAI leagues={leagues} />}
+            {leagues && (
+              <>
+                {/* Both stay mounted so a running scan or an auto-rule timer survives switching tabs. */}
+                <div style={{ display: tab === "chat" ? "block" : "none" }}>
+                  <CommandCenterAI leagues={leagues} permission={permission} onProposalsSaved={() => setVersion((v) => v + 1)} />
+                </div>
+                <div style={{ display: tab === "proposals" ? "block" : "none" }}>
+                  <ProposalsPanel leagues={leagues} version={version} />
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMatchups, getProjections, getRosters, getState, getTransactions } from "@/lib/sleeper";
-import { getWeekGameStates } from "@/lib/espnGames";
+import { getWeekGameStates, getWeekKickoffs } from "@/lib/espnGames";
 import { fetchMatchupLegs } from "@/lib/sleeperWrite";
 import { getStoredToken } from "@/lib/sleeperToken";
 import type { ProjectionMap } from "@/lib/types";
@@ -22,12 +22,14 @@ import {
   type Progress,
   type Session,
 } from "@/lib/commandCenter/engine";
-import { CURRENT_PERMISSION, STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
+import { canPropose, describeProposal, type Permission, type ProposalDraft } from "@/lib/commandCenter/proposals";
+import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
 
 const EXAMPLES = [
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
   "How many leagues am I winning this week?",
+  "Fix my lineups",
   "Show me my weakest players",
   "Find leagues where I have an injured player who could go on IR",
   "Show me every league where I have a roster decision to make",
@@ -57,7 +59,12 @@ interface AuditEntry {
 
 const stateClass = (s: AvailState) => `ccstate cc-${s.toLowerCase().replace(/_/g, "-")}`;
 
-export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
+interface BlockCtx {
+  permission: Permission;
+  onSave: (drafts: ProposalDraft[]) => Promise<string>;
+}
+
+export default function CommandCenterAI({ leagues, permission, onProposalsSaved }: { leagues: CcLeague[]; permission: Permission; onProposalsSaved?: () => void }) {
   const { pmap } = usePlayerMap();
   const tradeValues = useTradeValues();
   const fc = useFantasyCalcValues();
@@ -123,6 +130,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
       curated: (id) => curated?.get(id) ?? null,
       avoid: new Set(prefs.avoid),
       priority: new Set(prefs.priority),
+      priorityOrder: prefs.priority,
     };
   }, [pmap, tradeValues, fc, curated, prefs]);
 
@@ -158,6 +166,9 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         },
         projections,
         week,
+        permission,
+        // Kickoff times, so lineup proposals never touch a game that has started.
+        kickoffs: season && week ? () => getWeekKickoffs(season, week).catch(() => null) : undefined,
         // Which games are done / in progress / still to come — fetched fresh each time it's needed.
         getGameStates: season && week ? () => getWeekGameStates(season, week).catch(() => null) : undefined,
         onProgress: setProgress,
@@ -182,8 +193,24 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         setProgress(null);
       }
     },
-    [tools, signals, pmap, running, curated, tradeValues, fc, projections, week, season]
+    [tools, signals, pmap, running, curated, tradeValues, fc, projections, week, season, permission]
   );
+
+  // Saving drafts is an explicit click (never chat text). It only records proposals; nothing is sent to Sleeper.
+  const saveDrafts = async (drafts: ProposalDraft[]): Promise<string> => {
+    if (!canPropose(permission)) return "Read-only mode — switch to Propose only to save proposals.";
+    try {
+      const res = await fetch("/api/manager/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drafts }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) return body.error || "Couldn't save the proposals.";
+      onProposalsSaved?.();
+      const dup = body.duplicates ? ` ${body.duplicates} were already queued.` : "";
+      return `Saved ${body.created?.length ?? 0} proposal${(body.created?.length ?? 0) === 1 ? "" : "s"} for review in the Proposals tab.${dup} Nothing was sent to Sleeper.`;
+    } catch {
+      return "Couldn't reach the server to save the proposals.";
+    }
+  };
+  const blockCtx: BlockCtx = { permission, onSave: saveDrafts };
 
   const loadHistory = async () => {
     setHistoryErr("");
@@ -206,10 +233,10 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
           <div>
             <h2 className="cctitle">Command Center AI</h2>
             <p className="hint" style={{ margin: "4px 0 0" }}>
-              Ask about your {eligible} in-season leagues in plain English. It scans live from Sleeper, shows its work, and only recommends.
+              Ask about your {eligible} in-season leagues in plain English. It scans live from Sleeper and shows its work. Nothing is ever sent to Sleeper from chat, in any mode.
             </p>
           </div>
-          <div className="ccmode" title={`Permission level: ${CURRENT_PERMISSION}. Add, drop, claim, IR and lineup changes are disabled.`}>
+          <div className="ccmode" title="Current mode is shown in the panel header">
             <strong>READ-ONLY MODE</strong>
             <span>Nothing will be changed</span>
           </div>
@@ -283,7 +310,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
 
         <div className="ccturns">
           {turns.map((t) => (
-            <TurnView key={t.id} turn={t} onAsk={(s) => void ask(s)} disabled={running} />
+            <TurnView key={t.id} turn={t} onAsk={(s) => void ask(s)} disabled={running} ctx={blockCtx} />
           ))}
         </div>
 
@@ -327,13 +354,13 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
 
 // ---------------------------------------------------------------- rendering
 
-function TurnView({ turn, onAsk, disabled }: { turn: Turn; onAsk: (s: string) => void; disabled: boolean }) {
+function TurnView({ turn, onAsk, disabled, ctx }: { turn: Turn; onAsk: (s: string) => void; disabled: boolean; ctx: BlockCtx }) {
   return (
     <div className="ccturn">
       <div className="ccuser">{turn.command}</div>
       {turn.error && <div className="err">{turn.error}</div>}
       {turn.blocks.map((b, i) => (
-        <BlockView key={i} block={b} onAsk={onAsk} disabled={disabled} />
+        <BlockView key={i} block={b} onAsk={onAsk} disabled={disabled} ctx={ctx} />
       ))}
       {turn.audit && (
         <p className="portmeta" style={{ margin: "8px 0 0", fontSize: 12 }}>
@@ -345,7 +372,7 @@ function TurnView({ turn, onAsk, disabled }: { turn: Turn; onAsk: (s: string) =>
   );
 }
 
-function BlockView({ block, onAsk, disabled }: { block: Block; onAsk: (s: string) => void; disabled: boolean }) {
+function BlockView({ block, onAsk, disabled, ctx }: { block: Block; onAsk: (s: string) => void; disabled: boolean; ctx: BlockCtx }) {
   switch (block.t) {
     case "text":
       return <p className={`cctext cctone-${block.tone ?? "info"}`}>{block.text}</p>;
@@ -452,6 +479,8 @@ function BlockView({ block, onAsk, disabled }: { block: Block; onAsk: (s: string
       );
     case "preview":
       return <PreviewView block={block} />;
+    case "drafts":
+      return <DraftsView block={block} ctx={ctx} />;
     case "matchups":
       return <MatchupRows block={block} onAsk={onAsk} disabled={disabled} />;
   }
@@ -662,6 +691,43 @@ function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "m
         <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>
       )}
       {block.truncated > 0 && <p className="hint">+{block.truncated} more not shown.</p>}
+    </div>
+  );
+}
+
+function DraftsView({ block, ctx }: { block: Extract<Block, { t: "drafts" }>; ctx: BlockCtx }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState("");
+  const can = canPropose(ctx.permission);
+  const shown = open ? block.drafts : block.drafts.slice(0, 4);
+  return (
+    <div className="ccpreview">
+      <div className="ccbanner">PROPOSALS — NOTHING HAS BEEN SAVED OR SENT</div>
+      <p className="cctext" style={{ margin: "6px 0" }}>{block.note}</p>
+      {shown.map((d, i) => (
+        <div key={i} className="portmeta" style={{ margin: "3px 0" }}>
+          <strong style={{ color: "var(--bone)" }}>{d.leagueName}</strong> — {describeProposal(d)}
+        </div>
+      ))}
+      {block.drafts.length > 4 && (
+        <button className="ccexample" onClick={() => setOpen((v) => !v)}>{open ? "Show fewer" : `Show all ${block.drafts.length}`}</button>
+      )}
+      <div className="field" style={{ marginTop: 8, alignItems: "center" }}>
+        <button
+          className="btn sm"
+          disabled={!can || saving || !!result.startsWith("Saved")}
+          title={can ? "Saves these for review only — nothing is sent to Sleeper" : "Switch to Propose only to save proposals"}
+          onClick={async () => {
+            setSaving(true);
+            setResult(await ctx.onSave(block.drafts));
+            setSaving(false);
+          }}
+        >
+          {saving ? "Saving…" : `Save ${block.drafts.length} as proposals`}
+        </button>
+        {result && <span className="portmeta">{result}</span>}
+      </div>
     </div>
   );
 }

@@ -136,4 +136,5 @@ export interface DropSignals {
   curated: (id: string) => { order: number; tier: number; posRank: number } | null;
   avoid: ReadonlySet<string>;
   priority: ReadonlySet<string>;
+  priorityOrder?: string[]; // the owner's Priority list in order (index 0 = top pick), for lineup proposals
 }

@@ -10,6 +10,7 @@ import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
 import type { RawRoster, RawTxn } from "../lib/commandCenter/classify";
 import type { PlayerMap, ProjectionMap } from "../lib/types";
 import type { RawMatchup, SleeperLeg } from "../lib/commandCenter/tools";
+import type { ProposalDraft } from "../lib/commandCenter/proposals";
 
 let pass = 0;
 let fail = 0;
@@ -557,6 +558,83 @@ async function main() {
     const na = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: false, legs, calls: noCalls } }));
     ok(noCalls.n === 0, "no Sleeper access → no calls to Sleeper");
     ok(/connect Sleeper access on the Lineups page/.test(textOf(na.blocks)), "tells the user how to use Sleeper's own predictions");
+  }
+
+  // ---------- 13. Phases 2–5 from the engine's side: drafts only, never an execution
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const env = makeEnv(scenario(), pm);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Find Antonio Williams everywhere", newSession(), env);
+    const ds = draftsOf(out.blocks);
+    ok(ds.length === 3 && ds.every((d) => d.kind === "ADD"), "scan drafts one ADD per certain, actionable league", String(ds.length));
+    const byL = Object.fromEntries(ds.map((d) => [d.leagueName, d]));
+    const p1 = byL["L1 free agent"]?.params as { dropId: string | null; expectWaiver: boolean } | undefined;
+    ok(p1?.dropId === null && p1?.expectWaiver === false, "open roster → add with no drop");
+    const p2 = byL["L2 waiver full roster"]?.params as { dropId: string | null; expectWaiver: boolean } | undefined;
+    ok(!!p2?.dropId && p2?.expectWaiver === true, "waiver + full roster → claim with a drop");
+    ok(!starters.includes(p2?.dropId ?? "x"), "the proposed drop is never a starter");
+    ok(!ds.some((d) => d.leagueName.startsWith("L6")), "unknown (partial) league is never proposed");
+    ok(ds.every((d) => d.origin === "chat" && d.rationale.length > 0), "drafts are chat-origin and carry reasons");
+    ok(/Nothing has been saved or sent to Sleeper/.test(out.blocks.find((b) => b.t === "drafts" && true) ? (out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")!.note) : ""), "drafts note says nothing was saved or sent");
+
+    // read-only mode: still shows what could be proposed, but says it can't be saved
+    const roEnv = makeEnv(scenario(), pm);
+    const ro = await handleCommand("Find Antonio Williams everywhere", newSession(), roEnv);
+    const roNote = ro.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")?.note ?? "";
+    ok(/Read-only mode/.test(roNote) && /switch to Propose only/.test(roNote), "read-only mode: can't save, tells the user how to enable it");
+
+    // "add him" in propose mode → drafts + explanation, never an execution
+    const sess = out.session;
+    const ex = await handleCommand("Add him", sess, env);
+    ok(ex.audit.intent === "execute_request" && /I don't add anything from chat, in any mode/.test(textOf(ex.blocks)), "chat 'add him' → not executed; turned into a proposal", textOf(ex.blocks).slice(0, 160));
+    ok(draftsOf(ex.blocks).length === 0 || draftsOf(ex.blocks).every((d) => d.origin === "chat"), "chat can only ever create chat-origin drafts");
+    ok(env.tools.callLog.every((c) => !/add|drop|claim|write|execute/i.test(c.tool.replace("get_", "").replace("_waiver_players", "").replace("_free_agents", ""))), "no write-like tool was ever called");
+
+    // IR moves
+    const pmIr = basePmap();
+    pmIr["400"] = { ...pmIr["400"], inj: "IR" };
+    const envIr = makeEnv(scenario(), pmIr);
+    envIr.permission = "PROPOSE_ONLY";
+    const irOut = await handleCommand("Find all leagues where I have an injured player who could go on IR", newSession(), envIr);
+    const irDrafts = draftsOf(irOut.blocks);
+    ok(irDrafts.length > 0 && irDrafts.every((d) => d.kind === "IR_MOVE" && (d.params as { injury: string }).injury === "IR"), "IR scan drafts IR_MOVE proposals for open-slot leagues");
+
+    // lineup improvements
+    const rpLu = ["QB", "RB", "BN", "BN"];
+    const luPm: PlayerMap = {
+      q: { n: "Q Back", p: "QB", t: "DAL" },
+      r1: { n: "Hurt RB", p: "RB", t: "DAL", inj: "Out" },
+      r2: { n: "Bench RB", p: "RB", t: "DAL" },
+    };
+    const luLeague = { ...lg("1", "Lineup League", rpLu), settings: { roster_positions: rpLu, settings: { reserve_slots: 1 } } };
+    const luRoster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "r1", "r2"], starters: ["q", "r1"], reserve: [], taxi: [] };
+    const luFx: LeagueFx[] = [{ league: luLeague, rosters: [luRoster, otherRoster([])], txns: [] }];
+    const luProj: ProjectionMap = { q: { pts_ppr: 20 }, r1: { pts_ppr: 15 }, r2: { pts_ppr: 9 } };
+    const future = new Date(NOW + 86_400_000).toISOString();
+    const luEnv = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
+    luEnv.permission = "PROPOSE_ONLY";
+    luEnv.kickoffs = async () => ({ DAL: future });
+    const lu = await handleCommand("Fix my lineups", newSession(), luEnv);
+    const luD = draftsOf(lu.blocks);
+    ok(luD.length === 1 && luD[0].kind === "SET_LINEUP", "lineup workflow drafts a SET_LINEUP proposal", String(luD.length));
+    const lp = luD[0]?.params as { toStarters: string[]; fromStarters: string[]; changes: { inName: string | null }[] } | undefined;
+    ok(lp?.toStarters.join() === "q,r2" && lp?.fromStarters.join() === "q,r1", "swaps the injured starter for the healthy bench player", JSON.stringify(lp));
+    // started games are frozen
+    const past = new Date(NOW - 3_600_000).toISOString();
+    const luLocked = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
+    luLocked.permission = "PROPOSE_ONLY";
+    luLocked.kickoffs = async () => ({ DAL: past });
+    const lk = await handleCommand("Fix my lineups", newSession(), luLocked);
+    ok(draftsOf(lk.blocks).length === 0, "players whose games started are never moved");
+    // no kickoff data → refuses rather than guessing
+    const luNoKo = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
+    luNoKo.permission = "PROPOSE_ONLY";
+    luNoKo.kickoffs = async () => null;
+    const nk = await handleCommand("Fix my lineups", newSession(), luNoKo);
+    ok(draftsOf(nk.blocks).length === 0 && /couldn't load kickoff times/.test(textOf(nk.blocks)), "no kickoff times → no lineup proposals");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
