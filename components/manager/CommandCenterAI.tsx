@@ -1,18 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getRosters, getState, getTransactions } from "@/lib/sleeper";
+import { getMatchups, getProjections, getRosters, getState, getTransactions } from "@/lib/sleeper";
+import type { ProjectionMap } from "@/lib/types";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { useCuratedRanks } from "./useCuratedRanks";
-import { createReadOnlyTools } from "@/lib/commandCenter/tools";
+import { createReadOnlyTools, type RawMatchup } from "@/lib/commandCenter/tools";
 import {
   handleCommand,
   newSession,
   type AuditRecord,
   type Block,
+  type MatchupVerdict,
   type EngineEnv,
   type Progress,
   type Session,
@@ -22,6 +24,7 @@ import { CURRENT_PERMISSION, STATE_LABEL, STATE_ORDER, type AvailState, type CcL
 const EXAMPLES = [
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
+  "How many leagues am I projected to win this week?",
   "Show me my weakest players",
   "Find leagues where I have an injured player who could go on IR",
   "Show me every league where I have a roster decision to make",
@@ -59,10 +62,20 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
   const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
   const [prefsOk, setPrefsOk] = useState<boolean | null>(null);
   const [leg, setLeg] = useState<number | null>(null);
+  const [week, setWeek] = useState<number | null>(null);
+  const [projections, setProjections] = useState<ProjectionMap | null>(null);
 
   useEffect(() => {
     loadPrefs().then((p) => { setPrefs(p); setPrefsOk(true); }).catch(() => setPrefsOk(false));
-    getState().then((s) => setLeg(s.leg || s.week || 1)).catch(() => setLeg(null));
+    getState()
+      .then((s) => {
+        setLeg(s.leg || s.week || 1);
+        const w = Math.max(1, s.week || 1);
+        setWeek(w);
+        // This week's per-player point projections, for the "who am I projected to beat" question.
+        getProjections(s.season, w).then(setProjections).catch(() => setProjections(null));
+      })
+      .catch(() => setLeg(null));
   }, []);
 
   // One tool layer (and its 5-minute league cache) for the whole page session.
@@ -72,9 +85,11 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
       leagues,
       pmap,
       currentLeg: leg,
+      week: week ?? undefined,
+      getMatchups: (id, w) => getMatchups(id, w) as unknown as Promise<RawMatchup[]>,
       snapshotDeps: { getRosters: (id) => getRosters(id), getTransactions: (id, l) => getTransactions(id, l) },
     });
-  }, [pmap, leg, leagues]);
+  }, [pmap, leg, week, leagues]);
 
   const signals = useMemo<DropSignals | null>(() => {
     if (!pmap) return null;
@@ -128,6 +143,8 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
           if (!e) return [0, 0];
           return [tradeValues[e.n]?.value ?? 0, fc ? fantasyCalcValue(fc, { name: e.n, pos: e.p }) : 0];
         },
+        projections,
+        week,
         onProgress: setProgress,
       };
       try {
@@ -150,7 +167,7 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
         setProgress(null);
       }
     },
-    [tools, signals, pmap, running, curated, tradeValues, fc]
+    [tools, signals, pmap, running, curated, tradeValues, fc, projections, week]
   );
 
   const loadHistory = async () => {
@@ -420,6 +437,8 @@ function BlockView({ block, onAsk, disabled }: { block: Block; onAsk: (s: string
       );
     case "preview":
       return <PreviewView block={block} />;
+    case "matchups":
+      return <MatchupRows block={block} onAsk={onAsk} disabled={disabled} />;
   }
 }
 
@@ -532,6 +551,64 @@ function PreviewView({ block }: { block: Extract<Block, { t: "preview" }> }) {
         </>
       )}
       <p className="portmeta" style={{ margin: "8px 0 0" }}>{block.banner}. Future flow: scan → analyze → propose → review → confirm → execute → verify.</p>
+    </div>
+  );
+}
+
+const VERDICT_LABEL: Record<MatchupVerdict, string> = {
+  WIN: "Projected win",
+  TOSS_UP: "Too close",
+  LOSS: "Projected loss",
+  INCOMPLETE: "Lineup gap",
+  NO_OPPONENT: "No opponent",
+  UNKNOWN: "Couldn't read",
+};
+const VERDICT_ASK: Partial<Record<MatchupVerdict, string>> = {
+  LOSS: "Show me the leagues I'm projected to lose",
+  TOSS_UP: "Show me the close ones",
+  INCOMPLETE: "Show me the incomplete lineups",
+};
+
+function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "matchups" }>; onAsk: (s: string) => void; disabled: boolean }) {
+  const [all, setAll] = useState(false);
+  const rows = all ? block.rows : block.rows.slice(0, 15);
+  const c = block.counts;
+  return (
+    <div className="cctally">
+      <div className="cccounts">
+        {(["WIN", "TOSS_UP", "LOSS", "INCOMPLETE", "NO_OPPONENT", "UNKNOWN"] as MatchupVerdict[]).map((v) => (
+          <button
+            key={v}
+            className={`ccstate ccv-${v.toLowerCase().replace(/_/g, "-")} ${c[v] === 0 ? "cczero" : ""}`}
+            disabled={disabled || c[v] === 0 || !VERDICT_ASK[v]}
+            onClick={() => VERDICT_ASK[v] && onAsk(VERDICT_ASK[v] as string)}
+            style={{ border: 0, cursor: VERDICT_ASK[v] && c[v] ? "pointer" : "default" }}
+          >
+            {VERDICT_LABEL[v]} {c[v]}
+          </button>
+        ))}
+      </div>
+      <p className="cctext" style={{ marginTop: 10 }}><strong>{block.title}</strong></p>
+      {block.rows.length === 0 && <p className="hint">No leagues match.</p>}
+      {rows.map((r) => (
+        <div key={r.leagueId} className="ccleague">
+          <div className="ccrow">
+            <span className={`ccstate ccstatecol ccv-${r.verdict.toLowerCase().replace(/_/g, "-")}`}>{VERDICT_LABEL[r.verdict]}</span>
+            <span className="ccname">{r.leagueName}</span>
+            <span className="ccscore">
+              {r.mine != null ? r.mine.toFixed(1) : "—"} <span className="portmeta">vs</span> {r.opp != null ? r.opp.toFixed(1) : "—"}
+              {r.margin != null && (
+                <span style={{ color: r.margin > 0 ? "var(--mint)" : r.margin < 0 ? "var(--red)" : "var(--dim)" }}> {r.margin > 0 ? "+" : ""}{r.margin.toFixed(1)}</span>
+              )}
+            </span>
+          </div>
+          {r.warnings.map((w, i) => <div key={i} className="portmeta ccindent">{w}</div>)}
+        </div>
+      ))}
+      {block.rows.length > 15 && (
+        <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>
+      )}
+      {block.truncated > 0 && <p className="hint">+{block.truncated} more not shown.</p>}
     </div>
   );
 }

@@ -9,7 +9,16 @@ import { cardOf, buildPlayerIndex, findMentions, resolveName, type PlayerIndex, 
 import type { CcLeague, LeagueSnapshot, PlayerCard, SnapRoster } from "./types";
 import { CURRENT_PERMISSION } from "./types";
 
+export interface RawMatchup {
+  roster_id: number;
+  matchup_id: number | null;
+  starters: string[] | null;
+  points: number | null;
+}
+
 export interface ToolDeps {
+  week?: number; // the NFL week matchups are read for
+  getMatchups?: (leagueId: string, week: number) => Promise<RawMatchup[]>;
   leagues: CcLeague[];
   pmap: PlayerMap;
   snapshotDeps: SnapshotDeps;
@@ -39,6 +48,7 @@ export const READ_TOOLS = [
   "get_league_settings",
   "get_transactions",
   "get_league_snapshot",
+  "get_matchup",
 ] as const;
 
 export function createReadOnlyTools(deps: ToolDeps) {
@@ -150,6 +160,19 @@ export function createReadOnlyTools(deps: ToolDeps) {
       if (!s.rosters || s.recentDrops === null) throw new Error(s.error ?? "transactions unavailable");
       const taken = new Set(s.rosters.flatMap((r) => r.players));
       return Object.keys(s.recentDrops).filter((id) => !taken.has(id));
+    },
+    // My matchup this week: my starters and my opponent's (null = bye / no opponent).
+    get_matchup: async (leagueId: string) => {
+      rec("get_matchup", leagueId);
+      const lg = league(leagueId);
+      if (!deps.getMatchups || deps.week == null) throw new Error("matchup data is not available");
+      const rows = await deps.getMatchups(leagueId, deps.week);
+      if (!Array.isArray(rows)) throw new Error("no matchup data returned");
+      const mine = rows.find((r) => r.roster_id === lg.rosterId);
+      if (!mine) throw new Error("my roster is not in this week's matchups");
+      const opp =
+        mine.matchup_id == null ? null : rows.find((r) => r.roster_id !== mine.roster_id && r.matchup_id === mine.matchup_id) ?? null;
+      return { mine, opp, week: deps.week };
     },
     get_transactions: async (leagueId: string): Promise<Record<string, number>> => {
       rec("get_transactions", leagueId);

@@ -8,7 +8,8 @@ import { analyzeDrops } from "../lib/commandCenter/drops";
 import type { CcLeague, DropSignals, LeagueSnapshot } from "../lib/commandCenter/types";
 import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
 import type { RawRoster, RawTxn } from "../lib/commandCenter/classify";
-import type { PlayerMap } from "../lib/types";
+import type { PlayerMap, ProjectionMap } from "../lib/types";
+import type { RawMatchup } from "../lib/commandCenter/tools";
 
 let pass = 0;
 let fail = 0;
@@ -90,13 +91,26 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
   };
 }
 
-function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { rosters: 0, txns: 0 }): EngineEnv & { calls: typeof calls } {
+interface MatchupExtra {
+  matchups?: Record<string, RawMatchup[] | Error>;
+  projections?: ProjectionMap | null;
+  week?: number;
+}
+function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { rosters: 0, txns: 0, matchups: 0 }, extra: MatchupExtra = {}): EngineEnv & { calls: typeof calls } {
   const byId = new Map(fx.map((f) => [f.league.id, f]));
   const tools = createReadOnlyTools({
     leagues: fx.map((f) => f.league),
     pmap: pm,
     currentLeg: 3,
     now: () => NOW,
+    week: extra.week ?? 3,
+    getMatchups: async (id) => {
+      calls.matchups++;
+      const m = extra.matchups?.[id];
+      if (!m) throw new Error("no fixture");
+      if (m instanceof Error) throw m;
+      return m;
+    },
     snapshotDeps: {
       getRosters: async (id) => {
         calls.rosters++;
@@ -112,7 +126,7 @@ function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { ros
       },
     },
   });
-  return { tools, signals: sig ?? signals(pm), pmap: pm, curatedIds: null, rank: () => [0, 0], now: () => NOW, calls };
+  return { tools, signals: sig ?? signals(pm), pmap: pm, curatedIds: null, rank: () => [0, 0], now: () => NOW, calls, projections: extra.projections ?? null, week: extra.week ?? 3 };
 }
 
 const textOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "text" }> => b.t === "text").map((b) => b.text).join("\n");
@@ -381,6 +395,67 @@ async function main() {
     ok(ir.audit.intent === "ir_opps" && ir.blocks.some((b) => b.t === "decisions"), "IR opportunities workflow");
     const rd = await handleCommand("Show me every league where I have a roster decision to make", newSession(), env);
     ok(rd.audit.intent === "roster_decisions", "roster decisions workflow");
+  }
+
+  // ---------- 12. "how many leagues am I projected to win this week?"
+  {
+    const pm = basePmap();
+    const half = { ...lg("8", "L8 free agent full roster"), settings: { ...mkSettings(WR_ROSTER), scoring_settings: { rec: 0.5 } } };
+    const fx = scenario().map((f) => (f.league.id === "8" ? { ...f, league: half } : f));
+    const proj: ProjectionMap = {
+      a: { pts_ppr: 20 }, b: { pts_ppr: 20 }, c: { pts_ppr: 10 }, d: { pts_ppr: 10 },
+      e: { pts_ppr: 10 }, f: { pts_ppr: 30 },
+      g: { pts_ppr: 20 }, h: { pts_ppr: 21 },
+      // L8 half-PPR: PPR would say WIN (30 vs 5), half-PPR says LOSS (10 vs 15)
+      x: { pts_ppr: 30, pts_half_ppr: 10 }, y: { pts_ppr: 5, pts_half_ppr: 15 },
+    };
+    const row = (id: number, mid: number | null, starters: string[]): RawMatchup => ({ roster_id: id, matchup_id: mid, starters, points: 0 });
+    const matchups: Record<string, RawMatchup[] | Error> = {
+      "1": [row(1, 1, ["a", "b"]), row(2, 1, ["c", "d"])], // 40 vs 20  → WIN
+      "2": [row(1, 1, ["e"]), row(2, 1, ["f"])], // 10 vs 30 → LOSS
+      "3": [row(1, 1, ["g"]), row(2, 1, ["h"])], // 20 vs 21 → TOSS_UP
+      "4": [row(1, 1, ["a", "0"]), row(2, 1, ["c", "d"])], // empty slot → INCOMPLETE
+      "5": new Error("503"), // → UNKNOWN
+      "6": [row(1, null, ["a"]), row(2, null, ["c"])], // bye → NO_OPPONENT
+      "7": [row(1, 1, ["a", "b"]), row(2, 1, ["c", "zzz"])], // opponent starter has no projection → INCOMPLETE
+      "8": [row(1, 1, ["x"]), row(2, 1, ["y"])], // half PPR → LOSS
+    };
+    const calls = { rosters: 0, txns: 0, matchups: 0 };
+    const env = makeEnv(fx, pm, undefined, calls, { matchups, projections: proj });
+    const out = await handleCommand("How many leagues am I predicted to win this week?", newSession(), env);
+    const mb = out.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!;
+    ok(!!mb, "matchup block produced");
+    const c = mb?.counts;
+    ok(c?.WIN === 1 && c?.LOSS === 2 && c?.TOSS_UP === 1 && c?.INCOMPLETE === 2 && c?.UNKNOWN === 1 && c?.NO_OPPONENT === 1, "verdict counts", JSON.stringify(c));
+    ok(/projected to win 1 of 8 leagues and to lose 2/.test(textOf(out.blocks)), "headline states wins and losses", textOf(out.blocks).slice(0, 220));
+    ok(/NOT counted as wins or losses/.test(textOf(out.blocks)), "unreadable league is not counted as a win or loss");
+    const by = Object.fromEntries(mb.rows.map((r) => [r.leagueName, r]));
+    ok(by["L8 free agent full roster"].verdict === "LOSS", "scoring format honored (half-PPR field used, not PPR)", by["L8 free agent full roster"].verdict);
+    ok(by["L1 free agent"].mine === 40 && by["L1 free agent"].opp === 20 && by["L1 free agent"].margin === 20, "sums starter projections");
+    ok(by["L4 on other roster"].verdict === "INCOMPLETE" && by["L4 on other roster"].warnings.length > 0, "empty slot → INCOMPLETE with a warning, never a guess");
+    ok(by["L5 scan fails"].verdict === "UNKNOWN", "failed matchup read → UNKNOWN");
+    ok(by["L6 tx fails"].verdict === "NO_OPPONENT", "no opponent (bye) is its own bucket");
+    ok(/not a win probability|projection, not/.test(textOf(out.blocks)), "states it is a projection, not a probability");
+    ok(out.audit.recommendations.some((r) => /1 projected wins, 2 losses/.test(r)), "audit records the result", out.audit.recommendations.join());
+
+    // follow-ups filter the stored result without re-reading
+    const before = calls.matchups;
+    const lose = await handleCommand("Show me the leagues I'm projected to lose", out.session, env);
+    ok(calls.matchups === before, "losing follow-up reused the result (no re-read)");
+    const lb = lose.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!;
+    ok(lb.rows.length === 2 && lb.rows.every((r) => r.verdict === "LOSS"), "only projected losses shown");
+    const close = await handleCommand("only show the close ones", out.session, env);
+    ok(close.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows.length === 1, "toss-up follow-up");
+
+    for (const v of ["Am I going to win this week?", "How many leagues am I projected to win?", "how many leagues will I win this week", "What are my matchups this week", "Which leagues am I losing this week?"]) {
+      const o = await handleCommand(v, newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj }));
+      ok(o.audit.intent === "win_projection", `phrasing → win_projection: "${v}"`, o.audit.intent);
+    }
+    // projections not loaded → says so, counts nothing
+    const none = await handleCommand("How many leagues am I projected to win this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: null }));
+    ok(!none.blocks.some((b) => b.t === "matchups") && /haven't loaded/.test(textOf(none.blocks)), "no projections → no answer invented");
+    // no fake success / read-only line
+    ok(/READ-ONLY MODE/.test(textOf(out.blocks)), "read-only line on matchup answer");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

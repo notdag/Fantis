@@ -400,3 +400,12 @@
 .ccneed-drop{color:var(--amber);background:var(--amber-soft)}
 .ccneed-open{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}
 .ccneed-unk{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
+
+/* Matchup projection verdict chips */
+.ccv-win{color:var(--mint);background:color-mix(in srgb,var(--mint) 14%,transparent)}
+.ccv-toss-up{color:var(--amber);background:var(--amber-soft)}
+.ccv-loss{color:var(--red);background:color-mix(in srgb,var(--red) 14%,transparent)}
+.ccv-incomplete{color:var(--te);background:color-mix(in srgb,var(--te) 14%,transparent);outline:1px dashed color-mix(in srgb,var(--te) 55%,transparent)}
+.ccv-no-opponent{color:var(--dim);background:color-mix(in srgb,var(--dim) 18%,transparent)}
+.ccv-unknown{color:var(--red);background:transparent;outline:1px solid color-mix(in srgb,var(--red) 55%,transparent)}
+.ccscore{font-size:13px;font-weight:600;white-space:nowrap;text-align:right;font-variant-numeric:tabular-nums}

@@ -11,7 +11,10 @@ export interface ViewFilter {
   needsDrop?: boolean; // true = only leagues that need a drop; false = only open-spot leagues
 }
 
+export type MatchupVerdictFilter = "WIN" | "LOSS" | "TOSS_UP" | "INCOMPLETE";
+
 export type Intent =
+  | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
   | { kind: "choice"; n: number }
   | { kind: "scan_player"; mentions: Mention[]; filter: ViewFilter; wantDrops: boolean }
   | { kind: "scan_leagues" }
@@ -59,7 +62,7 @@ export function parseFilter(t: string): ViewFilter {
 
 const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
 
-export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean }): Intent {
+export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean; hasMatchups?: boolean }): Intent {
   const text = raw.trim();
   const t = text.toLowerCase().replace(/[?!]+$/g, "").trim();
   if (!t) return { kind: "unknown" };
@@ -81,6 +84,32 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   const verb = t.match(/^(?:please\s+|now\s+|then\s+|ok(?:ay)?,?\s+)?(add|drop|claim|submit|execute|approve|confirm|place|send|release|cut|pick up|put|move|activate|start|bench)\b/);
   if (verb || /\b(go ahead|do it|make (it|the (move|claim|change)s?) happen|execute (it|them|all)|confirm (it|all|them)|apply (it|them)|submit (it|them|all))\b/.test(t)) {
     return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions };
+  }
+
+  // "How many leagues am I projected to win this week?" and follow-ups on that result.
+  const verdictWord: MatchupVerdictFilter | undefined = /\b(los(e|ing|es|s)|behind|projected losses)\b/.test(t)
+    ? "LOSS"
+    : /\b(close|toss[- ]?ups?|tight|coin ?flip|too close)\b/.test(t)
+      ? "TOSS_UP"
+      : /\b(incomplete|empty (slot|spot)s?|missing starters?)\b/.test(t)
+        ? "INCOMPLETE"
+        : /\b(win|wins|winning|won)\b/.test(t)
+          ? "WIN"
+          : undefined;
+  const freshWin =
+    /(how many|which|what|show|find|list)\b.*\bleagues?\b.*\b(win|winning|lose|losing|projected|predicted|expected|favou?red)\b/.test(t) ||
+    /\b(projected|predicted|expected|forecast(ed)?)\b.*\b(win|wins|winning|lose|losing|record)\b/.test(t) ||
+    /\b(am i|will i|do i|are we) (going to |gonna )?(win|winning|lose|losing)\b/.test(t) ||
+    /\bwin(ning)? this week\b|\bmy matchups?\b|\bmatchup (projections?|preview|forecast)\b|\bthis week'?s? matchups?\b/.test(t);
+  // With a result already on screen, "show me the ones I'm losing" filters it; only an explicit
+  // count question or "refresh/again" re-reads the leagues.
+  const asksAgain = /\b(refresh|again|re-?check|re-?scan|update|latest)\b|how many/.test(t);
+  if (freshWin) {
+    const followUp = !!ctx.hasMatchups && !!verdictWord && verdictWord !== "WIN" && !asksAgain;
+    return { kind: "win_projection", verdict: verdictWord === "WIN" ? undefined : verdictWord, fresh: !followUp };
+  }
+  if (ctx.hasMatchups && verdictWord && mentions.length === 0 && !/\b(bottom|weakest|drops?)\b/.test(t)) {
+    return { kind: "win_projection", verdict: verdictWord, fresh: false };
   }
 
   // Cross-league drop aggregation drill-downs.
