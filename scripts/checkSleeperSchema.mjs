@@ -16,6 +16,7 @@ const MUTATIONS = {
   cancel_waiver_claim: ["league_id", "transaction_id", "leg"],
 };
 const QUERIES = {
+  matchup_legs: ["league_id", "round"],
   league_transactions_filtered: ["league_id", "type_filters", "status_filters", "roster_id_filters", "limit"],
 };
 

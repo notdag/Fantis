@@ -25,7 +25,7 @@ import {
 } from "./types";
 import type { PlayerMap, ProjectionMap } from "../types";
 import type { GameState } from "../espnGames";
-import type { RawMatchup } from "./tools";
+import type { RawMatchup, SleeperLeg } from "./tools";
 
 // ------------------------------------------------------------------ output
 
@@ -57,7 +57,19 @@ export interface MatchupRow {
   leftOpp: number;
   playedMine: number;
   playedOpp: number;
+  // Where the projected finish came from: Sleeper's own projection (what the app shows) or
+  // Fantis's estimate built from Sleeper's per-player projections + live scores.
+  source: "sleeper" | "fantis";
+  estMine: number | null; // Fantis's own estimate, always computed, shown alongside
+  estOpp: number | null;
   warnings: string[];
+}
+
+export interface SleeperInfo {
+  hadAccess: boolean; // Sleeper access was connected
+  used: number; // leagues where Sleeper's own projection was used
+  authFailed: boolean; // Sleeper rejected the token
+  failed: number; // leagues where the read failed (fell back to Fantis's estimate)
 }
 
 export interface PreviewAction {
@@ -140,7 +152,7 @@ export interface Session {
   drops: Record<string, DropAnalysis> | null;
   dropsScope: string;
   pending: Pending | null;
-  matchups: { week: number; rows: MatchupRow[]; at: number; games: GameCounts } | null;
+  matchups: { week: number; rows: MatchupRow[]; at: number; games: GameCounts; sleeper: SleeperInfo } | null;
 }
 
 export const newSession = (): Session => ({ targets: [], results: null, meta: null, filter: {}, drops: null, dropsScope: "", pending: null, matchups: null });
@@ -735,11 +747,13 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       }
       let rows: MatchupRow[];
       let games: GameCounts;
+      let sleeper: SleeperInfo;
       const stored = session.matchups;
       // A stored result is only reused for a minute — scores change live.
       if (stored && stored.week === week && !intent.fresh && intent.verdict && now() - stored.at < 60_000) {
         rows = stored.rows; // follow-up: filter what we already read, no re-scan
         games = stored.games;
+        sleeper = stored.sleeper;
       } else {
         const states = env.getGameStates ? await env.getGameStates().catch(() => null) : null;
         if (!states) {
@@ -755,7 +769,8 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         });
         rows = scanned.rows;
         games = scanned.games;
-        session = { ...session, matchups: { week, rows, at: now(), games } };
+        sleeper = scanned.sleeper;
+        session = { ...session, matchups: { week, rows, at: now(), games, sleeper } };
       }
       const counts = countVerdicts(rows);
       const live = summarizeLive(rows, games);
@@ -782,6 +797,27 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           `Projected total if it ends as expected: ${counts.WON + counts.WIN} wins, ${counts.LOST + counts.LOSS} losses, ${counts.TIED + counts.TOSS_UP} tied/too close${counts.NO_OPPONENT ? `, ${counts.NO_OPPONENT} with no opponent` : ""}. ` +
           (counts.UNKNOWN > 0 ? `${counts.UNKNOWN} league${counts.UNKNOWN === 1 ? "" : "s"} could not be read and are NOT counted as wins or losses.` : ""),
       });
+      const inPlayRows = rows.filter((r) => ["WIN", "LOSS", "TOSS_UP"].includes(r.verdict));
+      const disagree = inPlayRows.filter((r) => r.source === "sleeper" && r.estMine != null && r.estOpp != null && r.projMine != null && r.projOpp != null && Math.sign(r.projMine - r.projOpp) !== Math.sign(r.estMine - r.estOpp) && Math.abs(r.estMine - r.estOpp) >= TOSS_UP_PTS).length;
+      if (sleeper.used > 0) {
+        blocks.push({
+          t: "text",
+          tone: "info",
+          text: `Predictions are Sleeper's own projected scores (the same numbers as your Sleeper app's matchup screen) in ${sleeper.used} league${sleeper.used === 1 ? "" : "s"}${sleeper.failed ? `; ${sleeper.failed} couldn't be read from Sleeper and use Fantis's own estimate instead (marked on the row)` : ""}.${disagree ? ` In ${disagree} of them Fantis's own estimate points the other way — shown on the row.` : ""}`,
+        });
+      } else if (!sleeper.hadAccess) {
+        blocks.push({
+          t: "text",
+          tone: "warn",
+          text: "These use Fantis's own estimate (real scores so far + Sleeper's per-player projections), not the predictions your Sleeper app shows. To use Sleeper's own predictions, connect Sleeper access on the Lineups page — it's only used to read them.",
+        });
+      } else if (sleeper.authFailed) {
+        blocks.push({
+          t: "text",
+          tone: "warn",
+          text: "Sleeper rejected the saved login token (it may have expired), so these use Fantis's own estimate. Reconnect Sleeper access on the Lineups page to use Sleeper's own predictions.",
+        });
+      }
       blocks.push({
         t: "text",
         tone: "info",
@@ -893,7 +929,7 @@ async function scanMatchups(
   proj: ProjectionMap,
   states: Record<string, GameState>,
   onMeta: (m: ScanMeta) => void
-): Promise<{ rows: MatchupRow[]; games: GameCounts }> {
+): Promise<{ rows: MatchupRow[]; games: GameCounts; sleeper: SleeperInfo }> {
   const now = env.now ?? (() => Date.now());
   const started = now();
   const all = env.tools.get_my_leagues();
@@ -902,6 +938,11 @@ async function scanMatchups(
   let done = 0;
   let failed = 0;
   let next = 0;
+  const hadAccess = env.tools.hasSleeperAccess();
+  let sleeperOn = hadAccess;
+  let sleeperUsed = 0;
+  let sleeperFailed = 0;
+  let authFailed = false;
   const label = "Reading this week's live matchups";
   const worker = async () => {
     while (next < scope.length) {
@@ -909,10 +950,24 @@ async function scanMatchups(
       const lg = scope[i];
       try {
         const { mine, opp } = await env.tools.get_matchup(lg.id);
-        rows[i] = judgeMatchup(lg, mine, opp, proj, states, env.pmap);
+        let sp: { mine: SleeperLeg; opp: SleeperLeg | null } | null = null;
+        if (sleeperOn) {
+          try {
+            sp = await env.tools.get_sleeper_prediction(lg.id);
+          } catch (e) {
+            sleeperFailed++;
+            // A rejected token would fail every remaining league the same way — stop asking.
+            if (/unauthor|forbidden|token|expired|jwt/i.test(e instanceof Error ? e.message : "")) {
+              authFailed = true;
+              sleeperOn = false;
+            }
+          }
+        }
+        rows[i] = judgeMatchup(lg, mine, opp, proj, states, env.pmap, sp);
+        if (rows[i].source === "sleeper") sleeperUsed++;
       } catch (e) {
         failed++;
-        rows[i] = { leagueId: lg.id, leagueName: lg.name, verdict: "UNKNOWN", nowMine: null, nowOpp: null, projMine: null, projOpp: null, leftMine: 0, leftOpp: 0, playedMine: 0, playedOpp: 0, warnings: [e instanceof Error ? e.message : "could not be read"] };
+        rows[i] = { leagueId: lg.id, leagueName: lg.name, verdict: "UNKNOWN", nowMine: null, nowOpp: null, projMine: null, projOpp: null, leftMine: 0, leftOpp: 0, playedMine: 0, playedOpp: 0, source: "fantis", estMine: null, estOpp: null, warnings: [e instanceof Error ? e.message : "could not be read"] };
       }
       done++;
       env.onProgress?.({ done, total: scope.length, label, failed });
@@ -938,7 +993,7 @@ async function scanMatchups(
     durationMs: now() - started,
     fetchedAt: started,
   });
-  return { rows, games };
+  return { rows, games, sleeper: { hadAccess, used: sleeperUsed, authFailed, failed: sleeperFailed } };
 }
 
 interface SideResult {
@@ -993,7 +1048,8 @@ function judgeMatchup(
   opp: RawMatchup | null,
   proj: ProjectionMap,
   states: Record<string, GameState>,
-  pmap: PlayerMap
+  pmap: PlayerMap,
+  sp: { mine: SleeperLeg; opp: SleeperLeg | null } | null = null
 ): MatchupRow {
   const { key, assumed } = scoringField(lg.settings);
   const a = projectSide(mine, proj, key, states, pmap);
@@ -1003,7 +1059,7 @@ function judgeMatchup(
   if (a.gaps > 0) warnings.push(`${a.gaps} of your starters yet to play ${a.gaps === 1 ? "has" : "have"} no projection (counted as 0)`);
   const base = { leagueId: lg.id, leagueName: lg.name };
   if (opp === null) {
-    return { ...base, verdict: "NO_OPPONENT", nowMine: round1(a.now), nowOpp: null, projMine: round1(a.final), projOpp: null, leftMine: a.left, leftOpp: 0, playedMine: a.played, playedOpp: 0, warnings };
+    return { ...base, verdict: "NO_OPPONENT", nowMine: round1(a.now), nowOpp: null, projMine: round1(a.final), projOpp: null, leftMine: a.left, leftOpp: 0, playedMine: a.played, playedOpp: 0, source: "fantis", estMine: round1(a.final), estOpp: null, warnings };
   }
   const b = projectSide(opp, proj, key, states, pmap);
   if (b.emptySlots > 0) warnings.push(`opponent has ${b.emptySlots} empty starter slot${b.emptySlots === 1 ? "" : "s"}`);
@@ -1013,13 +1069,34 @@ function judgeMatchup(
   const projMine = round1(a.final);
   const projOpp = round1(b.final);
   const decided = a.left === 0 && b.left === 0;
+
+  // Sleeper's own projected totals win when they look sane. Sleeper's projection is a
+  // full-week total, so it can never be below what's already been scored; if it is, it
+  // isn't the live number we assumed and we fall back rather than trust it.
+  let useMine = projMine;
+  let useOpp = projOpp;
+  let source: "sleeper" | "fantis" = "fantis";
+  if (sp && sp.opp && !decided) {
+    const pm = sp.mine.proj_points;
+    const po = sp.opp.proj_points;
+    const okNum = typeof pm === "number" && typeof po === "number" && Number.isFinite(pm) && Number.isFinite(po) && pm > 0 && po > 0;
+    const notStale = okNum && pm >= nowMine - 0.05 && po >= nowOpp - 0.05;
+    if (okNum && notStale) {
+      useMine = round1(pm);
+      useOpp = round1(po);
+      source = "sleeper";
+    } else {
+      warnings.push("Sleeper's projection looked unusable (missing or below points already scored) — using Fantis's estimate");
+    }
+  }
+
   let verdict: MatchupVerdict;
   if (decided) verdict = nowMine > nowOpp ? "WON" : nowMine < nowOpp ? "LOST" : "TIED";
   else {
-    const margin = projMine - projOpp;
+    const margin = useMine - useOpp;
     verdict = Math.abs(margin) < TOSS_UP_PTS ? "TOSS_UP" : margin > 0 ? "WIN" : "LOSS";
   }
-  return { ...base, verdict, nowMine, nowOpp, projMine, projOpp, leftMine: a.left, leftOpp: b.left, playedMine: a.played, playedOpp: b.played, warnings };
+  return { ...base, verdict, nowMine, nowOpp, projMine: useMine, projOpp: useOpp, leftMine: a.left, leftOpp: b.left, playedMine: a.played, playedOpp: b.played, source, estMine: projMine, estOpp: projOpp, warnings };
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;

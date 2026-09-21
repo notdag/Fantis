@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMatchups, getProjections, getRosters, getState, getTransactions } from "@/lib/sleeper";
 import { getWeekGameStates } from "@/lib/espnGames";
+import { fetchMatchupLegs } from "@/lib/sleeperWrite";
+import { getStoredToken } from "@/lib/sleeperToken";
 import type { ProjectionMap } from "@/lib/types";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useTradeValues } from "@/lib/useTradeValues";
@@ -90,6 +92,14 @@ export default function CommandCenterAI({ leagues }: { leagues: CcLeague[] }) {
       currentLeg: leg,
       week: week ?? undefined,
       getMatchups: (id, w) => getMatchups(id, w) as unknown as Promise<RawMatchup[]>,
+      // Sleeper's own projected scores, if the owner connected Sleeper access. Read-only query;
+      // the token is read from this browser's storage at call time and goes only to sleeper.com.
+      hasSleeperAccess: () => !!getStoredToken(),
+      getSleeperLegs: async (id, w) => {
+        const token = getStoredToken();
+        if (!token) throw new Error("no Sleeper access connected");
+        return fetchMatchupLegs(token, { leagueId: id, round: w });
+      },
       snapshotDeps: { getRosters: (id) => getRosters(id), getTransactions: (id, l) => getTransactions(id, l) },
     });
   }, [pmap, leg, week, leagues]);
@@ -630,8 +640,13 @@ function MatchupRows({ block, onAsk, disabled }: { block: Extract<Block, { t: "m
                 </div>
                 {!decided && r.verdict !== "NO_OPPONENT" && (
                   <div className="portmeta ccindent">
-                    Projected final <strong className="ccnum">{fmt(r.projMine)}</strong> – <strong className="ccnum">{fmt(r.projOpp)}</strong>
+                    {r.source === "sleeper" ? "Sleeper projects" : "Fantis estimate"} <strong className="ccnum">{fmt(r.projMine)}</strong> – <strong className="ccnum">{fmt(r.projOpp)}</strong>
                     {projMargin != null && <span style={{ color: marginColor(projMargin) }}> ({signed(projMargin)})</span>}
+                  </div>
+                )}
+                {!decided && r.source === "sleeper" && r.estMine != null && r.estOpp != null && Math.sign(r.estMine - r.estOpp) !== Math.sign((r.projMine ?? 0) - (r.projOpp ?? 0)) && Math.abs(r.estMine - r.estOpp) >= 3 && (
+                  <div className="portmeta ccindent" style={{ color: "var(--amber)" }}>
+                    Fantis's own estimate disagrees: {fmt(r.estMine)} – {fmt(r.estOpp)}
                   </div>
                 )}
                 <div className="portmeta ccindent">

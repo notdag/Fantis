@@ -9,7 +9,7 @@ import type { CcLeague, DropSignals, LeagueSnapshot } from "../lib/commandCenter
 import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
 import type { RawRoster, RawTxn } from "../lib/commandCenter/classify";
 import type { PlayerMap, ProjectionMap } from "../lib/types";
-import type { RawMatchup } from "../lib/commandCenter/tools";
+import type { RawMatchup, SleeperLeg } from "../lib/commandCenter/tools";
 
 let pass = 0;
 let fail = 0;
@@ -92,6 +92,7 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
 }
 
 interface MatchupExtra {
+  sleeper?: { access: boolean; legs: Record<string, SleeperLeg[] | Error>; calls?: { n: number } };
   states?: Record<string, { state: "pre" | "in" | "post"; elapsed: number }> | null;
   matchups?: Record<string, RawMatchup[] | Error>;
   projections?: ProjectionMap | null;
@@ -105,6 +106,14 @@ function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { ros
     currentLeg: 3,
     now: () => NOW,
     week: extra.week ?? 3,
+    hasSleeperAccess: () => !!extra.sleeper?.access,
+    getSleeperLegs: async (id) => {
+      if (extra.sleeper?.calls) extra.sleeper.calls.n++;
+      const l = extra.sleeper?.legs[id];
+      if (!l) throw new Error("no fixture");
+      if (l instanceof Error) throw l;
+      return l;
+    },
     getMatchups: async (id) => {
       calls.matchups++;
       const m = extra.matchups?.[id];
@@ -499,6 +508,55 @@ async function main() {
     ok(!noProj.blocks.some((b) => b.t === "matchups"), "no projections → no answer invented");
     ok(/READ-ONLY MODE/.test(textOf(out.blocks)), "read-only line on matchup answer");
     ok(out.audit.recommendations.some((r) => /won\/projected wins/.test(r)), "audit records the matchup result");
+
+    // ---- Sleeper's own predictions (the numbers the app shows), when access is connected
+    const leg = (id: number, mid: number | null, points: number, proj: number): SleeperLeg => ({ roster_id: id, matchup_id: mid, points, proj_points: proj });
+    const legs: Record<string, SleeperLeg[] | Error> = {
+      "1": [leg(1, 1, 30, 40), leg(2, 1, 12, 60)], // Sleeper says LOSS (40 vs 60); Fantis's own estimate said WIN
+      "2": [leg(1, 1, 100, 100), leg(2, 1, 90, 90)], // decided — real scores win, Sleeper's projection is irrelevant
+      "7": [leg(1, 1, 30, 70), leg(2, 1, 0, 20)], // Sleeper says WIN (70 vs 20); Fantis said LOSS
+      "8": [leg(1, 1, 0, 0), leg(2, 1, 5, 0)], // unusable (0 projection) → fall back to Fantis
+    };
+    const sCalls = { n: 0 };
+    const sEnv = makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: true, legs, calls: sCalls } });
+    const sOut = await handleCommand("How many leagues am I winning this week?", newSession(), sEnv);
+    const sm = sOut.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!;
+    const sby = Object.fromEntries(sm.rows.map((r) => [r.leagueName, r]));
+    ok(sby["L1 free agent"].source === "sleeper" && sby["L1 free agent"].projMine === 40 && sby["L1 free agent"].projOpp === 60, "uses Sleeper's own projected totals when available", JSON.stringify(sby["L1 free agent"]));
+    ok(sby["L1 free agent"].verdict === "LOSS", "verdict follows Sleeper's prediction, not Fantis's", sby["L1 free agent"].verdict);
+    ok(sby["L1 free agent"].estMine === 55 && sby["L1 free agent"].estOpp === 22, "Fantis's own estimate is kept alongside");
+    ok(sby["L7 no WR slot"].source === "sleeper" && sby["L7 no WR slot"].verdict === "WIN", "L7 follows Sleeper");
+    ok(sby["L8 free agent full roster"].source === "fantis" && sby["L8 free agent full roster"].warnings.some((w) => /Sleeper's projection looked unusable/.test(w)), "unusable Sleeper projection → Fantis fallback, flagged");
+    ok(sby["L2 waiver full roster"].verdict === "WON" && sby["L2 waiver full roster"].source === "fantis", "decided matchups use real scores, not any projection");
+    ok(sm.counts.WIN === 1 && sm.counts.LOSS === 2 && sm.counts.WON === 1, "aggregate counts use Sleeper's predictions", JSON.stringify(sm.counts));
+    const sTxt = textOf(sOut.blocks);
+    ok(/Predictions are Sleeper's own projected scores/.test(sTxt) && /Fantis's own estimate points the other way/.test(sTxt), "says whose numbers, and where they disagree", sTxt.slice(0, 400));
+
+    // stale guard: Sleeper projection below points already scored → not trusted
+    const staleLegs: Record<string, SleeperLeg[] | Error> = { "1": [leg(1, 1, 30, 10), leg(2, 1, 12, 60)] };
+    const stale = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: true, legs: staleLegs } }));
+    const stRow = stale.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows.find((r) => r.leagueName === "L1 free agent")!;
+    ok(stRow.source === "fantis", "Sleeper projection below points-so-far is not trusted");
+
+    // a read that fails falls back per league and is counted, without breaking the others
+    const oneBad: Record<string, SleeperLeg[] | Error> = { ...legs, "7": new Error("timeout") };
+    const ob = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: true, legs: oneBad } }));
+    const obRow = ob.blocks.find((b): b is Extract<Block, { t: "matchups" }> => b.t === "matchups")!.rows;
+    ok(obRow.find((r) => r.leagueName === "L7 no WR slot")!.source === "fantis" && obRow.find((r) => r.leagueName === "L1 free agent")!.source === "sleeper", "one failed Sleeper read falls back only for that league");
+    ok(/couldn't be read from Sleeper/.test(textOf(ob.blocks)), "failed Sleeper reads are disclosed");
+
+    // rejected token: stop asking Sleeper, say so, still answer from Fantis's estimate
+    const authCalls = { n: 0 };
+    const allAuth: Record<string, SleeperLeg[] | Error> = Object.fromEntries(["1", "2", "3", "4", "5", "6", "7", "8"].map((k) => [k, new Error("Unauthorized")]));
+    const au = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: true, legs: allAuth, calls: authCalls } }));
+    ok(authCalls.n <= 6, "stops calling Sleeper once the token is rejected (no retry storm)", String(authCalls.n));
+    ok(/rejected the saved login token/.test(textOf(au.blocks)) && au.blocks.some((b) => b.t === "matchups"), "explains the rejected token and still answers");
+
+    // no Sleeper access connected → never calls Sleeper, says how to enable it
+    const noCalls = { n: 0 };
+    const na = await handleCommand("How many leagues am I winning this week?", newSession(), makeEnv(fx, pm, undefined, undefined, { matchups, projections: proj, states, sleeper: { access: false, legs, calls: noCalls } }));
+    ok(noCalls.n === 0, "no Sleeper access → no calls to Sleeper");
+    ok(/connect Sleeper access on the Lineups page/.test(textOf(na.blocks)), "tells the user how to use Sleeper's own predictions");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

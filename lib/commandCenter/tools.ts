@@ -17,7 +17,18 @@ export interface RawMatchup {
   points: number | null;
 }
 
+// Sleeper's own numbers for one league-week (injected by the caller; this
+// module never touches a login token or Sleeper's private API itself).
+export interface SleeperLeg {
+  roster_id: number;
+  matchup_id: number | null;
+  points: number | null;
+  proj_points: number | null;
+}
+
 export interface ToolDeps {
+  getSleeperLegs?: (leagueId: string, week: number) => Promise<SleeperLeg[]>;
+  hasSleeperAccess?: () => boolean;
   week?: number; // the NFL week matchups are read for
   getMatchups?: (leagueId: string, week: number) => Promise<RawMatchup[]>;
   leagues: CcLeague[];
@@ -50,6 +61,7 @@ export const READ_TOOLS = [
   "get_transactions",
   "get_league_snapshot",
   "get_matchup",
+  "get_sleeper_prediction",
 ] as const;
 
 export function createReadOnlyTools(deps: ToolDeps) {
@@ -174,6 +186,19 @@ export function createReadOnlyTools(deps: ToolDeps) {
       const opp =
         mine.matchup_id == null ? null : rows.find((r) => r.roster_id !== mine.roster_id && r.matchup_id === mine.matchup_id) ?? null;
       return { mine, opp, week: deps.week };
+    },
+    // Whether Sleeper's own predictions can be read at all (user connected Sleeper access).
+    hasSleeperAccess: (): boolean => !!deps.hasSleeperAccess?.() && !!deps.getSleeperLegs,
+    // Sleeper's own projected totals for my matchup this week.
+    get_sleeper_prediction: async (leagueId: string) => {
+      rec("get_sleeper_prediction", leagueId);
+      const lg = league(leagueId);
+      if (!deps.getSleeperLegs || deps.week == null) throw new Error("Sleeper predictions are not available");
+      const legs = await deps.getSleeperLegs(leagueId, deps.week);
+      const mine = legs.find((r) => r.roster_id === lg.rosterId);
+      if (!mine) throw new Error("my roster is not in Sleeper's matchup data");
+      const opp = mine.matchup_id == null ? null : legs.find((r) => r.roster_id !== mine.roster_id && r.matchup_id === mine.matchup_id) ?? null;
+      return { mine, opp };
     },
     get_transactions: async (leagueId: string): Promise<Record<string, number>> => {
       rec("get_transactions", leagueId);

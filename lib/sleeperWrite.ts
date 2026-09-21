@@ -360,6 +360,34 @@ export async function fetchLeagueTransactions(
   return { trades: data.trades ?? [], waivers: data.waivers ?? [] };
 }
 
+export interface SleeperMatchupLeg {
+  roster_id: number;
+  matchup_id: number | null;
+  points: number | null; // real points so far
+  proj_points: number | null; // Sleeper's OWN projected total — what the app's matchup screen shows
+}
+
+// READ-ONLY query (no mutation): every roster's real points and Sleeper's own
+// projected points for one league-week. Needs the login token because Sleeper
+// only serves proj_points to a signed-in user; the token goes browser →
+// sleeper.com and nowhere else, like every other call in this file.
+export async function fetchMatchupLegs(
+  token: string,
+  params: { leagueId: string; round: number }
+): Promise<SleeperMatchupLeg[]> {
+  assertClientSide();
+  const leagueId = assertNumeric(params.leagueId, "leagueId");
+  const round = Math.trunc(params.round);
+  const query = `
+    query matchup_legs_read {
+      matchup_legs(league_id: "${leagueId}", round: ${round}) { roster_id matchup_id points proj_points }
+    }
+  `;
+  const data = await gql<{ matchup_legs: SleeperMatchupLeg[] | null }>(token, "matchup_legs_read", query);
+  if (!Array.isArray(data.matchup_legs)) throw new Error("Sleeper returned no matchup data for this league-week.");
+  return data.matchup_legs;
+}
+
 async function txnAction(
   token: string,
   op: "accept_trade" | "reject_trade" | "cancel_waiver_claim",
