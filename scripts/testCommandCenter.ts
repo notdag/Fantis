@@ -1322,6 +1322,20 @@ async function main() {
     const slotBlock = out.blocks.find((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions" && b.title === "Open bench slot after these IR moves");
     ok(!!slotBlock && slotBlock.rows.length === 1 && slotBlock.rows[0].leagueName === "Bench Slot League A" && /1 open slot/.test(slotBlock.rows[0].items[0]), "names the specific league and the real slot count (roster math: 4 active, 1 moves to IR, 4-slot roster → 1 open)", JSON.stringify(slotBlock));
     ok(!slotBlock || !slotBlock.rows.some((r) => r.leagueName.includes("nobody hurt")), "a league with no real IR move never appears in the open-slot report");
+
+    // "move all my IR eligible players to IR" and its verb variants all
+    // start with a word (move/put/send) the generic execute_request verb
+    // match would otherwise grab first — must still reach the real ir_opps
+    // flow, not a bare "tell me which player" fallback.
+    for (const v of ["move all my IR eligible players to IR", "put all my IR eligible players on IR", "send all IR eligible players to IR", "move all IR eligible players to their IR spot"]) {
+      const o = await handleCommand(v, newSession(), env);
+      ok(o.audit.intent === "ir_opps", `phrasing → ir_opps: "${v}"`, o.audit.intent);
+    }
+    // a real named player in the same kind of sentence still routes normally — the
+    // ir_opps shortcut never swallows an actual add/scan just because the
+    // words "waiver"/"roster"/"ir" appear somewhere in it.
+    const namedOut = await handleCommand("add Healthy Bench everywhere", newSession(), env);
+    ok(namedOut.audit.intent !== "waiver_opps" && namedOut.audit.intent !== "ir_opps" && namedOut.audit.intent !== "roster_decisions", "a real named player is never swallowed by the waiver/IR/roster-decision shortcuts", namedOut.audit.intent);
   }
 
   // ---------- 27. "add X, Y, drop A, B if needed" — combined single-message drop order

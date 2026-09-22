@@ -764,3 +764,31 @@ Three requested follow-ups on the above, all shipped together:
   the combined syntax's distinct assignment and open-slot coverage in one
   message, the IR open-bench-slot math (including a league with no real
   move never appearing in the report).
+
+### Chat: "move all my IR eligible players to IR" fell into the wrong path (2026-09; found while confirming the above)
+
+Asked to confirm everything worked, tested this exact phrase and found it
+was silently broken: `ir_opps`, `waiver_opps`, and `roster_decisions` were
+all still checked AFTER the generic `execute_request` verb match in
+`lib/commandCenter/intent.ts`, unlike `activate_ir`/`send_to_ir`/
+`force_start`/`drop_preferences`, which were already moved ahead of it for
+exactly this reason. Any of these three starting with "move"/"put"/"send"/
+"add" (all recognized execute_request verbs) got swallowed by the generic
+refusal-plus-preview path instead — which, with no player named, falls
+through to "Tell me which player to look at first," a useless answer to
+"move all my IR eligible players to IR."
+
+Fixed by moving all three checks ahead of the execute_request match, same
+position as the others. Doing so exposed a second, latent bug: `waiver_opps`
+had no `mentions.length === 0` guard, because it never needed one while
+execute_request still ran first — moved earlier, "add Puka Nacua and Antonio
+Williams" would have matched its `add targets?` pattern (literally: "add"
+followed by the word "target") purely by coincidence and been swallowed too.
+All three now explicitly gate on `mentions.length === 0`, so a real named
+player always reaches scan_player/execute_request as before.
+
+Tests: 5 new assertions (now 344) — all four IR-mass-move phrasings route to
+`ir_opps`; a real named add is never swallowed by the waiver/IR/roster-
+decision shortcuts. Verified live: "move all my IR eligible players to IR"
+now returns the real scan (99 players, 75 leagues) instead of the dead-end
+fallback.

@@ -187,6 +187,18 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     return { kind: "drop_preferences", mentions };
   }
 
+  // These three all start with a word the generic execute_request verb match
+  // below would otherwise grab first ("add waiver opportunities", "move all
+  // my IR eligible players to IR") — checked here, before it, same reason
+  // activate_ir/send_to_ir/force_start are. All three gate on mentions.length
+  // === 0: a real named player (e.g. "add Puka Nacua...") must still reach
+  // scan_player/execute_request as usual, never get swallowed by a generic
+  // "waiver targets" style match just because the sentence contains "add".
+  const waiverOppsWord = /\b(waiver|add) (opportunit\w*|targets?)\b|\bbest (waiver )?(adds?|available|pickups?)\b|\bwho should i (add|pick up|claim)\b|\bwaiver opportunit/.test(t);
+  if (mentions.length === 0 && waiverOppsWord) return { kind: "waiver_opps" };
+  if (mentions.length === 0 && /\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
+  if (mentions.length === 0 && (/\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t))) return { kind: "ir_opps" };
+
   // Imperative "do it" phrasing → never executed; the engine refuses + previews.
   // Any condition in the SAME sentence ("...if he's on waivers", "...only where I
   // don't need to drop anyone") is parsed and applied to the preview, same as a
@@ -255,10 +267,6 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   ) {
     return { kind: "drops", count: numberIn(t, 3), mentions };
   }
-
-  if (/\b(waiver|add) (opportunit\w*|targets?)\b|\bbest (waiver )?(adds?|available|pickups?)\b|\bwho should i (add|pick up|claim)\b|\bwaiver opportunit/.test(t)) return { kind: "waiver_opps" };
-  if (/\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
-  if (/\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t) && mentions.length === 0) return { kind: "ir_opps" };
 
   const f = parseFilter(t);
 
