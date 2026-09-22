@@ -617,3 +617,34 @@ concrete, scoped gaps closed instead:
   in all my leagues" resolved Michael Pittman with no clarification needed
   and correctly routed to force_start, matching the same real IR data
   ("on IR/taxi in 51") already confirmed in the activate-from-IR feature.
+
+### Chat: "put &lt;player&gt; on IR" (2026-09; requested explicitly by the owner)
+
+The reverse of `activate_ir` (which only ever moves IR → bench) was missing:
+"put Drake London on IR" / "move X to IR" fell into the generic
+`execute_request` catch-all and only ever produced a refusal + preview, never
+a real per-league IR eligibility check the way `activate_ir` and
+`force_start` do. New `send_to_ir` intent (`lib/commandCenter/intent.ts`,
+trigger regex requires "on/to/onto/into/in (the) IR", never "off/from" —
+the two directions can't collide) and engine case
+(`lib/commandCenter/engine.ts`) close that gap:
+
+- Every league where he's rostered is accounted for, never silently
+  dropped: already on IR (disclosed separately), not IR-eligible under that
+  league's own real rules (healthy, or a status like Doubtful that
+  deliberately never qualifies — reuses `irAllowed`, no new eligibility
+  logic), IR-eligible with an open slot (drafted), or IR-eligible but that
+  league's IR is already full (reported honestly, never auto-proposed —
+  matches `ir_opps`'s existing behavior, since releasing an IR occupant to
+  make room isn't something this app writes for).
+- Reuses `buildIrPlan` (the same planner `ir_opps` already uses for its
+  general "who could go on IR" scan) filtered down to the one named player,
+  rather than a second parallel implementation of the same real slot-math.
+- Tests: 11 new assertions in `scripts/testCommandCenter.ts` (now 314) —
+  open-slot proposal, full-IR league reported not drafted, already-on-IR
+  disclosed separately, a healthy player never proposed, not-rostered
+  message, and phrasing variants ("put X on IR", "move X to IR", "send X to
+  IR", "place X on injured reserve"). Verified live against the real
+  account: "put Alec Pierce on IR" found him real-eligible in 14 leagues (10
+  open slot, 4 full IR reported honestly), matching his actual "Out" status
+  already confirmed via the weekly-sweep feature.

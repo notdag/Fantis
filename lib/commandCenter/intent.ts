@@ -19,6 +19,7 @@ export type Intent =
   | { kind: "weekly_sweep" }
   | { kind: "week_record"; week: number | null; relative?: "last" | "this" }
   | { kind: "activate_ir"; mentions: Mention[] }
+  | { kind: "send_to_ir"; mentions: Mention[] }
   | { kind: "force_start"; mentions: Mention[] }
   | { kind: "standings"; filter?: "IN" | "BUBBLE" | "OUT"; fresh: boolean }
   | { kind: "choice"; n: number }
@@ -117,6 +118,16 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     /\b(activate|move|get|take|bring)\b.*\b(off|from)\s+(ir|reserve)\b|\bactivate\b.*\b(ir|reserve)\b|\bun-?ir\b|\boff (ir|reserve)\b.*\bbench\b/.test(t)
   ) {
     return { kind: "activate_ir", mentions };
+  }
+
+  // "Put <player> on IR" / "move <player> to IR" — the opposite direction from
+  // activate_ir above; that regex only ever matches "off"/"from" IR, this one
+  // only "on"/"to"/"in" IR, so the two can never collide on the same sentence.
+  if (
+    mentions.length > 0 &&
+    /\b(put|place|move|send|get)\b.*\b(on|to|onto|into|in)\s+(the\s+)?(ir|injured reserve)\b|\bir\s+(him|her|them)\b/.test(t)
+  ) {
+    return { kind: "send_to_ir", mentions };
   }
 
   // "Make sure <player> starts" / "start <player> in my lineups" — a forced single-

@@ -990,6 +990,90 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "send_to_ir": {
+      const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
+      if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
+      const player = resolved[0];
+      const { snaps, meta } = await scanAll(env, false, `Checking where I can move ${player.name} to IR`);
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+      // Every readable league where he's rostered is accounted for — already on
+      // IR, or not eligible under that league's own rules (healthy, or a status
+      // like Questionable/Doubtful that doesn't qualify) — never silently
+      // dropped, same as activate_ir/force_start's bucketing.
+      const alreadyOnIr: string[] = [];
+      const notEligible: string[] = [];
+      const plan: PlanLeague[] = [];
+      for (const s of snaps) {
+        if (s.status === "FAILED" || !s.rosters) continue;
+        const me = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
+        if (!me.players.includes(player.id)) continue; // not rostered here — not this league's problem
+        if (me.reserve.includes(player.id)) {
+          alreadyOnIr.push(s.league.name);
+          continue;
+        }
+        const inj = env.pmap[player.id]?.inj ?? null;
+        if (!irAllowed(s.league.settings, inj)) {
+          notEligible.push(s.league.name);
+          continue;
+        }
+        plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: me.rosterId, settings: s.league.settings, starters: me.starters, players: me.players, reserve: me.reserve, faabUsed: null });
+      }
+      if (plan.length === 0) {
+        const bits: string[] = [];
+        if (alreadyOnIr.length) bits.push(`already on IR in ${alreadyOnIr.length}`);
+        if (notEligible.length) bits.push(`not IR-eligible (healthy, or his real status doesn't qualify) in ${notEligible.length}`);
+        blocks.push({
+          t: "text",
+          tone: "info",
+          text: `${player.name} can't be moved to IR right now — ${bits.length ? bits.join(", and ") : `he isn't on your roster in any of your ${meta.ok + meta.partial} readable leagues`}.`,
+        });
+        break;
+      }
+      // Reuses the same per-league IR-slot accounting the ir_opps scan already
+      // uses (severity-ordered against real open slots), just filtered to this
+      // one named player — never re-implements that math separately.
+      const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank).filter((r) => r.playerId === player.id);
+      const drafts: ProposalDraft[] = [];
+      let skipped = 0;
+      for (const r of rows) {
+        if (r.needsDrop) {
+          skipped++; // IR is full — never auto-proposed, matches ir_opps
+          continue;
+        }
+        drafts.push(
+          irDraft({
+            league: env.tools.get_league_details(r.leagueId),
+            playerId: player.id,
+            playerName: player.name,
+            injury: r.injury,
+            rationale: [`Sleeper lists ${player.name} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
+            command: text,
+          })
+        );
+      }
+      const bits: string[] = [];
+      if (alreadyOnIr.length) bits.push(`already on IR in ${alreadyOnIr.length}`);
+      if (notEligible.length) bits.push(`not IR-eligible in ${notEligible.length}`);
+      blocks.push({
+        t: "text",
+        tone: drafts.length ? "good" : "info",
+        text: `${player.name} is real IR-eligible in ${rows.length} league${rows.length === 1 ? "" : "s"}. ${drafts.length} can be proposed to move him to IR${
+          skipped > 0 ? `; ${skipped} have a full IR — you'd need to release someone off IR first` : ""
+        }${bits.length ? `. Also: ${bits.join(", ")}` : ""}. Nothing has been changed.`,
+      });
+      blocks.push({
+        t: "decisions",
+        title: "Move to IR",
+        rows: rows.map((r) => ({ leagueId: r.leagueId, leagueName: r.leagueName, items: [r.needsDrop ? "IR is full — release someone from IR first" : `Open IR slot — ${r.injury}`] })),
+        truncated: 0,
+      });
+      const irb = draftsBlock(env, permission, drafts, skipped);
+      if (irb) blocks.push(irb);
+      recs.push(`move ${player.name} to IR in ${drafts.length} of ${rows.length} leagues`);
+      break;
+    }
+
     case "force_start": {
       const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
       if (!resolved) break;

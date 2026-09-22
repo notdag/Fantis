@@ -1136,6 +1136,58 @@ async function main() {
     }
   }
 
+  // ---------- 23. "put <player> on IR" (the opposite direction from activate_ir)
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpIr = ["QB", "WR", "BN"];
+    const settings = { roster_positions: rpIr, settings: { reserve_slots: 1 } };
+    const irPm: PlayerMap = {
+      fq: { n: "Send QB", p: "QB", t: "DAL" },
+      bench1: { n: "Healthy Bench", p: "WR", t: "IND" },
+      target: { n: "IR Candidate", p: "WR", t: "IND", inj: "IR" },
+      irGuy: { n: "Already On IR", p: "WR", t: "IND", inj: "IR" },
+    };
+    const lA = { ...lg("1", "Send League A — open", rpIr), settings };
+    const rA: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target"], starters: ["fq", "bench1"], reserve: [], taxi: [] };
+    const lB = { ...lg("2", "Send League B — full IR", rpIr), settings };
+    const rB: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target", "irGuy"], starters: ["fq", "bench1"], reserve: ["irGuy"], taxi: [] };
+    const lC = { ...lg("3", "Send League C — already on IR", rpIr), settings };
+    const rC: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target"], starters: ["fq", "bench1"], reserve: ["target"], taxi: [] };
+    const fx: LeagueFx[] = [
+      { league: lA, rosters: [rA, otherRoster([])], txns: [] },
+      { league: lB, rosters: [rB, otherRoster([])], txns: [] },
+      { league: lC, rosters: [rC, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, irPm);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Put IR Candidate on IR", newSession(), env);
+    ok(out.audit.intent === "send_to_ir", "recognised as send_to_ir", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 1 && drafts[0].leagueName === "Send League A — open" && drafts[0].kind === "IR_MOVE", "only the open-slot league gets a real IR_MOVE proposal", JSON.stringify(drafts.map((d) => d.leagueName)));
+    const txt = textOf(out.blocks);
+    ok(/is real IR-eligible in 2 league/.test(txt), "counts both leagues where he's really eligible (open + full)", txt.slice(0, 300));
+    ok(/1 have a full IR — you'd need to release someone off IR first/.test(txt), "the full-IR league is reported honestly, never silently proposed", txt.slice(0, 400));
+    ok(/already on IR in 1/.test(txt), "the league where he's already on IR is disclosed separately, not conflated with the eligible count", txt.slice(0, 400));
+
+    // not eligible: healthy, no qualifying status at all
+    const healthyPm: PlayerMap = { ...irPm, target: { n: "IR Candidate", p: "WR", t: "IND" } }; // no inj
+    const envHealthy = makeEnv([{ league: lA, rosters: [rA, otherRoster([])], txns: [] }], healthyPm);
+    const outHealthy = await handleCommand("Put IR Candidate on IR", newSession(), envHealthy);
+    ok(!outHealthy.blocks.some((b) => b.t === "drafts") && /not IR-eligible \(healthy, or his real status doesn't qualify\) in 1/.test(textOf(outHealthy.blocks)), "a healthy player is never moved to IR, and the reason is stated honestly", textOf(outHealthy.blocks).slice(0, 300));
+
+    // not rostered anywhere
+    const lD = { ...lg("4", "Send League D — not rostered", rpIr), settings };
+    const rD: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1"], starters: ["fq", "bench1"], reserve: [], taxi: [] };
+    const envNone = makeEnv([{ league: lD, rosters: [rD, otherRoster([])], txns: [] }], irPm);
+    const outNone = await handleCommand("Put IR Candidate on IR", newSession(), envNone);
+    ok(/isn't on your roster in any of your/.test(textOf(outNone.blocks)), "not rostered anywhere → says so plainly, no drafts");
+
+    for (const v of ["Put IR Candidate on IR", "move IR Candidate to IR", "send IR Candidate to IR", "place IR Candidate on injured reserve"]) {
+      const o = await handleCommand(v, newSession(), env);
+      ok(o.audit.intent === "send_to_ir", `phrasing → send_to_ir: "${v}"`, o.audit.intent);
+    }
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
