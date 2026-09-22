@@ -8,6 +8,7 @@ import { fetchSnapshot, positionEligible, type SnapshotDeps } from "./classify";
 import { cardOf, buildPlayerIndex, findMentions, resolveName, type PlayerIndex, type Resolution } from "./resolve";
 import type { CcLeague, LeagueSnapshot, PlayerCard, SnapRoster } from "./types";
 import { CURRENT_PERMISSION } from "./types";
+import type { FaabStats } from "../faabHistory";
 
 export interface RawMatchup {
   roster_id: number;
@@ -27,6 +28,10 @@ export interface SleeperLeg {
 }
 
 export interface ToolDeps {
+  // Real winning FAAB bids by league+position, from already-synced transaction
+  // history (a DB read, no Sleeper call). Fetched at most once per tool-layer
+  // lifetime — the result doesn't change mid-scan.
+  getFaabStats?: () => Promise<FaabStats | null>;
   getSleeperLegs?: (leagueId: string, week: number) => Promise<SleeperLeg[]>;
   hasSleeperAccess?: () => boolean;
   week?: number; // the NFL week matchups are read for
@@ -62,6 +67,7 @@ export const READ_TOOLS = [
   "get_league_snapshot",
   "get_matchup",
   "get_sleeper_prediction",
+  "get_faab_stats",
 ] as const;
 
 export function createReadOnlyTools(deps: ToolDeps) {
@@ -71,6 +77,7 @@ export function createReadOnlyTools(deps: ToolDeps) {
   const byId = new Map(deps.leagues.map((l) => [l.id, l]));
   const cache = new Map<string, { snap: LeagueSnapshot; withTx: boolean }>();
   const inflight = new Map<string, Promise<LeagueSnapshot>>();
+  let faabPromise: Promise<FaabStats | null> | null = null;
   const log: ToolCall[] = [];
   const rec = (tool: string, arg?: string) => void log.push({ tool, arg, at: now() });
   const league = (id: string) => {
@@ -188,6 +195,12 @@ export function createReadOnlyTools(deps: ToolDeps) {
       return { mine, opp, week: deps.week };
     },
     // Whether Sleeper's own predictions can be read at all (user connected Sleeper access).
+    get_faab_stats: (): Promise<FaabStats | null> => {
+      rec("get_faab_stats");
+      if (!deps.getFaabStats) return Promise.resolve(null);
+      if (!faabPromise) faabPromise = deps.getFaabStats().catch(() => null);
+      return faabPromise;
+    },
     hasSleeperAccess: (): boolean => !!deps.hasSleeperAccess?.() && !!deps.getSleeperLegs,
     // Sleeper's own projected totals for my matchup this week.
     get_sleeper_prediction: async (leagueId: string) => {

@@ -13,6 +13,7 @@ import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { useCuratedRanks } from "./useCuratedRanks";
 import { createReadOnlyTools, type RawMatchup } from "@/lib/commandCenter/tools";
+import type { FaabStats } from "@/lib/faabHistory";
 import {
   handleCommand,
   newSession,
@@ -29,6 +30,7 @@ import { canPropose, describeProposal, type Permission, type ProposalDraft } fro
 import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
 
 const EXAMPLES = [
+  "Run my weekly sweep",
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
   "How many leagues am I winning this week?",
@@ -103,6 +105,18 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
       pmap,
       currentLeg: leg,
       week: week ?? undefined,
+      // Real past winning FAAB bids for this account's leagues — a DB read via our own
+      // API, not Sleeper. Fetched once and reused for the life of this tool layer.
+      getFaabStats: async () => {
+        try {
+          const res = await fetch("/api/manager/faab-suggest");
+          if (!res.ok) return null;
+          const body = (await res.json()) as { stats?: FaabStats };
+          return body.stats ?? null;
+        } catch {
+          return null;
+        }
+      },
       getMatchups: (id, w) => getMatchups(id, w) as unknown as Promise<RawMatchup[]>,
       // Sleeper's own projected scores, if the owner connected Sleeper access. Read-only query;
       // the token is read from this browser's storage at call time and goes only to sleeper.com.

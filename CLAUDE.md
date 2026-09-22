@@ -424,3 +424,41 @@ anything that opts in. **Their API docs (fantasycalc.com/api-docs) set hard rule
 - Consumers so far: Command Center drop candidates (per-league value) and the "where do I
   stand" workflow (real records vs each league's `playoff_teams`, plus FC roster-strength rank).
   The older name-keyed `/api/fantasycalc-values` proxy still serves Trade/Rankings/Portfolio.
+
+### Bulk add/IR helpers (2026-09; requested explicitly by the owner)
+
+Four additions on top of the existing bulk tools, all read real data already in
+Fantis's own database or Sleeper's public API — none of them add a new write path.
+
+- **FAAB bid suggestions** (`lib/faabHistory.ts`, `app/api/manager/faab-suggest/route.ts`)
+  — a suggested bid computed from the league's OWN real completed waiver claims
+  (`LeagueTransaction.waiverBid`, already synced), grouped by position: the p75 bid
+  with 3+ real data points, the median with 1-2, always falling back to (never below)
+  the league's own bid minimum when there's no history. Wired into both the Command
+  Center's ADD proposal drafts (`addDraftsFromScan` in `lib/commandCenter/engine.ts`,
+  via a new `get_faab_stats` read-only tool) and the Mass Add board. Rationale always
+  states whether a bid was sourced from real history or fell back to the minimum —
+  never silently guessed. `npx tsx scripts/testFaabHistory.ts`.
+- **Multi-player add board** (`components/manager/BulkAdd.tsx`, `lib/multiAddPlan.ts`)
+  — the Mass Add/Claim tab now takes up to 8 targets at once (chips, search, or one
+  click from the trending panel), shows a league x target availability grid, and runs
+  one combined bulk execution. `buildMultiAddPlan` is the one new piece of real logic:
+  when two targets both need a drop in the SAME league, each gets a DISTINCT bench
+  candidate (never proposed to drop the same player twice), and FAAB bids are summed
+  per league against `budgetLeft` with a visible warning if they'd exceed it. This tool
+  executes directly from the browser via `lib/sleeperWrite.ts` (like the original
+  single-target version) — it is NOT part of the Command Center's proposal/executor
+  pipeline. `npx tsx scripts/testMultiAddPlan.ts`.
+- **Trending adds** (`lib/sleeper.ts`'s `getTrendingAdds`) — Sleeper's own public
+  `/players/nfl/trending/add` list, verified live and real; one click adds a trending
+  player as a target in the multi-add board.
+- **Weekly sweep** (`weekly_sweep` intent in `lib/commandCenter/engine.ts`) — one chat
+  command ("Run my weekly sweep") that combines the existing IR-eligible scan with an
+  add/claim scan of every Priority-list player, into ONE drafts block for review. Reuses
+  the existing `buildIrPlan` and `addDraftsFromScan` pipelines rather than a third
+  planner; if two priority players both need a drop in the same league they could be
+  proposed the same bench player, which live re-validation at execution time catches
+  harmlessly (the second becomes `expired`, never a double drop) — documented in code,
+  not silently wrong. Verified against the real account: 210/210 leagues scanned in
+  13.1s, 59 real IR-eligible moves found (e.g. Alec Pierce, DJ Moore, both really
+  listed Out).

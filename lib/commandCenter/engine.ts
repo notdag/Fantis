@@ -14,6 +14,7 @@ import { optimizeLineup } from "../lineupOptimizer";
 import { scoringKey } from "../scoringKey";
 import { BYE_WEEKS_2026 } from "../byeWeeks";
 import { addDraft, canPropose, irDraft, type ProposalDraft } from "./proposals";
+import { suggestBid, type FaabStats } from "../faabHistory";
 import { cardOf, describeCard, normName, resolveName } from "./resolve";
 import type { ReadOnlyTools } from "./tools";
 import {
@@ -503,7 +504,8 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     void wantDrops;
     if (view.some((r) => ACTIONABLE.includes(r.state))) {
       blocks.push(previewFor(env, view, drops));
-      const d = addDraftsFromScan(env, view, drops, text);
+      const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
+      const d = addDraftsFromScan(env, view, drops, text, faabStats);
       const b = draftsBlock(env, permission, d.drafts, d.skipped);
       if (b) blocks.push(b);
     }
@@ -519,7 +521,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         tone: intent.kind === "unknown" ? "warn" : "info",
         text:
           (intent.kind === "unknown" ? "I didn't understand that as a read-only scan or question. " : "") +
-          `I can scan your leagues, check a player everywhere, suggest drop candidates, and summarise patterns — I can't change anything. Try: "Find Antonio Williams everywhere", "Only show waiver leagues", "Give me the bottom 3 drops", "Find leagues where I have an injured player who could go on IR", or "Find my best waiver adds".`,
+          `I can scan your leagues, check a player everywhere, suggest drop candidates, and summarise patterns — I can't change anything. Try: "Run my weekly sweep" (IR + priority-list adds in one pass), "Find Antonio Williams everywhere", "Only show waiver leagues", "Give me the bottom 3 drops", "Find leagues where I have an injured player who could go on IR", or "Find my best waiver adds".`,
       });
       break;
     }
@@ -581,7 +583,8 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       blocks.push({ t: "leagues", title: `Leagues — ${describeFilter(filter)} (${n})`, rows: lr.rows, truncated: lr.truncated });
       if (view.some((r) => ACTIONABLE.includes(r.state))) {
         blocks.push(previewFor(env, view, session.drops));
-        const d = addDraftsFromScan(env, view, session.drops, text);
+        const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
+        const d = addDraftsFromScan(env, view, session.drops, text, faabStats);
         const b = draftsBlock(env, permission, d.drafts, d.skipped);
         if (b) blocks.push(b);
       }
@@ -1024,6 +1027,70 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "weekly_sweep": {
+      // One pass, two halves, one combined review: IR-eligible players (same rule
+      // as ir_opps) plus your Priority list's players wherever they're a free
+      // agent or on waivers (same rule as a normal player scan). Reuses both
+      // existing planners rather than a third one — if two priority players both
+      // need a drop in the SAME league, they could be proposed the same bench
+      // player; that's caught harmlessly at execution time (live re-validation
+      // marks the second one "expired" once the first has actually run), never
+      // a double drop.
+      const { snaps, meta } = await scanAll(env, true, "Weekly sweep");
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+
+      const plan: PlanLeague[] = [];
+      for (const s of snaps) {
+        if (s.status === "FAILED" || !s.rosters) continue;
+        const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
+        plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
+      }
+      const irRows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank);
+      const irDrafts: ProposalDraft[] = [];
+      for (const r of irRows) {
+        if (r.needsDrop) continue; // IR full — never auto-proposed
+        irDrafts.push(
+          irDraft({
+            league: env.tools.get_league_details(r.leagueId),
+            playerId: r.playerId,
+            playerName: posName(env, r.playerId),
+            injury: r.injury,
+            rationale: [`Sleeper lists ${posName(env, r.playerId)} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
+            command: text,
+          })
+        );
+      }
+
+      const priorityIds = (env.signals.priorityOrder ?? [...env.signals.priority]).filter((id, i, arr) => arr.indexOf(id) === i);
+      const addResults: LeagueResult[] = [];
+      for (const pid of priorityIds) {
+        const card = cardOf(env.pmap, pid);
+        if (!card) continue; // not a real Sleeper player id — skip rather than guess
+        for (const s of snaps) addResults.push(classifyPlayer(s, card, now()));
+      }
+      const actionableAdds = addResults.filter((r) => ACTIONABLE.includes(r.state));
+      const snapsById = new Map(snaps.map((s) => [s.league.id, s]));
+      const addDrops = computeDrops(env, snapsById, actionableAdds);
+      const addFaabStats = actionableAdds.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
+      const addResult = addDraftsFromScan(env, actionableAdds, addDrops, text, addFaabStats);
+
+      const allDrafts = [...irDrafts, ...addResult.drafts];
+      const priorityCount = priorityIds.length;
+      blocks.push({
+        t: "text",
+        tone: allDrafts.length ? "good" : "info",
+        text:
+          `Weekly sweep: ${irDrafts.length} IR move${irDrafts.length === 1 ? "" : "s"} available, ${addResult.drafts.length} add/claim${addResult.drafts.length === 1 ? "" : "s"} across ${priorityCount} priority-list player${priorityCount === 1 ? "" : "s"}. Nothing has been changed.` +
+          (priorityCount === 0 ? " Add players to your Priority list (Chat tab → My players) to include them in a sweep." : "") +
+          (addResult.skipped > 0 ? ` ${addResult.skipped} priority-league combinations were left out because the drop requirement couldn't be determined.` : ""),
+      });
+      const b = draftsBlock(env, permission, allDrafts);
+      if (b) blocks.push(b);
+      recs.push(`weekly sweep: ${irDrafts.length} IR moves, ${addResult.drafts.length} adds/claims`);
+      break;
+    }
+
     case "execute_request": {
       if (canPropose(permission)) {
         blocks.push({
@@ -1138,7 +1205,7 @@ const numSetting = (settings: unknown, key: string): number => {
 // ADD / waiver-claim drafts from a scan. Only where the answer is certain: the
 // player is free or on waivers AND we know whether a drop is needed AND (if one
 // is) a droppable candidate exists. Anything uncertain is left out and counted.
-function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<string, DropAnalysis> | null, command: string): { drafts: ProposalDraft[]; skipped: number } {
+function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<string, DropAnalysis> | null, command: string, faabStats: FaabStats | null): { drafts: ProposalDraft[]; skipped: number } {
   const drafts: ProposalDraft[] = [];
   let skipped = 0;
   const seen = new Set<string>();
@@ -1164,6 +1231,16 @@ function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<s
     } else {
       rationale.push("Open roster spot — no drop needed");
     }
+const bidMin = numSetting(league.settings, "waiver_bid_min");
+    const pos = env.pmap[r.playerId]?.p ?? "";
+    const suggestion = r.faab ? suggestBid(faabStats, r.leagueId, pos, bidMin, bidMin) : { bid: 0, n: 0, sourced: false };
+    if (r.faab) {
+      rationale.push(
+        suggestion.sourced
+          ? `Suggested bid $${suggestion.bid} — based on ${suggestion.n} real winning ${pos} claim${suggestion.n === 1 ? "" : "s"} in this league`
+          : `No ${pos} claim history in this league yet — using the $${suggestion.bid} bid minimum`
+      );
+    }
     drafts.push(
       addDraft({
         league,
@@ -1172,7 +1249,7 @@ function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<s
         drop,
         waiver: r.state === "WAIVER",
         faab: r.faab,
-        bid: r.faab ? numSetting(league.settings, "waiver_bid_min") : 0,
+        bid: suggestion.bid,
         rationale,
         command,
       })

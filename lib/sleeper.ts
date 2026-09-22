@@ -66,6 +66,19 @@ export const getTransactions = (leagueId: string, round: number) =>
 
 export const today = () => new Date().toISOString().slice(0, 10);
 
+export interface TrendingPlayer {
+  player_id: string;
+  count: number; // real number of leagues that added him in the lookback window
+}
+
+// Sleeper's own public "who's being added right now" list — real, keyless,
+// no auth. Used to seed waiver targets instead of typing names. Verified live
+// during Sleeper Manager's build: hitting /players/nfl/trending/add?
+// lookback_hours=24 returns real, populated data (unlike some Sleeper
+// endpoints that look documented but return empty).
+export const getTrendingAdds = (lookbackHours = 24, limit = 25) =>
+  jget<TrendingPlayer[]>(`${S}/players/nfl/trending/add?lookback_hours=${lookbackHours}&limit=${limit}`);
+
 const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
 
 // Sleeper's full player dump is several MB; cache it in localStorage for the day.

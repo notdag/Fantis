@@ -16,6 +16,7 @@ export type MatchupVerdictFilter = "WIN" | "LOSS" | "TOSS_UP" | "WON" | "LOST" |
 export type Intent =
   | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
   | { kind: "lineup_improvements" }
+  | { kind: "weekly_sweep" }
   | { kind: "standings"; filter?: "IN" | "BUBBLE" | "OUT"; fresh: boolean }
   | { kind: "choice"; n: number }
   | { kind: "scan_player"; mentions: Mention[]; filter: ViewFilter; wantDrops: boolean }
@@ -90,6 +91,10 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   }
   if (ctx.hasStandings && mentions.length === 0 && /^(only |just |show |now )?(the )?(leagues )?(i'?m |i am )?(in|out|on the bubble|bubble)\b/.test(t)) {
     return { kind: "standings", filter: /\bout\b/.test(t) ? "OUT" : /\bbubble\b/.test(t) ? "BUBBLE" : "IN", fresh: false };
+  }
+
+  if (/\bweekly sweep\b|\bsweep (the week|my leagues)\b|\brun (my )?(weekly )?sweep\b|\bdo my weekly (check|sweep)\b/.test(t) && mentions.length === 0) {
+    return { kind: "weekly_sweep" };
   }
 
   if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i start\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {

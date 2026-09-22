@@ -10,7 +10,8 @@ import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
 import type { RawRoster, RawTxn } from "../lib/commandCenter/classify";
 import type { PlayerMap, ProjectionMap } from "../lib/types";
 import type { RawMatchup, SleeperLeg } from "../lib/commandCenter/tools";
-import type { ProposalDraft } from "../lib/commandCenter/proposals";
+import type { FaabStats } from "../lib/faabHistory";
+import { computeFaabStats } from "../lib/faabHistory";
 
 let pass = 0;
 let fail = 0;
@@ -94,6 +95,7 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
 }
 
 interface MatchupExtra {
+  faabStats?: FaabStats | null;
   sleeper?: { access: boolean; legs: Record<string, SleeperLeg[] | Error>; calls?: { n: number } };
   states?: Record<string, { state: "pre" | "in" | "post"; elapsed: number }> | null;
   matchups?: Record<string, RawMatchup[] | Error>;
@@ -109,6 +111,7 @@ function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { ros
     now: () => NOW,
     week: extra.week ?? 3,
     hasSleeperAccess: () => !!extra.sleeper?.access,
+    getFaabStats: async () => extra.faabStats ?? null,
     getSleeperLegs: async (id) => {
       if (extra.sleeper?.calls) extra.sleeper.calls.n++;
       const l = extra.sleeper?.legs[id];
@@ -705,6 +708,75 @@ async function main() {
     ok(d.candidates[0].reasons.some((r) => /FantasyCalc value 100 \(this league's format\)/.test(r)), "reason names the league-format FantasyCalc value");
     const fallback = analyzeDrops(snap9, { ...base, fcValue: (id: string) => ({ x: 50, y: 700 } as Record<string, number>)[id] ?? null })!;
     ok(fallback.candidates[0].playerId === "x", "no per-league values → falls back to the fixed-format value");
+  }
+
+  // ---------- 15. FAAB bid suggestions in ADD/claim drafts
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    const faabLeague = { ...lg("1", "FAAB League"), settings: { roster_positions: WR_ROSTER, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 3 } } };
+    const fx: LeagueFx[] = [{ league: faabLeague, rosters: [openRoster(), otherRoster([])], txns: [] }];
+
+    const stats: FaabStats = computeFaabStats([
+      { leagueId: "1", waiverBid: 10, adds: [{ playerId: "x", pos: "WR" }] },
+      { leagueId: "1", waiverBid: 20, adds: [{ playerId: "y", pos: "WR" }] },
+      { leagueId: "1", waiverBid: 30, adds: [{ playerId: "z", pos: "WR" }] },
+    ]);
+    const withHistory = makeEnv(fx, pm, undefined, undefined, { faabStats: stats });
+    const out = await handleCommand("Find Antonio Williams everywhere", newSession(), withHistory);
+    const drafts1 = out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")!.drafts;
+    const p1 = drafts1[0].params as { bid: number; faab: boolean };
+    ok(p1.faab && p1.bid === stats["1"].WR.p75, "FAAB league with real WR history: bid uses the sourced suggestion, not bid-min", JSON.stringify(p1));
+    ok(drafts1[0].rationale.some((r) => /Suggested bid \$\d+ — based on 3 real winning WR claims/.test(r)), "rationale cites the real sample it came from", drafts1[0].rationale.join(" | "));
+
+    const noHistory = makeEnv(fx, pm, undefined, undefined, { faabStats: null });
+    const out2 = await handleCommand("Find Antonio Williams everywhere", newSession(), noHistory);
+    const drafts2 = out2.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")!.drafts;
+    const p2 = drafts2[0].params as { bid: number };
+    ok(p2.bid === 3, "no FAAB history anywhere: falls back to this league's own bid minimum", String(p2.bid));
+    ok(drafts2[0].rationale.some((r) => /No WR claim history in this league yet — using the \$3 bid minimum/.test(r)), "rationale explains the fallback honestly", drafts2[0].rationale.join(" | "));
+
+    // a non-FAAB league never even asks for stats
+    const nonFaab = makeEnv(scenario().slice(0, 1), pm, undefined, undefined, { faabStats: stats });
+    const out3 = await handleCommand("Find Antonio Williams everywhere", newSession(), nonFaab);
+    ok(!out3.audit.errors.some((e) => /faab/i.test(e)), "non-FAAB league scans run fine with no bid data requested");
+  }
+
+  // ---------- 16. weekly sweep: IR + priority-list adds in one combined review
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    pm["400"] = { ...pm["400"], inj: "IR" }; // bench player, IR-eligible in leagues where he's rostered
+    const sig = signals(pm, { priority: ["200"] }); // Christian McCaffrey — never on any scenario() roster, so he's a free agent everywhere
+    const env = makeEnv(scenario(), pm, sig);
+    const out = await handleCommand("Run my weekly sweep", newSession(), env);
+    ok(out.audit.intent === "weekly_sweep", "recognised as weekly_sweep", out.audit.intent);
+    const draftsBlk = out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts");
+    ok(!!draftsBlk, "one combined drafts block is produced");
+    const kinds = draftsBlk!.drafts.map((d) => d.kind);
+    ok(kinds.includes("IR_MOVE"), "sweep includes IR_MOVE drafts", kinds.join());
+    ok(kinds.includes("ADD"), "sweep includes ADD drafts for the priority-list player", kinds.join());
+    const irCount = kinds.filter((k) => k === "IR_MOVE").length;
+    const addCount = kinds.filter((k) => k === "ADD").length;
+    ok(addCount >= 2, "the priority player is proposed in more than one league (he's a free agent everywhere)", String(addCount));
+    const addDraft = draftsBlk!.drafts.find((d) => d.kind === "ADD")!;
+    ok((addDraft.params as { addId: string }).addId === "200", "the ADD draft is for the priority-list player, not a guess");
+    ok(/READ-ONLY MODE/.test(textOf(out.blocks)), "read-only line present");
+    ok(/Weekly sweep: \d+ IR move/.test(textOf(out.blocks)), "headline summarises both halves", textOf(out.blocks).slice(0, 200));
+    ok(!out.audit.errors.some((e) => /sweep/i.test(e)), "no sweep-specific errors surfaced");
+    void irCount;
+
+    // an empty priority list still runs the IR half and says so plainly
+    const noPriority = makeEnv(scenario(), pm, signals(pm));
+    const out2 = await handleCommand("weekly sweep", newSession(), noPriority);
+    ok(/Add players to your Priority list/.test(textOf(out2.blocks)), "empty priority list explains how to include players next time", textOf(out2.blocks));
+    const drafts2 = out2.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts");
+    ok(!drafts2 || drafts2.drafts.every((d) => d.kind === "IR_MOVE"), "with no priority players, only IR drafts appear");
+
+    for (const v of ["Run my weekly sweep", "sweep the week", "do my weekly check", "sweep my leagues"]) {
+      const o = await handleCommand(v, newSession(), makeEnv(scenario(), pm, sig));
+      ok(o.audit.intent === "weekly_sweep", `phrasing → weekly_sweep: "${v}"`, o.audit.intent);
+    }
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
