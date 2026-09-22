@@ -13,7 +13,7 @@ import { buildStartingSlots } from "../rosterSlots";
 import { optimizeLineup } from "../lineupOptimizer";
 import { scoringKey } from "../scoringKey";
 import { BYE_WEEKS_2026 } from "../byeWeeks";
-import { activateIrDraft, addDraft, canPropose, irDraft, type ActivateIrParams, type IrParams, type ProposalDraft } from "./proposals";
+import { activateIrDraft, addDraft, canPropose, dropDraft, irDraft, type ActivateIrParams, type IrParams, type ProposalDraft } from "./proposals";
 import { suggestBid, type FaabStats } from "../faabHistory";
 import { cardOf, describeCard, normName, resolveName } from "./resolve";
 import type { ReadOnlyTools } from "./tools";
@@ -853,31 +853,97 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       }
       const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank, (id) => env.signals.priority.has(id));
       blocks.push({ t: "scanStatus", meta });
+
+      // Optional: "...release A, B, C if needed" — the owner's own preferred
+      // order for WHO to release from a full IR, in place of the auto-picked
+      // weakest-by-value occupant. Resolved once, up front.
+      let releaseOrder: PlayerCard[] | null = null;
+      if (intent.releaseOrder && intent.releaseOrder.length > 0) {
+        const resolved = await resolveMentions(intent.releaseOrder.map((m) => m.text), [], { filter: {}, wantDrops: false });
+        if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
+        releaseOrder = resolved;
+      }
+
       const byLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
+      const irDrafts: ProposalDraft[] = [];
+      const movesByLeague = new Map<string, number>();
+      // Each release name is claimed by at most one need per league — same
+      // rule as every other distinct-assignment fix this session.
+      const claimedReleaseByLeague = new Map<string, Set<string>>();
+      let releasedPairs = 0;
       for (const r of rows) {
         const e = byLeague.get(r.leagueId) ?? { leagueId: r.leagueId, leagueName: r.leagueName, items: [] };
-        e.items.push(`${posName(env, r.playerId)} (${r.injury})${r.inStarters ? " — currently in your starting lineup" : ""}: ${r.needsDrop ? (r.noRoom ? "IR is full and nobody on it can be released" : `IR full — would need to release ${r.dropId ? posName(env, r.dropId) : "someone"} from IR first`) : "an open IR slot is available"}`);
+        const nm = posName(env, r.playerId);
+        const label = `${nm} (${r.injury})${r.inStarters ? " — currently in your starting lineup" : ""}`;
+
+        if (!r.needsDrop) {
+          e.items.push(`${label}: an open IR slot is available`);
+          byLeague.set(r.leagueId, e);
+          irDrafts.push(
+            irDraft({
+              league: env.tools.get_league_details(r.leagueId),
+              playerId: r.playerId,
+              playerName: nm,
+              injury: r.injury,
+              rationale: [`Sleeper lists ${nm} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
+              command: text,
+            })
+          );
+          movesByLeague.set(r.leagueId, (movesByLeague.get(r.leagueId) ?? 0) + 1);
+          continue;
+        }
+
+        // IR is full. If the owner gave a release order, use the first name
+        // on it who's actually a real, currently-on-IR, non-Priority
+        // occupant of THIS league (r.dropCandidates already excludes
+        // Priority-listed players and anyone claimed by an earlier need).
+        const claimed = claimedReleaseByLeague.get(r.leagueId) ?? new Set<string>();
+        const pick = releaseOrder?.find((p) => r.dropCandidates.includes(p.id) && !claimed.has(p.id)) ?? null;
+        if (pick) {
+          claimed.add(pick.id);
+          claimedReleaseByLeague.set(r.leagueId, claimed);
+          e.items.push(`${label}: releasing ${pick.name} to make room, then moving him to IR`);
+          byLeague.set(r.leagueId, e);
+          // Listed release-then-move — the bulk executor runs one at a time,
+          // in order, and stops on the first unverified result, so this
+          // order is what makes the sequencing safe: the IR_MOVE only ever
+          // runs after the release is confirmed.
+          irDrafts.push(
+            dropDraft({
+              league: env.tools.get_league_details(r.leagueId),
+              playerId: pick.id,
+              playerName: pick.name,
+              rationale: [`Your release order: releasing ${pick.name} to make room on IR`, `This frees the slot ${nm} (${r.injury}) needs`],
+              command: text,
+            })
+          );
+          irDrafts.push(
+            irDraft({
+              league: env.tools.get_league_details(r.leagueId),
+              playerId: r.playerId,
+              playerName: nm,
+              injury: r.injury,
+              rationale: [`Sleeper lists ${nm} as ${r.injury}`, `Only proposable after releasing ${pick.name} above — this league's IR is full otherwise`, ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
+              command: text,
+            })
+          );
+          movesByLeague.set(r.leagueId, (movesByLeague.get(r.leagueId) ?? 0) + 1);
+          releasedPairs++;
+          continue;
+        }
+
+        e.items.push(`${label}: ${r.noRoom ? "IR is full and nobody on it can be released" : `IR full — would need to release ${r.dropId ? posName(env, r.dropId) : "someone"} from IR first`}`);
         byLeague.set(r.leagueId, e);
       }
       const list = [...byLeague.values()];
-      blocks.push({ t: "text", tone: list.length ? "good" : "info", text: `${rows.length} player${rows.length === 1 ? "" : "s"} across ${list.length} league${list.length === 1 ? "" : "s"} could be moved to IR under each league's own IR rules (Doubtful is never suggested). Nothing has been moved.` });
+      blocks.push({
+        t: "text",
+        tone: list.length ? "good" : "info",
+        text: `${rows.length} player${rows.length === 1 ? "" : "s"} across ${list.length} league${list.length === 1 ? "" : "s"} could be moved to IR under each league's own IR rules (Doubtful is never suggested).${
+          releaseOrder ? ` ${releasedPairs} of those used your release order (${releaseOrder.map((p) => p.name).join(" → ")}).` : ""
+        } Nothing has been moved.`,
+      });
       blocks.push({ t: "decisions", title: "IR opportunities", rows: list.slice(0, ROW_CAP), truncated: Math.max(0, list.length - ROW_CAP) });
-      const irDrafts: ProposalDraft[] = [];
-      const movesByLeague = new Map<string, number>();
-      for (const r of rows) {
-        if (r.needsDrop) continue; // IR is full — never auto-proposed
-        irDrafts.push(
-          irDraft({
-            league: env.tools.get_league_details(r.leagueId),
-            playerId: r.playerId,
-            playerName: posName(env, r.playerId),
-            injury: r.injury,
-            rationale: [`Sleeper lists ${posName(env, r.playerId)} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
-            command: text,
-          })
-        );
-        movesByLeague.set(r.leagueId, (movesByLeague.get(r.leagueId) ?? 0) + 1);
-      }
       // A player moving from the active roster to IR always frees an active
       // (bench) spot behind him — real roster math, not a guess, so this
       // tells the owner up front where a waiver add could follow without

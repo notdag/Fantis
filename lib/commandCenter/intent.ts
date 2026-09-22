@@ -32,7 +32,7 @@ export type Intent =
   | { kind: "aggregate_drops" }
   | { kind: "candidate_leagues"; text: string; countOnly: boolean }
   | { kind: "waiver_opps" }
-  | { kind: "ir_opps" }
+  | { kind: "ir_opps"; releaseOrder?: Mention[] }
   | { kind: "roster_decisions" }
   | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter; dropOrder?: Mention[] }
   | { kind: "reset" }
@@ -70,16 +70,17 @@ export function parseFilter(t: string): ViewFilter {
 
 export const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
 
-// Splits an "add X, Y, drop A, B if needed" style sentence at the FIRST
-// standalone "drop"/"dropping" token (not part of another word, e.g. never
-// matches inside "Dropbox"), so the mentions before it are the add targets
-// and the mentions after it are the owner's own drop order — same split the
+// Splits an "add X, Y, drop A, B if needed" (or "...release A, B if needed")
+// style sentence at the FIRST standalone "drop"/"dropping"/"release"/
+// "releasing" token (not part of another word, e.g. never matches inside
+// "Dropbox"), so the mentions before it are the add/bulk-scan targets and
+// the mentions after it are the owner's own release order — same split the
 // two-message drop_preferences follow-up applies, just in one sentence.
 // Returns null if there's no such keyword, or no real player mentions after
 // it (a bare "...drop him if needed" has nothing to extract).
 function splitAtDropKeyword(text: string, mentions: Mention[]): { before: Mention[]; after: Mention[] } | null {
   const tokens = text.split(/\s+/).filter(Boolean);
-  const idx = tokens.findIndex((tok) => /^drop(ping)?[.,!?]?$/i.test(tok));
+  const idx = tokens.findIndex((tok) => /^(drop(ping)?|release(ing)?)[.,!?]?$/i.test(tok));
   if (idx < 0) return null;
   const after = mentions.filter((m) => m.start > idx);
   if (after.length === 0) return null;
@@ -127,6 +128,22 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     // the real current week rather than this pure function guessing at one.
     if (/\blast week\b/.test(t)) return { kind: "week_record", week: null, relative: "last" };
     if (/\bthis week\b/.test(t)) return { kind: "week_record", week: null, relative: "this" };
+  }
+
+  // "move all my IR eligible players to IR, release A, B, C if needed" — the
+  // bulk scan plus the owner's own preferred release order for whichever
+  // leagues turn out to have a full IR. Checked before activate_ir/send_to_ir
+  // just below: both of those also match on move/send + "to IR" and only
+  // require mentions.length > 0 — and the release order itself introduces
+  // mentions, so without this hoist it would be swallowed by send_to_ir
+  // before ever reaching the ir_opps block further down. The bulk-scan half
+  // must still have no mentions of its own (split.before.length === 0) so a
+  // real per-player "move X to IR" is never mistaken for this.
+  if (mentions.length > 0 && /\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t)) {
+    const split = splitAtDropKeyword(text, mentions);
+    if (split && split.before.length === 0 && split.after.length > 0) {
+      return { kind: "ir_opps", releaseOrder: split.after };
+    }
   }
 
   // "Move <player> off IR to the bench" — checked before the generic execute_request
@@ -197,7 +214,15 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   const waiverOppsWord = /\b(waiver|add) (opportunit\w*|targets?)\b|\bbest (waiver )?(adds?|available|pickups?)\b|\bwho should i (add|pick up|claim)\b|\bwaiver opportunit/.test(t);
   if (mentions.length === 0 && waiverOppsWord) return { kind: "waiver_opps" };
   if (mentions.length === 0 && /\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
-  if (mentions.length === 0 && (/\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t))) return { kind: "ir_opps" };
+  {
+    // The release-order variant of this (mentions.length > 0) is handled by
+    // the hoisted check above, before activate_ir/send_to_ir. This is just
+    // the bare bulk scan, with no player named at all.
+    const irWord = /\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t);
+    if (irWord) {
+      if (mentions.length === 0) return { kind: "ir_opps" };
+    }
+  }
 
   // "Drop candidates for my worst players" — an informational drops query
   // that happens to start with the bare word "drop" would otherwise be

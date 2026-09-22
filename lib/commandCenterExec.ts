@@ -20,6 +20,7 @@ import {
   validateAgainstLive,
   type ActivateIrParams,
   type AddParams,
+  type DropParams,
   type IrParams,
   type LineupParams,
   type Permission,
@@ -117,6 +118,8 @@ export async function executeProposal(p: Proposal, d: ExecDeps): Promise<ExecRes
         return await runActivateIr(p, league, token, d);
       case "SET_LINEUP":
         return await runLineup(p, league, token, d);
+      case "DROP":
+        return await runDrop(p, league, token, d);
     }
   } finally {
     inFlight.delete(p.id);
@@ -235,6 +238,24 @@ async function runActivateIr(p: Proposal, league: CcLeague, token: string, d: Ex
     return { status: "executed", message: `${a.playerName} moved from IR to the bench${a.dropName ? ` (dropped ${a.dropName})` : ""} — confirmed on Sleeper.`, sent: true };
   }
   return { status: "verify_failed", message: `The activation was sent, but a re-read doesn't confirm ${a.playerName} is off IR. Check Sleeper before doing anything else.`, sent: true };
+}
+
+// A standalone release — no add. Uses the same free_agent transaction as an
+// ADD's companion drop, just with only dropPlayerId set (addDropFreeAgent
+// already supports drop-only calls).
+async function runDrop(p: Proposal, league: CcLeague, token: string, d: ExecDeps): Promise<ExecResult> {
+  const a = p.params as DropParams;
+  try {
+    await d.writers.addDropFreeAgent(token, { leagueId: p.leagueId, rosterId: p.rosterId, dropPlayerId: a.playerId });
+  } catch (e) {
+    return failed(d, e, `Releasing ${a.playerName}`);
+  }
+  const after = await reread(league, d);
+  const me = after && myRoster(after);
+  if (me && !me.players.includes(a.playerId)) {
+    return { status: "executed", message: `${a.playerName} released — confirmed on Sleeper.`, sent: true };
+  }
+  return { status: "verify_failed", message: `The release was sent, but a re-read still shows ${a.playerName} on your roster. Check Sleeper before doing anything else.`, sent: true };
 }
 
 async function runLineup(p: Proposal, league: CcLeague, token: string, d: ExecDeps): Promise<ExecResult> {

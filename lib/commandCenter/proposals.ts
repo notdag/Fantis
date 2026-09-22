@@ -37,7 +37,7 @@ export const isPermission = (v: unknown): v is Permission => typeof v === "strin
 
 // ---------------------------------------------------------------- proposals
 
-export type ProposalKind = "ADD" | "IR_MOVE" | "ACTIVATE_IR" | "SET_LINEUP";
+export type ProposalKind = "ADD" | "IR_MOVE" | "ACTIVATE_IR" | "SET_LINEUP" | "DROP";
 
 export interface AddParams {
   addId: string;
@@ -67,7 +67,20 @@ export interface LineupParams {
   gain: number; // projected points gained (Sleeper's own projections)
 }
 
-export type ProposalParams = AddParams | IrParams | ActivateIrParams | LineupParams;
+// A standalone release — no add involved. Used both as a bare "drop this
+// player" request and, paired with an IR_MOVE right after it in the same
+// proposal list, to release a current IR occupant so a NEW player has room
+// to move onto IR — the bulk executor runs proposals one at a time in
+// order and stops on the first unverified result, so listing the DROP
+// immediately before its paired IR_MOVE is what makes the sequencing safe:
+// the IR_MOVE only ever runs after the release is confirmed, and its own
+// live re-validation would correctly reject it if the slot never opened.
+export interface DropParams {
+  playerId: string;
+  playerName: string;
+}
+
+export type ProposalParams = AddParams | IrParams | ActivateIrParams | LineupParams | DropParams;
 
 export interface ProposalDraft {
   kind: ProposalKind;
@@ -121,7 +134,7 @@ const NEXT: Record<ProposalStatus, ProposalStatus[]> = {
 export const canTransition = (from: ProposalStatus, to: ProposalStatus) => NEXT[from].includes(to);
 export const isTerminal = (s: ProposalStatus) => NEXT[s].length === 0;
 
-export const KIND_LABEL: Record<ProposalKind, string> = { ADD: "Add / claim", IR_MOVE: "Move to IR", ACTIVATE_IR: "Activate from IR", SET_LINEUP: "Set lineup" };
+export const KIND_LABEL: Record<ProposalKind, string> = { ADD: "Add / claim", IR_MOVE: "Move to IR", ACTIVATE_IR: "Activate from IR", SET_LINEUP: "Set lineup", DROP: "Release" };
 
 export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "leagueName">): string {
   switch (d.kind) {
@@ -142,6 +155,10 @@ export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "lea
       const p = d.params as LineupParams;
       const suffix = p.gain >= 0.05 ? `(+${p.gain.toFixed(1)} projected)` : "(slot fix — no point change)";
       return `Set lineup: ${p.changes.map((c) => `${c.inName ?? "empty"} for ${c.outName ?? "empty"} at ${c.slot}`).join("; ")} ${suffix}`;
+    }
+    case "DROP": {
+      const p = d.params as DropParams;
+      return `Release ${p.playerName} — no replacement`;
     }
   }
 }
@@ -206,6 +223,19 @@ export function activateIrDraft(args: {
     leagueName: args.league.name,
     rosterId: args.league.rosterId,
     params: { playerId: args.playerId, playerName: args.playerName, dropId: args.drop?.id ?? null, dropName: args.drop?.name ?? null },
+    rationale: args.rationale,
+    origin: "chat",
+    command: args.command,
+  };
+}
+
+export function dropDraft(args: { league: CcLeague; playerId: string; playerName: string; rationale: string[]; command: string }): ProposalDraft {
+  return {
+    kind: "DROP",
+    leagueId: args.league.id,
+    leagueName: args.league.name,
+    rosterId: args.league.rosterId,
+    params: { playerId: args.playerId, playerName: args.playerName },
     rationale: args.rationale,
     origin: "chat",
     command: args.command,
@@ -299,6 +329,11 @@ export function validateAgainstLive(p: Pick<ProposalDraft, "kind" | "params" | "
       }
       return { ok: true };
     }
+    case "DROP": {
+      const a = p.params as DropParams;
+      if (!me.players.includes(a.playerId)) return no(`${a.playerName} is no longer on your roster`);
+      return { ok: true };
+    }
   }
 }
 
@@ -381,7 +416,7 @@ export function sanitizeDraft(x: unknown): ProposalDraft | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
   const kind = o.kind;
-  if (kind !== "ADD" && kind !== "IR_MOVE" && kind !== "ACTIVATE_IR" && kind !== "SET_LINEUP") return null;
+  if (kind !== "ADD" && kind !== "IR_MOVE" && kind !== "ACTIVATE_IR" && kind !== "SET_LINEUP" && kind !== "DROP") return null;
   if (!idStr(o.leagueId) || !/^[0-9]+$/.test(String(o.leagueId))) return null;
   if (typeof o.rosterId !== "number" || !Number.isInteger(o.rosterId) || o.rosterId < 1) return null;
   const p = (o.params && typeof o.params === "object" ? o.params : {}) as Record<string, unknown>;
@@ -405,6 +440,9 @@ export function sanitizeDraft(x: unknown): ProposalDraft | null {
     if (!idStr(p.playerId)) return null;
     if (p.dropId != null && !idStr(p.dropId)) return null;
     params = { playerId: p.playerId as string, playerName: short(p.playerName, 80), dropId: (p.dropId as string | null | undefined) ?? null, dropName: p.dropName == null ? null : short(p.dropName, 80) };
+  } else if (kind === "DROP") {
+    if (!idStr(p.playerId)) return null;
+    params = { playerId: p.playerId as string, playerName: short(p.playerName, 80) };
   } else {
     const from = strArr(p.fromStarters, 40, 32);
     const to = strArr(p.toStarters, 40, 32);
@@ -439,5 +477,7 @@ export function draftKey(d: Pick<ProposalDraft, "kind" | "leagueId" | "params">)
       return `ACTIVATE:${d.leagueId}:${(d.params as ActivateIrParams).playerId}`;
     case "SET_LINEUP":
       return `LINEUP:${d.leagueId}:${(d.params as LineupParams).week}`;
+    case "DROP":
+      return `DROP:${d.leagueId}:${(d.params as DropParams).playerId}`;
   }
 }

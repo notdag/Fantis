@@ -11,6 +11,7 @@ import {
   canPropose,
   canTransition,
   draftKey,
+  dropDraft,
   irDraft,
   normalizeAuto,
   sanitizeDraft,
@@ -84,7 +85,11 @@ function fake(
       if (opts.addDropError) throw opts.addDropError;
       if (opts.writeError) throw opts.writeError;
       if (apply) {
-        if (p.dropPlayerId) mine.players = mine.players.filter((x) => x !== p.dropPlayerId);
+        if (p.dropPlayerId) {
+          mine.players = mine.players.filter((x) => x !== p.dropPlayerId);
+          mine.reserve = mine.reserve.filter((x) => x !== p.dropPlayerId);
+          mine.taxi = mine.taxi.filter((x) => x !== p.dropPlayerId);
+        }
         if (p.addPlayerId) mine.players.push(p.addPlayerId);
       }
       return {};
@@ -349,6 +354,49 @@ async function main() {
     const silent = fake(lg, openRoster, { applyWrites: false });
     const r7 = await executeProposal(asProposal(irPlayer), silent.deps());
     ok(r7.status === "verify_failed", "activation sent but unconfirmed on re-read → verify_failed");
+  }
+
+  // ============================================================ execution: standalone release (DROP)
+  {
+    const lg = league();
+    const full = roster(); // 14/14, b1..b5 on the bench, nobody on IR
+
+    const releaseOnly = dropDraft({ league: lg, playerId: "b3", playerName: "Bench Three", rationale: [], command: "" });
+    const clean = fake(lg, full);
+    const r1 = await executeProposal(asProposal(releaseOnly), clean.deps());
+    ok(r1.status === "executed" && clean.calls.add === 1 && !clean.mine.players.includes("b3"), "a bare release calls the same drop-only write and is verified", r1.message);
+    ok(clean.mine.players.length === full.players.length - 1, "nobody is added in his place — the roster is simply smaller", String(clean.mine.players.length));
+
+    // live re-validation: he's already gone (someone else released him, a trade, etc.) → expired
+    const alreadyGone = fake(lg, roster({ players: starters.slice() })); // no bench at all, b3 not present
+    const r2 = await executeProposal(asProposal(releaseOnly), alreadyGone.deps());
+    ok(r2.status === "expired" && alreadyGone.calls.add === 0, "he's no longer on the roster → expired, no write sent");
+
+    // Sleeper rejects the release
+    const rejected = fake(lg, full, { addDropError: new Error("Sleeper rejected it") });
+    const r3 = await executeProposal(asProposal(releaseOnly), rejected.deps());
+    ok(r3.status === "failed", "Sleeper rejecting the release surfaces as failed, not a false success");
+
+    // sent but unconfirmed on re-read → verify_failed, never claims success
+    const unconfirmed = fake(lg, full, { applyWrites: false });
+    const r4 = await executeProposal(asProposal(releaseOnly), unconfirmed.deps());
+    ok(r4.status === "verify_failed", "release sent but a re-read still shows him rostered → verify_failed");
+
+    // the release-then-IR-move sequence: two proposals, listed in order, run
+    // one at a time by the bulk executor — proves the safety property that
+    // makes pairing them work: the IR_MOVE is only valid once the release
+    // has actually freed the slot.
+    const fullIr = roster({ players: [...starters, "b1", "irGuy"], reserve: ["irGuy"] }); // IR already has 1/1 (league() defaults reserve_slots to 1)
+    const release = dropDraft({ league: lg, playerId: "irGuy", playerName: "Current IR Guy", rationale: [], command: "" });
+    const move = irDraft({ league: lg, playerId: "newIrGuy", playerName: "New IR Guy", injury: "IR", rationale: [], command: "" });
+    const pair = fake(lg, { ...fullIr, players: [...fullIr.players, "newIrGuy"] });
+    const injuryOf = (id: string) => (id === "newIrGuy" ? "IR" : null);
+    const beforeRelease = await executeProposal(asProposal(move, "approved", "p-move"), pair.deps({ injuryOf }));
+    ok(beforeRelease.status === "expired", "attempting the IR move BEFORE the release still correctly rejects — IR is still full", beforeRelease.message);
+    const releaseResult = await executeProposal(asProposal(release, "approved", "p-release"), pair.deps({ injuryOf }));
+    ok(releaseResult.status === "executed", "the release runs first and succeeds", releaseResult.message);
+    const moveResult = await executeProposal(asProposal(move, "approved", "p-move-2"), pair.deps({ injuryOf }));
+    ok(moveResult.status === "executed" && pair.mine.reserve.includes("newIrGuy"), "the IR move now succeeds — the slot the release freed is really being used, not assumed", moveResult.message);
   }
 
   // ============================================================ auto rule selection

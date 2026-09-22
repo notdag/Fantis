@@ -938,3 +938,72 @@ all even before this fix existed to matter), added him via
 list — a Fantis-only preference write, never touches Sleeper), then
 re-ran the 210-league bulk IR scan and confirmed his name appears nowhere
 in the 72-league result.
+
+### Standalone release (DROP) + `ir_opps` release order (2026-09; requested explicitly by the owner)
+
+Follow-up to the Priority fix above: the owner pointed out the bulk `ir_opps`
+scan only ever *reported* that a full-IR league "would need to release X" —
+there was no way to actually act on that. They wanted to give the app a
+standing, ordered list of players they're fine releasing off IR (Isiah
+Pacheco, Dylan Sampson, Christian Kirk, James Conner), so a full-IR league
+can really pair a release with the new player's IR move in one command.
+
+- **New `DROP` proposal kind** (`lib/commandCenter/proposals.ts`) — a
+  standalone release with no accompanying add: `dropDraft()` builds it,
+  `validateAgainstLive`'s `"DROP"` case re-checks the player is still really
+  on the roster before sending, `sanitizeDraft`/`draftKey` cover it like
+  every other kind. `lib/commandCenterExec.ts`'s `runDrop` is the only new
+  writer path — it calls the same `addDropFreeAgent` mutation the ADD flow
+  already uses, just with no `addPlayerId`, then verifies by re-read that
+  the player is gone. `gate()` already restricted Phase 5 auto-execute to
+  `IR_MOVE` only, so a `DROP` can never run unattended without a separate,
+  deliberate change.
+- **`ir_opps` release order** — "move all my IR eligible players to IR,
+  release Isiah Pacheco, Dylan Sampson, Christian Kirk, James Conner if
+  needed" now parses as `ir_opps` with a `releaseOrder` (`intent.ts`'s
+  `splitAtDropKeyword`, reused from the existing add+drop combined syntax).
+  For each league where `buildIrPlan` reports `needsDrop`, the engine tries
+  the release order in the order given, skipping anyone already claimed for
+  that league or not really a current IR occupant there (`r.dropCandidates`
+  — which already excludes Priority-listed players via the fix above) —
+  and drafts a `DROP` immediately followed by the `IR_MOVE`, in that order.
+  The bulk executor runs proposals one at a time and stops on the first
+  unverified result, which is what makes the ordering safe: the IR_MOVE is
+  only ever attempted after the release is confirmed, and a stale/expired
+  release blocks its paired move rather than silently skipping ahead.
+  Leagues where none of the named players are real occupants there fall
+  back to the original informational-only text, honestly, same as before
+  this feature existed.
+- **Routing bug found and fixed while building this**: the release-order
+  phrasing introduces a real player mention (the release names), which sent
+  it straight into `send_to_ir`/`activate_ir`'s existing "move ... to IR"
+  matchers (checked earlier in `intent.ts`, gated only on
+  `mentions.length > 0`) before it ever reached the `ir_opps` block. Fixed
+  by hoisting the release-order detection above both of those checks —
+  it only fires when the bulk-scan half of the sentence has no mentions of
+  its own (`split.before.length === 0`), so an ordinary single-player "move
+  X to IR" still reaches `send_to_ir` exactly as before.
+- Distinct assignment: a release name is claimed by at most one league need
+  at a time (`claimedReleaseByLeague`, same pattern as every other
+  distinct-assignment fix this session). Note the pure planner
+  (`buildIrPlan`) already does its own distinct auto-pick internally, so
+  when a league's IR pool has only one real occupant and two new players
+  both need a release, the *second* row's fallback text correctly says "IR
+  is full and nobody on it can be released" (the planner already exhausted
+  its own pick), not a reuse of the same occupant's name.
+- Tests: `scripts/testCommandCenterExec.ts` gained a standalone-DROP
+  execution section (success, live re-validation expired, write failure,
+  unconfirmed verify_failed, and the full release-then-IR-move sequence
+  proving the ordering safety property) — now 103. `scripts/testCommandCenter.ts`
+  gained section 33 (release-order pairing, distinct assignment within one
+  league, the no-match fallback, and Priority protection holding even when
+  the owner names a protected player directly) — now 384.
+- Verified live against the real account with the owner's actual phrasing:
+  "move all my IR eligible players to IR, release Isiah Pacheco, Dylan
+  Sampson, Christian Kirk, James Conner if needed" scanned 210/210 leagues
+  in 5.0s, found 96 real IR-eligible players across 72 leagues, and 25 of
+  those pairs genuinely used the release order (e.g. Fantic Redraft League
+  #100: release Dylan Sampson, then move Jayden Daniels to IR). Leagues
+  where none of the four were real IR occupants still got the honest
+  fallback text. Confirmed read-only throughout — no Sleeper token was
+  connected in this session, so nothing could have been sent regardless.

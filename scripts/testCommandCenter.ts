@@ -1570,6 +1570,109 @@ async function main() {
     ok(drafts2.length === 1 && (drafts2[0].params as { dropName: string | null }).dropName === "Unprotected Bench Guy", "activating from IR also skips the Priority-listed bench player and picks the next real candidate", JSON.stringify(drafts2[0]?.params));
   }
 
+  // ---------- 33. ir_opps release order — "...release A, B, C if needed"
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const decisionsTextOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
+    const rp = ["QB", "WR", "BN"];
+    const settings1Slot = { roster_positions: rp, settings: { reserve_slots: 1 } };
+
+    // (a) full IR, the release order's first name is really the current
+    // occupant here → a DROP draft immediately followed by an IR_MOVE draft,
+    // in that order, with rationale text that names the pairing.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Release QB", p: "QB", t: "DAL" },
+        s1: { n: "Release Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "New Eligible Guy", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Current Occupant", p: "WR", t: "IND" },
+      };
+      const league = { ...lg("1", "Release Order League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR, release Current Occupant if needed", newSession(), env);
+      ok(out.audit.intent === "ir_opps", "the release-order phrasing still recognises as ir_opps, not execute_request", out.audit.intent);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 2 && drafts[0].kind === "DROP" && drafts[1].kind === "IR_MOVE", "produces exactly a DROP followed by an IR_MOVE, in that order", JSON.stringify(drafts.map((d) => d.kind)));
+      ok((drafts[0].params as { playerName: string }).playerName === "Current Occupant", "the DROP targets the named release-order player", JSON.stringify(drafts[0].params));
+      ok((drafts[1].params as { playerName: string }).playerName === "New Eligible Guy", "the IR_MOVE targets the real newly-eligible player", JSON.stringify(drafts[1].params));
+      ok(drafts[1].rationale.some((r) => r.includes("Current Occupant")), "the IR_MOVE's rationale explains it only works after releasing the named player", JSON.stringify(drafts[1].rationale));
+      const txt = textOf(out.blocks);
+      ok(/1 of those used your release order \(Current Occupant\)/.test(txt), "the summary reports how many pairs used the release order and names it", txt.slice(0, 500));
+      ok(/releasing Current Occupant to make room, then moving him to IR/.test(decisionsTextOf(out.blocks)), "the per-league decision line states the release-then-move plainly");
+    }
+
+    // (b) distinct assignment — one league, one real IR occupant, TWO new
+    // eligible players both needing a release. Only the first can be paired
+    // with the named occupant; the second must fall back honestly rather
+    // than reuse a release that already went to someone else.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Distinct QB", p: "QB", t: "DAL" },
+        s1: { n: "Distinct Starter", p: "WR", t: "DAL" },
+        newA: { n: "New Eligible Alpha", p: "WR", t: "DAL", inj: "IR" },
+        newB: { n: "New Eligible Beta", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Sole Occupant", p: "WR", t: "IND" },
+      };
+      const league = { ...lg("1", "Distinct Release League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newA", "newB", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR, release Sole Occupant if needed", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 2 && drafts.filter((d) => d.kind === "DROP").length === 1, "the release name is only used ONCE across both needing rows in the same league, never claimed twice", JSON.stringify(drafts.map((d) => d.kind)));
+      const decisionsText = decisionsTextOf(out.blocks);
+      // the pure planner's own distinct-assignment already exhausted the single
+      // occupant against the first row (dropId picks are unique per buildIrPlan),
+      // so the second row's honest fallback correctly says nobody's left, not a
+      // reuse of the same name.
+      ok(/IR is full and nobody on it can be released/.test(decisionsText), "the second player who couldn't be paired still gets an honest fallback, not a silently-reused release", decisionsText);
+    }
+
+    // (c) fallback — full IR, but none of the release-order names are
+    // actually current occupants of THIS league → falls back to the
+    // original informational-only text, no drafts at all.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Fallback QB", p: "QB", t: "DAL" },
+        s1: { n: "Fallback Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Fallback New Guy", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Real Occupant Here", p: "WR", t: "IND" },
+        notHere: { n: "Not Rostered Anywhere Near", p: "WR", t: "SEA" },
+      };
+      const league = { ...lg("1", "Fallback Release League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR, release Not Rostered Anywhere Near if needed", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 0, "none of the release-order names are real occupants here, so nothing is drafted for this league", String(drafts.length));
+      ok(/would need to release Real Occupant Here from IR first/.test(decisionsTextOf(out.blocks)), "falls back to naming the real weakest occupant informationally, same as with no release order at all");
+    }
+
+    // (d) Priority protection still wins even when the owner explicitly
+    // names the protected player in their own release order.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Prio QB", p: "QB", t: "DAL" },
+        s1: { n: "Prio Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Prio New Guy", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Protected Release Target", p: "WR", t: "IND" },
+      };
+      const sig = signals(pm, { priority: ["occupant"] });
+      const league = { ...lg("1", "Priority Release League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR, release Protected Release Target if needed", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 0, "naming a Priority-protected player in the release order still never drafts a release for him", String(drafts.length));
+      ok(!/release Protected Release Target/.test(decisionsTextOf(out.blocks)), "he's never offered as a release candidate even though the owner named him explicitly");
+      ok(/IR is full and nobody on it can be released/.test(decisionsTextOf(out.blocks)), "with the only occupant protected, this is honestly reported as no room, not silently skipped", decisionsTextOf(out.blocks));
+    }
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
