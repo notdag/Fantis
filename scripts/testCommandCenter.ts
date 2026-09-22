@@ -1227,6 +1227,72 @@ async function main() {
     ok(/I don't add anything from chat/.test(textOf(out2.blocks)), "still states plainly that chat itself never sends anything — review + approve is still required");
   }
 
+  // ---------- 25. "drop <order>" — owner-specified drop order as a follow-up to a scan
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpFull = ["QB", "WR", "WR", "BN"];
+    const settingsFull = { roster_positions: rpFull, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 2 } };
+    const rpSmall = ["QB", "WR", "BN"];
+    const settingsSmall = { roster_positions: rpSmall, settings: { reserve_slots: 1 } };
+    const pm: PlayerMap = {
+      fq: { n: "Drop QB", p: "QB", t: "DAL" },
+      starter1: { n: "Starting WR", p: "WR", t: "DAL" },
+      bigsby: { n: "Tank Bigsby", p: "WR", t: "DAL" },
+      washington: { n: "Mike Washington", p: "WR", t: "DAL" },
+      other1: { n: "Other Bench One", p: "WR", t: "DAL" },
+      other2: { n: "Other Bench Two", p: "WR", t: "DAL" },
+      filler: { n: "Filler Bench", p: "WR", t: "DAL" },
+      t1: { n: "Target One", p: "WR", t: "SEA" },
+      t2: { n: "Target Two", p: "WR", t: "SEA" },
+    };
+    // League A: full roster, both drop-order names are real bench players → distinct assignment.
+    const lA = { ...lg("1", "Drop Order League A", rpFull), settings: settingsFull };
+    const rA: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "starter1", "bigsby", "washington"], starters: ["fq", "starter1"], reserve: [], taxi: [] };
+    // League B: full roster, neither drop-order name is on this roster at all → no match.
+    const lB = { ...lg("2", "Drop Order League B — no match", rpFull), settings: settingsFull };
+    const rB: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "starter1", "other1", "other2"], starters: ["fq", "starter1"], reserve: [], taxi: [] };
+    // League C: Tank Bigsby IS on this roster, but as a STARTER → never dropped, and no other listed name is here → no match.
+    const lC = { ...lg("3", "Drop Order League C — named player is a starter", rpSmall), settings: settingsSmall };
+    const rC: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bigsby", "filler"], starters: ["fq", "bigsby"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [
+      { league: lA, rosters: [rA, otherRoster([])], txns: [] },
+      { league: lB, rosters: [rB, otherRoster([])], txns: [] },
+      { league: lC, rosters: [rC, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm);
+    env.permission = "PROPOSE_ONLY";
+
+    const out1 = await handleCommand("add Target One and Target Two everywhere", newSession(), env);
+    ok(!!out1.session.results && out1.session.targets.length === 2, "the add scan leaves real targets/results on the session for a follow-up");
+
+    const out2 = await handleCommand("drop Tank Bigsby, then Mike Washington", out1.session, env);
+    ok(out2.audit.intent === "drop_preferences", "recognised as drop_preferences", out2.audit.intent);
+    const drafts = draftsOf(out2.blocks);
+    const byLeague = Object.fromEntries(drafts.map((d) => [d.leagueName, d.params as { dropName: string | null }]));
+    ok(byLeague["Drop Order League A"]?.dropName !== undefined, "League A got a proposal from the drop order", JSON.stringify(byLeague));
+    // both targets need a drop in League A — Bigsby (first in order) and
+    // Washington (second) must each be claimed by exactly one, never both.
+    const leagueADrafts = drafts.filter((d) => d.leagueName === "Drop Order League A");
+    const namesUsed = leagueADrafts.map((d) => (d.params as { dropName: string | null }).dropName).sort();
+    ok(leagueADrafts.length === 2 && namesUsed.join(",") === "Mike Washington,Tank Bigsby", "both targets in League A matched, to DISTINCT drop-order names — never the same one twice", JSON.stringify(namesUsed));
+    ok(!drafts.some((d) => d.leagueName === "Drop Order League B — no match"), "League B (neither name on the roster) never gets a proposal");
+    ok(!drafts.some((d) => d.leagueName === "Drop Order League C — named player is a starter"), "League C (named player is a starter there) never gets a proposal — a starter is never auto-dropped even when explicitly named");
+    const txt2 = textOf(out2.blocks);
+    ok(/Your drop order \(Tank Bigsby → Mike Washington\)/.test(txt2), "headline states the drop order back, in the order given", txt2.slice(0, 200));
+    ok(/have none of your listed players as an eligible bench player/.test(txt2), "leagues with no eligible match are disclosed, never silently skipped", txt2.slice(0, 400));
+
+    // with no prior scan on the session, "drop X" is NOT read as a drop
+    // order (there's nothing to apply it to) — it falls through to the
+    // ordinary drop-verb execute_request instead, unchanged.
+    const outNoScan = await handleCommand("drop Tank Bigsby, then Mike Washington", newSession(), env);
+    ok(outNoScan.audit.intent !== "drop_preferences", "with no prior add scan, a bare \"drop X\" is never misread as a drop order", outNoScan.audit.intent);
+
+    // a scan with a target list but nothing actually needing a drop
+    const noneNeeded = await handleCommand("Target One and Target Two", newSession(), makeEnv([{ league: lC, rosters: [{ ...rC, players: ["fq", "filler"], starters: ["fq"] }, otherRoster([])], txns: [] }], pm));
+    const out3 = await handleCommand("drop Tank Bigsby, then Mike Washington", noneNeeded.session, env);
+    ok(out3.audit.intent === "drop_preferences" && !out3.blocks.some((b) => b.t === "drafts") && /Nothing from the last scan needs a drop/.test(textOf(out3.blocks)), "a scan where nothing needed a drop → says so, nothing to propose");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

@@ -28,6 +28,7 @@ export type Intent =
   | { kind: "filter"; filter: ViewFilter }
   | { kind: "clear_filter" }
   | { kind: "drops"; count: number; mentions: Mention[] }
+  | { kind: "drop_preferences"; mentions: Mention[] }
   | { kind: "aggregate_drops" }
   | { kind: "candidate_leagues"; text: string; countOnly: boolean }
   | { kind: "waiver_opps" }
@@ -151,6 +152,22 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
 
   if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i start\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
     return { kind: "lineup_improvements" };
+  }
+
+  // A follow-up drop order for the "add"/waiver scan still on screen — "drop
+  // Tank Bigsby, then Mike Washington, then Woody Marks" after "add X and Y
+  // everywhere". Only makes sense as a follow-up (ctx.hasScan): a bare "drop
+  // X" with no scan on screen is the ordinary drop-verb execute_request
+  // below, not this. Excludes phrasing that clearly starts a NEW scan
+  // ("everywhere"/"in my leagues") so a fresh multi-target drop request
+  // still reaches execute_request as usual.
+  if (
+    ctx.hasScan &&
+    mentions.length > 0 &&
+    /^(?:then\s+)?drop(?:ping)?\b/.test(t) &&
+    !/\beverywhere\b|\bin (my |all my )?leagues?\b|\bacross (my |all my )?leagues?\b/.test(t)
+  ) {
+    return { kind: "drop_preferences", mentions };
   }
 
   // Imperative "do it" phrasing → never executed; the engine refuses + previews.

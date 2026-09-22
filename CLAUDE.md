@@ -679,3 +679,46 @@ names on both the bare-mention and "add X and Y" phrasings. Verified live
 against the real account: "add Malachi Fields and Germie Bernard everywhere"
 found 31 real leagues where both were proposed together, and every single
 one got a distinct drop suggestion — zero duplicates.
+
+### Chat: owner-specified drop order for a mass add (2026-09; requested explicitly by the owner)
+
+The owner wanted a two-step flow for tonight's waivers: "add these players,
+in my order" first, then "here's who to drop, in that order, if applicable"
+as a follow-up — using their OWN drop preferences instead of Fantis's
+auto-picked weakest-bench-player, and explicitly wanting any league where
+none of it applies called out by name (never silently skipped).
+
+New `drop_preferences` intent/case, distinct from the ordinary drop-verb
+`execute_request`:
+
+- **Only recognized as a follow-up** (`ctx.hasScan` — a prior add/scan is on
+  the session): a bare "drop X" with nothing on screen is still the ordinary
+  ("I don't drop anything from chat, here's what dropping X would look like")
+  path, unchanged. A drop-follow-up that also says "everywhere"/"in my
+  leagues" is excluded too, so a fresh multi-target drop request still goes
+  through the normal path instead of being misread as a preference list for
+  an old scan.
+- Re-reads a fresh roster snapshot for every league that needed a drop from
+  the last scan (`get_league_snapshot`, same pattern the `drops` follow-up
+  already uses) rather than trusting the auto-ranked top-3 `DropAnalysis`
+  list, because the owner's named player might not be in that top-3 at all —
+  this checks the FULL roster.
+- For each league, walks the owner's list in order and proposes the first
+  name that's actually on that roster as an eligible bench player — never a
+  current starter, never on IR/taxi, never on the Priority list, even if
+  explicitly named (same hard exclusions the rest of the app already uses).
+  A league where none of the list matches is disclosed by name in a
+  `decisions` block, never silently dropped from the count.
+- Reuses the SAME per-league "claimed" tracking as the auto multi-add fix
+  above, so if two targets both need a drop in one league, they still get
+  two DIFFERENT names off the owner's list, never the same one twice.
+- Real FAAB bids per proposal, same `suggestBid` path as everywhere else.
+- Tests: 10 new assertions in `scripts/testCommandCenter.ts` (now 331) —
+  distinct assignment within a league, a league with no matching name
+  disclosed, a named starter never auto-dropped, a bare "drop X" with no
+  scan on screen never misread as a preference list, nothing-needed-a-drop
+  handled cleanly. Verified live: "add Malachi Fields and Germie Bernard
+  everywhere" then "drop Antonio Williams, then Tank Bigsby, then Samaje
+  Perine" matched 125 of 207 real leagues that needed a drop and disclosed
+  the other 82 by name; re-checked the matched leagues for duplicate
+  assignments within that one turn and found none.
