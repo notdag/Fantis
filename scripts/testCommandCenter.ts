@@ -1373,6 +1373,71 @@ async function main() {
     ok(byName["Target One"] === "Tank Bigsby" && byName["Target Two"] === "Mike Washington", "in the full league, each target gets a DISTINCT name from the owner's own drop order, in the order given, all from one message", JSON.stringify(byName));
   }
 
+  // ---------- 28. force_start with MULTIPLE named players in one command
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpTwo = ["QB", "WR", "WR", "BN"];
+    const settings = { roster_positions: rpTwo, settings: { reserve_slots: 1 } };
+    const pm: PlayerMap = {
+      fq: { n: "Force QB", p: "QB", t: "DAL" },
+      p1: { n: "Force Player One", p: "WR", t: "ATL" },
+      p2: { n: "Force Player Two", p: "WR", t: "LAR" },
+      bench1: { n: "Better Projected Bench", p: "WR", t: "DAL" },
+    };
+    const proj: ProjectionMap = { fq: { pts_ppr: 20 }, p1: { pts_ppr: 5 }, p2: { pts_ppr: 5 }, bench1: { pts_ppr: 30 } };
+    const future = new Date(NOW + 86_400_000).toISOString();
+    // League A: both empty WR slots — both named players should win them over
+    // the far-higher-projected bench player, in the SAME optimizer pass.
+    const lA = { ...lg("1", "Force Multi A — both open", rpTwo), settings };
+    const rA: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "p1", "p2", "bench1"], starters: ["fq", "0", "0"], reserve: [], taxi: [] };
+    // League B: only Player One is rostered here at all.
+    const lB = { ...lg("2", "Force Multi B — only one rostered", rpTwo), settings };
+    const rB: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "p1", "bench1"], starters: ["fq", "0"], reserve: [], taxi: [] };
+    // League C: Player One already starting, Player Two needs to be forced in.
+    const lC = { ...lg("3", "Force Multi C — one already starting", rpTwo), settings };
+    const rC: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "p1", "p2", "bench1"], starters: ["fq", "p1", "0"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [
+      { league: lA, rosters: [rA, otherRoster([])], txns: [] },
+      { league: lB, rosters: [rB, otherRoster([])], txns: [] },
+      { league: lC, rosters: [rC, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm, undefined, undefined, { projections: proj, week: 3 });
+    env.permission = "PROPOSE_ONLY";
+    env.kickoffs = async () => ({ ATL: future, LAR: future, DAL: future });
+    const out = await handleCommand("make sure Force Player One and Force Player Two start this week", newSession(), env);
+    ok(out.audit.intent === "force_start", "recognised as force_start with two mentions", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 3, "all three leagues get a proposal (A: both forced, B: one forced, C: one forced)", String(drafts.length));
+
+    const draftA = drafts.find((d) => d.leagueName === "Force Multi A — both open");
+    const toStartersA = (draftA?.params as { toStarters: string[] } | undefined)?.toStarters;
+    ok(!!toStartersA && toStartersA.includes("p1") && toStartersA.includes("p2"), "BOTH named players win their slots together in the same league, overriding a much higher-projected bench player", JSON.stringify(toStartersA));
+    ok(!!draftA && draftA.rationale[0].includes("Force Player One") && draftA.rationale[0].includes("Force Player Two"), "the rationale names both players forced in that league, not just one", draftA?.rationale[0]);
+
+    const draftB = drafts.find((d) => d.leagueName === "Force Multi B — only one rostered");
+    const toStartersB = (draftB?.params as { toStarters: string[] } | undefined)?.toStarters;
+    ok(!!toStartersB && toStartersB.includes("p1") && !toStartersB.includes("p2"), "a league where only one of the two is rostered only forces that one", JSON.stringify(toStartersB));
+
+    const draftC = drafts.find((d) => d.leagueName === "Force Multi C — one already starting");
+    ok(!!draftC && (draftC.params as { toStarters: string[] }).toStarters.includes("p2") && draftC.rationale[0] === "You asked to start Force Player Two here", "a league where one is already starting only reports forcing the OTHER one, never re-mentions the one already fine", draftC?.rationale[0]);
+
+    const txt = textOf(out.blocks);
+    ok(/Force Player One: already starting in 1 league, can be started in 2 more/.test(txt), "Player One's own per-player summary line is present and correct (already starting in League C)", txt.slice(0, 500));
+    ok(/Force Player Two: already starting in 0 leagues, can be started in 2 more/.test(txt), "Player Two's own per-player summary line is present and correct, independent of Player One's", txt.slice(0, 500));
+
+    // one of the two named players is genuinely Out — he's never force-started,
+    // but that never blocks the OTHER player from being forced in the SAME league.
+    const pmHurt: PlayerMap = { ...pm, p1: { ...pm.p1, inj: "Out" } };
+    const envHurt = makeEnv([{ league: lA, rosters: [rA, otherRoster([])], txns: [] }], pmHurt, undefined, undefined, { projections: proj, week: 3 });
+    envHurt.kickoffs = async () => ({ ATL: future, LAR: future, DAL: future });
+    const outHurt = await handleCommand("make sure Force Player One and Force Player Two start this week", newSession(), envHurt);
+    const draftsHurt = draftsOf(outHurt.blocks);
+    ok(draftsHurt.length === 1, "still proposes the league, just for the one player who's actually available", String(draftsHurt.length));
+    const toStartersHurt = (draftsHurt[0]?.params as { toStarters: string[] } | undefined)?.toStarters;
+    ok(!!toStartersHurt && toStartersHurt.includes("p2") && !toStartersHurt.includes("p1"), "the Out player is never force-started even when named alongside a healthy one", JSON.stringify(toStartersHurt));
+    ok(/Not started in 1 — his real status or bye makes him unavailable there; I never override that/.test(textOf(outHurt.blocks)), "the Out player's own line still explains why, honestly");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

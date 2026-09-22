@@ -1226,7 +1226,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     case "force_start": {
       const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
       if (!resolved) break;
-      const player = resolved[0];
+      const players = resolved; // one or more named players, forced together
       const proj = env.projections;
       const week = env.week;
       if (!proj || week == null) {
@@ -1238,7 +1238,8 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         blocks.push({ t: "text", tone: "warn", text: "I couldn't load kickoff times, so I can't tell which games have already started. I won't touch lineups without that — try again in a moment." });
         break;
       }
-      const { snaps, meta } = await scanAll(env, false, `Checking where I can start ${player.name}`);
+      const label = players.map((p) => p.name).join(", ");
+      const { snaps, meta } = await scanAll(env, false, `Checking where I can start ${label}`);
       session = { ...session, meta };
       blocks.push({ t: "scanStatus", meta });
       const nowMs = now();
@@ -1254,35 +1255,34 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         if (e.inj && OUT.has(e.inj)) return true;
         return !!e.t && BYE_WEEKS_2026[e.t] === week;
       };
-      // Forced priority: ONLY this player, for this one command — the owner's saved
-      // Priority list is deliberately not mixed in, so the result is predictable.
-      const prio = new Map([[player.id, 0]]);
+      // Forced priority: ONLY these named players, for this one command — the
+      // owner's saved Priority list is deliberately not mixed in, so the
+      // result is predictable. Ranked in the order they were named, purely
+      // as a tie-break if two of them ever compete for the same single slot.
+      const prio = new Map(players.map((p, i) => [p.id, i]));
       const drafts: ProposalDraft[] = [];
-      const onReserve: string[] = [];
-      const unavailableIn: string[] = [];
-      const lockedIn: string[] = [];
-      const noSlot: string[] = [];
-      const alreadyStarting: string[] = [];
+      const buckets = new Map(players.map((p) => [p.id, { onReserve: [] as string[], unavailableIn: [] as string[], lockedIn: [] as string[], noSlot: [] as string[], alreadyStarting: [] as string[], started: [] as string[] }]));
       for (const snap of snaps) {
         if (snap.status === "FAILED" || !snap.rosters) continue;
         const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId)!;
-        if (!me.players.includes(player.id)) continue; // not rostered here — not this league's problem to report
-        if (me.reserve.includes(player.id) || me.taxi.includes(player.id)) {
-          onReserve.push(snap.league.name);
-          continue;
+        const rosteredHere = players.filter((p) => me.players.includes(p.id));
+        if (rosteredHere.length === 0) continue; // none of them are on this roster — not this league's problem
+        const forceable: typeof players = [];
+        for (const p of rosteredHere) {
+          const b = buckets.get(p.id)!;
+          if (me.reserve.includes(p.id) || me.taxi.includes(p.id)) {
+            b.onReserve.push(snap.league.name);
+          } else if (me.starters.includes(p.id)) {
+            b.alreadyStarting.push(snap.league.name);
+          } else if (isUnavailable(p.id)) {
+            b.unavailableIn.push(snap.league.name); // Out/IR-status/bye — never force-started, same rule Optimize already follows
+          } else if (isLocked(p.id)) {
+            b.lockedIn.push(snap.league.name);
+          } else {
+            forceable.push(p);
+          }
         }
-        if (me.starters.includes(player.id)) {
-          alreadyStarting.push(snap.league.name);
-          continue;
-        }
-        if (isUnavailable(player.id)) {
-          unavailableIn.push(snap.league.name); // Out/IR-status/bye — never force-started, same rule Optimize already follows
-          continue;
-        }
-        if (isLocked(player.id)) {
-          lockedIn.push(snap.league.name);
-          continue;
-        }
+        if (forceable.length === 0) continue;
         const rp = rosterPositions(snap.league.settings);
         if (!rp) continue;
         const slots = buildStartingSlots(rp).map((x) => x.code);
@@ -1300,10 +1300,12 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           priorityRank: (id) => prio.get(id),
           avoid: (id) => env.signals.avoid.has(id),
         });
-        if (!res.starters.includes(player.id)) {
-          noSlot.push(snap.league.name); // no slot in this league's roster_positions can hold his position
-          continue;
+        const actuallyStarted = forceable.filter((p) => res.starters.includes(p.id));
+        for (const p of forceable) {
+          if (!res.starters.includes(p.id)) buckets.get(p.id)!.noSlot.push(snap.league.name); // no slot in this league's roster_positions can hold his position
         }
+        if (actuallyStarted.length === 0) continue;
+        for (const p of actuallyStarted) buckets.get(p.id)!.started.push(snap.league.name);
         const nm = (id: string | null) => (id ? posName(env, id) : null);
         drafts.push({
           kind: "SET_LINEUP",
@@ -1318,7 +1320,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
             gain: Math.round(res.gain * 10) / 10,
           },
           rationale: [
-            `You asked to start ${player.name} here`,
+            `You asked to start ${actuallyStarted.map((p) => p.name).join(", ")} here`,
             ...res.changes.map((c) => `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}`),
             res.gain < 0 ? `This costs ${Math.abs(res.gain).toFixed(1)} projected points versus the best lineup — your call, not a mistake.` : `Also ${res.gain >= 0 ? "gains" : "costs"} ${Math.abs(res.gain).toFixed(1)} projected points.`,
           ],
@@ -1326,27 +1328,28 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           command: text,
         });
       }
-      const rosteredCount = drafts.length + alreadyStarting.length + unavailableIn.length + lockedIn.length + onReserve.length + noSlot.length;
-      if (rosteredCount === 0) {
-        blocks.push({ t: "text", tone: "warn", text: `${player.name} isn't on your roster in any readable league.` });
-        break;
+      const lines: string[] = [];
+      for (const p of players) {
+        const b = buckets.get(p.id)!;
+        const rosteredCount = b.started.length + b.alreadyStarting.length + b.unavailableIn.length + b.lockedIn.length + b.onReserve.length + b.noSlot.length;
+        if (rosteredCount === 0) {
+          lines.push(`${p.name} isn't on your roster in any readable league.`);
+          continue;
+        }
+        lines.push(
+          `${p.name}: already starting in ${b.alreadyStarting.length} league${b.alreadyStarting.length === 1 ? "" : "s"}, can be started in ${b.started.length} more. ` +
+            (b.onReserve.length ? `On IR/taxi in ${b.onReserve.length} (can't start until activated — ask me to activate him). ` : "") +
+            (b.unavailableIn.length ? `Not started in ${b.unavailableIn.length} — his real status or bye makes him unavailable there; I never override that. ` : "") +
+            (b.lockedIn.length ? `Too late in ${b.lockedIn.length} — his game already started. ` : "") +
+            (b.noSlot.length ? `No eligible roster slot for his position in ${b.noSlot.length} league${b.noSlot.length === 1 ? "" : "s"}. ` : "")
+        );
       }
-      blocks.push({
-        t: "text",
-        tone: drafts.length ? "good" : "info",
-        text:
-          `${player.name}: already starting in ${alreadyStarting.length} league${alreadyStarting.length === 1 ? "" : "s"}, can be started in ${drafts.length} more. ` +
-          (onReserve.length ? `On IR/taxi in ${onReserve.length} (can't start until activated — ask me to activate him). ` : "") +
-          (unavailableIn.length ? `Not started in ${unavailableIn.length} — his real status or bye makes him unavailable there; I never override that. ` : "") +
-          (lockedIn.length ? `Too late in ${lockedIn.length} — his game already started. ` : "") +
-          (noSlot.length ? `No eligible roster slot for his position in ${noSlot.length} league${noSlot.length === 1 ? "" : "s"}. ` : "") +
-          "Nothing has been changed.",
-      });
+      blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.`.trim() });
       if (drafts.length) {
         const b = draftsBlock(env, permission, drafts);
         if (b) blocks.push(b);
       }
-      recs.push(`start ${player.name}: ${drafts.length} proposed, ${alreadyStarting.length} already starting, ${unavailableIn.length} unavailable`);
+      recs.push(`start ${label}: ${drafts.length} leagues affected`);
       break;
     }
 

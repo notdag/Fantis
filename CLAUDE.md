@@ -792,3 +792,33 @@ Tests: 5 new assertions (now 344) — all four IR-mass-move phrasings route to
 decision shortcuts. Verified live: "move all my IR eligible players to IR"
 now returns the real scan (99 players, 75 leagues) instead of the dead-end
 fallback.
+
+### Chat: force_start silently ignored every named player but the first (2026-09; found while confirming with the owner)
+
+Asked to confirm "make sure Drake London and Puka Nacua start" would work —
+it wouldn't have. `parseIntent`/`findMentions` correctly picked up both
+names, but the engine's `force_start` case did `const player = resolved[0]`
+and only ever acted on the first one, silently dropping the rest with no
+error or warning.
+
+Rewrote the case to force ALL named players together: one `optimizeLineup`
+call per league with every named player's id in the SAME `priorityRank` map
+(ranked by the order they were named, as a tie-break only if two of them
+ever compete for one slot), so a league where both are addable gets ONE
+combined `SET_LINEUP` proposal, not two conflicting ones. Every other
+existing safety rule now applies per player independently within that same
+pass — one being genuinely Out/bye/locked/already-on-IR never blocks the
+other from being forced in the same league — and each player gets his own
+summary line (already starting in N, can be started in N more, etc.),
+exactly the same wording the single-player case already used, just looped.
+
+Tests: 12 new assertions in `scripts/testCommandCenter.ts` (now 355) — both
+players forced together in one league overriding a much-higher-projected
+bench player, a league where only one of the two is rostered, a league
+where one is already starting and only the other gets proposed, and an Out
+player never force-started even though the other named player in the same
+command still gets forced in the same league. Verified live: "make sure
+Drake London and Puka Nacua start this week" now reports both players
+independently and correctly (16 leagues / 12 leagues already starting,
+Puka Nacua's IR and bye-week leagues disclosed separately) instead of
+silently dropping Puka Nacua.
