@@ -648,3 +648,34 @@ the two directions can't collide) and engine case
   account: "put Alec Pierce on IR" found him real-eligible in 14 leagues (10
   open slot, 4 full IR reported honestly), matching his actual "Out" status
   already confirmed via the weekly-sweep feature.
+
+### Chat: multi-target "add X and Y" — distinct drop per target (2026-09; requested explicitly by the owner)
+
+The owner asked whether mass-adding via waiver with FAAB and drop suggestions
+— already built for the dedicated Mass Add board (`lib/multiAddPlan.ts`) —
+also worked from chat. It did reach real proposals (`scan_player` for a bare
+multi-mention, or `execute_request` for "add X and Y everywhere" — both
+funnel through the same `runScan`/`addDraftsFromScan` pipeline), but had the
+exact bug `buildMultiAddPlan` was built to avoid: `addDraftsFromScan` picked
+`drops[leagueId].candidates[0]` (the single best bench candidate) for EVERY
+target in a league, so two targets both needing a drop in the same league
+would have been proposed to drop the SAME bench player — the second
+proposal would fail (or double-drop) if both were approved.
+
+Fixed by tracking claimed drop candidates per league within one batch
+(`claimedByLeague` in `addDraftsFromScan`) and picking the next-best
+UNCLAIMED candidate for each subsequent target — `DropAnalysis.candidates`
+is already a ranked, non-target-specific list (only excludes the incoming
+player himself), so this is a minimal, surgical fix rather than porting
+`multiAddPlan.ts`'s separate `PlanLeague`-based implementation into the chat
+engine. Since `addDraftsFromScan` is shared by `scan_player`, the `filter`
+follow-up, and `weekly_sweep`, all three get the fix at once. FAAB bids
+needed no change — `suggestBid` is already independent per (league,
+position), so there's no collision risk there.
+
+Tests: 7 new assertions in `scripts/testCommandCenter.ts` (now 321) — a
+synthetic full-roster league with two targets, confirming distinct drop
+names on both the bare-mention and "add X and Y" phrasings. Verified live
+against the real account: "add Malachi Fields and Germie Bernard everywhere"
+found 31 real leagues where both were proposed together, and every single
+one got a distinct drop suggestion — zero duplicates.

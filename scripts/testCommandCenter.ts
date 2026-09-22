@@ -1188,6 +1188,45 @@ async function main() {
     }
   }
 
+  // ---------- 24. "add <X> and <Y>" (chat) — distinct drop per target, real FAAB per target
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpMulti = ["QB", "WR", "BN", "BN"];
+    const pm: PlayerMap = {
+      fq: { n: "Multi QB", p: "QB", t: "DAL" },
+      starter1: { n: "Starting WR", p: "WR", t: "DAL" },
+      bench1: { n: "Weakest Bench", p: "WR", t: "DAL" },
+      bench2: { n: "Second Bench", p: "WR", t: "DAL" },
+      t1: { n: "Target One", p: "WR", t: "SEA" },
+      t2: { n: "Target Two", p: "WR", t: "SEA" },
+    };
+    const sig = signals(pm, { values: { bench1: 10, bench2: 20 } }); // bench1 weaker → dropped first
+    const league = { ...lg("1", "Multi Add League", rpMulti), settings: { roster_positions: rpMulti, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 2 } } };
+    const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "starter1", "bench1", "bench2"], starters: ["fq", "starter1"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [{ league, rosters: [roster, otherRoster([])], txns: [] }];
+
+    const env = makeEnv(fx, pm, sig);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Target One and Target Two", newSession(), env);
+    ok(out.audit.intent === "scan_player", "bare multi-mention still recognised as scan_player", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 2, "both targets get a real ADD proposal in the one full-roster league", String(drafts.length));
+    const byTarget = Object.fromEntries(drafts.map((d) => [(d.params as { addName: string }).addName, d.params as { dropName: string | null; bid: number; faab: boolean }]));
+    ok(byTarget["Target One"]?.dropName === "Weakest Bench" && byTarget["Target Two"]?.dropName === "Second Bench", "each target gets a DISTINCT drop candidate — never the same bench player proposed twice", JSON.stringify(byTarget));
+    ok(byTarget["Target One"]?.faab === true && byTarget["Target Two"]?.faab === true, "FAAB applies independently per target — no collision risk there");
+
+    // the "add X and Y" phrasing (a real execute_request) reaches the exact
+    // same real scan+draft pipeline, not just a bare refusal.
+    const env2 = makeEnv(fx, pm, sig);
+    env2.permission = "PROPOSE_ONLY";
+    const out2 = await handleCommand("add Target One and Target Two everywhere", newSession(), env2);
+    ok(out2.audit.intent === "execute_request", "verb-led phrasing recognised as execute_request", out2.audit.intent);
+    const drafts2 = draftsOf(out2.blocks);
+    const byTarget2 = Object.fromEntries(drafts2.map((d) => [(d.params as { addName: string }).addName, d.params as { dropName: string | null }]));
+    ok(drafts2.length === 2 && byTarget2["Target One"]?.dropName === "Weakest Bench" && byTarget2["Target Two"]?.dropName === "Second Bench", "\"add X and Y\" phrasing produces the same real, distinct-drop proposals as the bare mention", JSON.stringify(byTarget2));
+    ok(/I don't add anything from chat/.test(textOf(out2.blocks)), "still states plainly that chat itself never sends anything — review + approve is still required");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

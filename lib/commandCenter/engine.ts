@@ -1552,6 +1552,12 @@ function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<s
   const drafts: ProposalDraft[] = [];
   let skipped = 0;
   const seen = new Set<string>();
+  // When more than one target needs a drop in the SAME league (a multi-player
+  // "add X and Y" request), each gets a DISTINCT bench candidate — never
+  // proposed to drop the same player twice. `candidates` is already ranked
+  // weakest-first and isn't target-specific beyond excluding the incoming
+  // player, so the fix is just tracking which ones this batch already claimed.
+  const claimedByLeague = new Map<string, Set<string>>();
   for (const r of rows) {
     if (!ACTIONABLE.includes(r.state)) continue;
     const key = `${r.leagueId}:${r.playerId}`;
@@ -1561,11 +1567,14 @@ function addDraftsFromScan(env: EngineEnv, rows: LeagueResult[], drops: Record<s
     let drop: { id: string; name: string } | null = null;
     const rationale = [r.detail];
     if (r.needsDrop === true) {
-      const cand = drops?.[r.leagueId]?.candidates[0];
+      const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
+      const cand = drops?.[r.leagueId]?.candidates.find((c) => !claimed.has(c.playerId));
       if (!cand) {
         skipped++;
         continue;
       }
+      claimed.add(cand.playerId);
+      claimedByLeague.set(r.leagueId, claimed);
       drop = { id: cand.playerId, name: cand.name };
       rationale.push(`Roster is full — suggested drop: ${cand.name}`, ...cand.reasons.slice(0, 4));
     } else if (r.needsDrop === null) {
