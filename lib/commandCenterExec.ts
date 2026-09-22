@@ -46,6 +46,7 @@ export interface ExecDeps {
   bulkEnabled?: boolean; // Phase 4 switch, off unless the owner turned it on
   autoRuleEnabled?: boolean; // Phase 5 rule switch
   token: string | null;
+  week: number; // current week — needed to clear a starter slot before an IR move
   league: (leagueId: string) => CcLeague | null;
   readSnapshot: (league: CcLeague) => Promise<LeagueSnapshot>; // FRESH read, never cached
   injuryOf: (playerId: string) => string | null;
@@ -109,7 +110,7 @@ export async function executeProposal(p: Proposal, d: ExecDeps): Promise<ExecRes
       case "ADD":
         return await runAdd(p, league, token, d);
       case "IR_MOVE":
-        return await runIr(p, league, token, d);
+        return await runIr(p, league, token, d, snap);
       case "SET_LINEUP":
         return await runLineup(p, league, token, d);
     }
@@ -178,16 +179,33 @@ async function runAdd(p: Proposal, league: CcLeague, token: string, d: ExecDeps)
   return { status: "verify_failed", message: `The add was sent, but a re-read of your roster doesn't show ${a.addName}${a.dropName ? ` / the drop of ${a.dropName}` : ""}. Check Sleeper before doing anything else.`, sent: true };
 }
 
-async function runIr(p: Proposal, league: CcLeague, token: string, d: ExecDeps): Promise<ExecResult> {
+async function runIr(p: Proposal, league: CcLeague, token: string, d: ExecDeps, snap: LeagueSnapshot): Promise<ExecResult> {
   const a = p.params as IrParams;
   try {
     await d.writers.moveToIR(token, { leagueId: p.leagueId, rosterId: p.rosterId, playerId: a.playerId });
   } catch (e) {
-    return failed(d, e, "Move to IR");
+    // Sleeper refuses to IR a player still in the starting lineup — the same
+    // case lib/bulkPlan.ts/BulkIR.tsx already handle: bench him (one starter
+    // slot -> "0") from the pre-execution snapshot's real lineup, then retry
+    // once. Only tried when he's actually a starter there, never a blind retry.
+    const me = myRoster(snap);
+    const inStarters = !!me?.starters.includes(a.playerId);
+    if (!inStarters) return failed(d, e, "Move to IR");
+    try {
+      await d.writers.setStarters(token, {
+        leagueId: p.leagueId,
+        rosterId: p.rosterId,
+        starters: (me as NonNullable<typeof me>).starters.map((id) => (id === a.playerId ? "0" : id)),
+        week: d.week,
+      });
+      await d.writers.moveToIR(token, { leagueId: p.leagueId, rosterId: p.rosterId, playerId: a.playerId });
+    } catch (e2) {
+      return failed(d, e2, "Cleared his lineup slot, but the IR move still");
+    }
   }
   const after = await reread(league, d);
-  const me = after && myRoster(after);
-  if (me && me.reserve.includes(a.playerId)) return { status: "executed", message: `${a.playerName} moved to IR — confirmed on Sleeper.`, sent: true };
+  const me2 = after && myRoster(after);
+  if (me2 && me2.reserve.includes(a.playerId)) return { status: "executed", message: `${a.playerName} moved to IR — confirmed on Sleeper.`, sent: true };
   return { status: "verify_failed", message: `The IR move was sent, but a re-read doesn't show ${a.playerName} on IR. Check Sleeper.`, sent: true };
 }
 

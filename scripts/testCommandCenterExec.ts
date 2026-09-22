@@ -69,7 +69,11 @@ const addD = (lg = league(), over: Partial<Parameters<typeof addDraft>[0]> = {})
 const asProposal = (d: ProposalDraft, status: Proposal["status"] = "approved", id = "p1"): Proposal => ({ ...d, id, status, createdAt: NOW, updatedAt: NOW, events: [] });
 
 // ---- a fake Sleeper: mutable rosters + writers that (optionally) apply their change
-function fake(lg: CcLeague, initial: SnapRoster, opts: { applyWrites?: boolean; addDropError?: Error; pendingClaim?: boolean; writeError?: Error } = {}) {
+function fake(
+  lg: CcLeague,
+  initial: SnapRoster,
+  opts: { applyWrites?: boolean; addDropError?: Error; pendingClaim?: boolean; writeError?: Error; irFailFirst?: Error; clearFails?: Error } = {}
+) {
   let mine = { ...initial, players: [...initial.players], starters: [...initial.starters], reserve: [...initial.reserve], taxi: [...initial.taxi] };
   const calls = { add: 0, claim: 0, ir: 0, lineup: 0, reads: 0, tx: 0 };
   const apply = opts.applyWrites !== false;
@@ -91,12 +95,14 @@ function fake(lg: CcLeague, initial: SnapRoster, opts: { applyWrites?: boolean; 
     },
     async moveToIR(_t, p) {
       calls.ir++;
+      if (opts.irFailFirst && calls.ir === 1) throw opts.irFailFirst; // Sleeper rejects while he's a starter
       if (opts.writeError) throw opts.writeError;
       if (apply) mine.reserve.push(p.playerId);
       return {};
     },
     async setStarters(_t, p) {
       calls.lineup++;
+      if (opts.clearFails) throw opts.clearFails;
       if (opts.writeError) throw opts.writeError;
       if (apply) mine.starters = [...p.starters];
       return {};
@@ -110,6 +116,7 @@ function fake(lg: CcLeague, initial: SnapRoster, opts: { applyWrites?: boolean; 
     permission: "EXECUTE_APPROVED",
     mode: "individual",
     token: "tok",
+    week: 3,
     league: (id) => (id === lg.id ? lg : null),
     readSnapshot: async () => {
       calls.reads++;
@@ -267,6 +274,24 @@ async function main() {
     const gone = fake(lg, roster());
     const rg = await executeProposal(ir, gone.deps({ injuryOf: () => null }));
     ok(rg.status === "expired" && gone.calls.ir === 0, "no longer IR-eligible → expired, no write");
+
+    // Sleeper refuses to IR a player who is currently a starter until he's benched first
+    // (same case BulkIR.tsx/lib/bulkPlan.ts already handle for the older direct tool).
+    const starterIr = asProposal(irDraft({ league: lg, playerId: "q", playerName: "Starter Guy", injury: "IR", rationale: [], command: "" }));
+    const bench = fake(lg, roster(), { irFailFirst: new Error("Cannot reserve a player in your starting lineup") });
+    const rb = await executeProposal(starterIr, bench.deps({ injuryOf: (id) => (id === "q" ? "IR" : null) }));
+    ok(rb.status === "executed" && bench.calls.lineup === 1 && bench.calls.ir === 2, "starter IR move: bench-then-retry succeeds and is verified", rb.message);
+    ok(!bench.mine.starters.includes("q") && bench.mine.reserve.includes("q"), "starter cleared from the lineup and landed on IR", JSON.stringify(bench.mine));
+
+    const benchFail = fake(lg, roster(), { irFailFirst: new Error("Cannot reserve a player in your starting lineup"), clearFails: new Error("Sleeper rejected the lineup change") });
+    const rbf = await executeProposal(starterIr, benchFail.deps({ injuryOf: (id) => (id === "q" ? "IR" : null) }));
+    ok(rbf.status === "failed" && /Cleared his lineup slot, but the IR move still failed/.test(rbf.message), "clear-then-retry: if the clear itself fails, reports both steps", rbf.message);
+    ok(benchFail.calls.ir === 1 && benchFail.calls.lineup === 1, "one IR attempt, one clear attempt — no blind retry loop");
+
+    const benchPlayer = asProposal(irDraft({ league: lg, playerId: "b3", playerName: "Bench Guy", injury: "IR", rationale: [], command: "" }));
+    const notStarter = fake(lg, roster(), { writeError: new Error("Some other Sleeper error") });
+    const rns = await executeProposal(benchPlayer, notStarter.deps({ injuryOf: (id) => (id === "b3" ? "IR" : null) }));
+    ok(rns.status === "failed" && notStarter.calls.lineup === 0, "a bench player's IR failure never triggers a lineup clear attempt", rns.message);
 
     const lu: Proposal = asProposal({ kind: "SET_LINEUP", leagueId: "1", leagueName: "L", rosterId: 1, origin: "chat", command: "", rationale: [], params: { week: 3, fromStarters: [...starters], toStarters: [...starters.slice(0, 8), "b1"], changes: [{ slot: "DEF", outName: "d", inName: "b1" }], gain: 3 } });
     const fl = fake(lg, roster());

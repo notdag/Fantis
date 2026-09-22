@@ -141,6 +141,7 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
       return {
         permission: readPermission(),
         mode,
+        week: week ?? leg,
         bulkEnabled,
         autoRuleEnabled: readAutoConfig().enabled && readAutoConfig().irMove,
         token: getStoredToken(),
