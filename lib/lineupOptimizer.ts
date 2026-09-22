@@ -66,6 +66,13 @@ const RANKING_BASE = 3e6;
 const RANKING_STEP = 1000; // per rank position; ranks are capped at 1000
 const AVOID_PENALTY = 5e5;
 const STAY_PUT_BONUS = 0.0005;
+// A priority-ranked player's own true position slot (WR, not FLEX) is worth
+// the exact same real points as a flex slot, so nothing above would ever
+// break a tie between them — the assignment could land him in FLEX while an
+// equally-weighted teammate sits in his true slot, purely as an artifact of
+// solve order. This nudges a priority player toward his own true slot when
+// eligible for both, so "start him" doesn't accidentally mean "in flex."
+const PRIORITY_TRUE_SLOT_BONUS = 0.001;
 const BIG = 1e9;
 
 // Hungarian algorithm (min cost), rows <= cols. Returns, for each row, the
@@ -171,7 +178,8 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
         if (!eligible.has(pos)) {
           row[c] = BIG * 10; // not allowed in this slot
         } else {
-          row[c] = BIG - (weight(id) + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
+          const trueSlot = input.priorityRank?.(id) !== undefined && pos === slotCodes[slotIdx] ? PRIORITY_TRUE_SLOT_BONUS : 0;
+          row[c] = BIG - (weight(id) + trueSlot + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
         }
       }
       for (let c = pool.length; c < cols; c++) row[c] = BIG; // empty filler, weight 0

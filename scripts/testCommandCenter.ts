@@ -982,6 +982,31 @@ async function main() {
       const o = await handleCommand(v, newSession(), env);
       ok(o.audit.intent === "force_start", `phrasing → force_start: "${v}"`, o.audit.intent);
     }
+
+    // regression: when the forced player is eligible for BOTH his true position
+    // slot and a FLEX slot, he must land in the true slot, not FLEX — the
+    // assignment optimizer treats his weight as identical in either slot, so
+    // without a tie-break he could end up in FLEX purely by solve order while
+    // an equally-projected teammate sits in the real WR slot.
+    const rpFlex = ["QB", "WR", "FLEX", "BN"];
+    const flexSettings = { roster_positions: rpFlex, settings: { reserve_slots: 1 } };
+    const l5Pm: PlayerMap = {
+      fq: { n: "Force QB", p: "QB", t: "DAL" },
+      target: { n: "Target WR", p: "WR", t: "IND" },
+      wrSlotGuy: { n: "WR Slot Guy", p: "WR", t: "IND" },
+      flexSlotGuy: { n: "Flex Slot Guy", p: "WR", t: "IND" },
+    };
+    const l5Proj: ProjectionMap = { fq: { pts_ppr: 20 }, target: { pts_ppr: 5 }, wrSlotGuy: { pts_ppr: 15 }, flexSlotGuy: { pts_ppr: 15 } };
+    const l5 = { ...lg("5", "Force L5 — WR vs FLEX tie"), settings: flexSettings };
+    const r5: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "wrSlotGuy", "flexSlotGuy", "target"], starters: ["fq", "wrSlotGuy", "flexSlotGuy"], reserve: [], taxi: [] };
+    const env5 = makeEnv([{ league: l5, rosters: [r5, otherRoster([])], txns: [] }], l5Pm, undefined, undefined, { projections: l5Proj, week: 3 });
+    env5.kickoffs = async () => ({ DAL: future, IND: future });
+    const out5 = await handleCommand("Make sure Target WR starts this week", newSession(), env5);
+    const drafts5 = out5.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts");
+    ok(!!drafts5 && drafts5.drafts.length === 1, "WR/FLEX tie league still gets exactly one proposal");
+    const rp5 = drafts5!.drafts[0].params as { toStarters: string[] };
+    ok(rp5.toStarters[1] === "target", "forced player lands in the real WR slot (index 1), not FLEX (index 2)", JSON.stringify(rp5.toStarters));
+    ok(rp5.toStarters[2] !== "target", "forced player is NOT the one sitting in the FLEX slot", JSON.stringify(rp5.toStarters));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
