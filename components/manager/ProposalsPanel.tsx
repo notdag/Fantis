@@ -392,8 +392,9 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
                   </span>
                 ))}
                 confirmLabel={`Send ${selectedList.length} to Sleeper, one at a time`}
-                onConfirm={() => { if (bulkAck) void startBulk(selectedList); }}
+                onConfirm={() => void startBulk(selectedList)}
                 onCancel={() => setBulkConfirm(false)}
+                disabled={!bulkAck}
               />
               <label className="hint" style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 0" }}>
                 <input type="checkbox" checked={bulkAck} onChange={(e) => setBulkAck(e.target.checked)} />

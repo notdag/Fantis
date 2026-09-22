@@ -33,12 +33,18 @@ export function BulkConfirm({
   confirmLabel,
   onConfirm,
   onCancel,
+  disabled,
 }: {
   title: string;
   lines: ReactNode[];
   confirmLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
+  // When true the confirm button is disabled instead of silently no-op'ing —
+  // use this (not an onConfirm early-return) when confirming depends on
+  // something else the user must do first (e.g. a review checkbox), so a
+  // click always gives visible feedback.
+  disabled?: boolean;
 }) {
   return (
     <div className="card sync" style={{ marginBottom: 12, borderColor: "var(--amber)" }}>
@@ -52,7 +58,7 @@ export function BulkConfirm({
         These are real changes on Sleeper and can&rsquo;t be undone from here.
       </p>
       <div className="field">
-        <button className="btn" onClick={onConfirm}>{confirmLabel}</button>
+        <button className="btn" disabled={disabled} onClick={onConfirm}>{confirmLabel}</button>
         <button className="btn ghost" onClick={onCancel}>Cancel</button>
       </div>
     </div>
