@@ -868,3 +868,31 @@ player is literally on the waiver wire, not just any free agent — same
 filter `parseFilter` already applies everywhere else. A pure free agent
 in a league that filter excludes is not a bug; say "add" instead of
 "waiver" for "anywhere he's addable, however."
+
+### Chat: "drop candidates" fell into the same dead-end as "move all my IR eligible" (2026-09; found in a final pre-deploy sweep)
+
+One more of the exact collision class fixed earlier for ir_opps/waiver_opps/
+roster_decisions: a genuinely informational query that happens to start with
+a word `execute_request`'s verb match grabs first. "Drop candidates for my
+worst players" (or just "drop my worst players") starts with the bare word
+"drop" — with no player named, it fell into the generic refusal-plus-preview
+dead end instead of the real `drops` intent.
+
+Fixed narrowly rather than reordering `drops` relative to
+`candidate_leagues`/`aggregate_drops` (which it deliberately excludes
+"which league(s)" phrasing to stay out of the way of) — a small, separate
+pre-check for the specific colliding shape: no player named, sentence starts
+with "drop", and contains the same informational language (bottom/worst/
+weakest/candidates) the real `drops` trigger already looks for. A real
+"drop &lt;player&gt;" request is completely untouched.
+
+This was found by grepping the codebase for every remaining
+`execute_request`-verb word (add/drop/claim/move/put/start/bench/...) against
+plausible informational phrasing that could start a sentence with one of
+them — the same audit technique that found the IR/waiver ordering bug.
+Nothing else turned up.
+
+Tests: 2 new phrasing variants added to the existing drops test in
+`scripts/testCommandCenter.ts` (now 367). Verified live: "drop candidates
+for my worst players" now returns the real 210-league scan instead of the
+dead-end fallback.

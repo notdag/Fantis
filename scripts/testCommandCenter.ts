@@ -287,7 +287,17 @@ async function main() {
       const o = await handleCommand(v, newSession(), makeEnv(scenario(), pm));
       ok(o.session.targets[0]?.id === "100" && o.session.results?.length === 8, `variant resolves to the scan workflow: "${v}"`, o.audit.intent);
     }
-    const dropVariants = ["Who can I drop?", "Give me my worst 3", "What's my weakest player?", "Find the bottom 3 players on each roster."];
+    const dropVariants = [
+      "Who can I drop?",
+      "Give me my worst 3",
+      "What's my weakest player?",
+      "Find the bottom 3 players on each roster.",
+      // starts with the bare word "drop" — would otherwise be grabbed by the
+      // execute_request verb match (no player named) instead of this real
+      // informational drops scan.
+      "Drop candidates for my worst players",
+      "drop my worst players",
+    ];
     for (const v of dropVariants) {
       const o = await handleCommand(v, newSession(), makeEnv(scenario(), pm));
       ok(o.audit.intent === "drops", `variant → drop workflow: "${v}"`, o.audit.intent);

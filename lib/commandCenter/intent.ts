@@ -199,6 +199,15 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (mentions.length === 0 && /\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
   if (mentions.length === 0 && (/\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t))) return { kind: "ir_opps" };
 
+  // "Drop candidates for my worst players" — an informational drops query
+  // that happens to start with the bare word "drop" would otherwise be
+  // grabbed by the execute_request verb match below with no player named.
+  // Narrow on purpose (no mention + drops' own informational language) so a
+  // real "drop <player>" request is completely untouched.
+  if (mentions.length === 0 && /^drop\b/.test(t) && /\b(bottom|worst|weakest|lowest|candidates?)\b/.test(t)) {
+    return { kind: "drops", count: numberIn(t, 3), mentions };
+  }
+
   // "add X, Y, drop A, B if needed" — or just as naturally, "I want to waiver
   // X in all leagues and drop Y": ANY sentence with real player mentions
   // both before AND after a standalone "drop"/"dropping" token is read as
