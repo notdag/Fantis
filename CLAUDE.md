@@ -722,3 +722,45 @@ New `drop_preferences` intent/case, distinct from the ordinary drop-verb
   Perine" matched 125 of 207 real leagues that needed a drop and disclosed
   the other 82 by name; re-checked the matched leagues for duplicate
   assignments within that one turn and found none.
+
+### Combined "add X, Y, drop A, B if needed"; IR open-bench-slot report; bulk cap 25→200 (2026-09; requested explicitly by the owner)
+
+Three requested follow-ups on the above, all shipped together:
+
+- **Combined single-message drop order** — the two-message drop_preferences
+  flow can now be written in ONE message: "add X, Y, drop A, B if needed".
+  `lib/commandCenter/intent.ts`'s `execute_request` now splits the sentence
+  at the first standalone "drop"/"dropping" token (never mid-word, e.g.
+  never inside "Dropbox") when the primary verb isn't itself "drop" —
+  mentions before the split are the add targets, mentions after are the
+  drop order. The shared per-league matching logic (full roster re-check,
+  never a starter/IR/priority player, one name claimed per league) was
+  extracted out of `drop_preferences` into `applyDropOrder`, now called by
+  both: the follow-up passes `openSlot: []` (those leagues were already
+  proposed on the earlier turn), the combined syntax passes both the
+  needs-a-drop AND the open-slot rows so nothing from the single message is
+  left uncovered. Verified live: "add Malachi Fields and Germie Bernard
+  everywhere, drop Antonio Williams then Tank Bigsby if needed" produced 110
+  real proposals in one call (99 via the drop order, 11 open-slot), with 8
+  leagues getting both targets proposed together — every one with correctly
+  distinct treatment.
+- **IR opportunities: open bench slot after the move** — `ir_opps` now also
+  reports which leagues would have an open bench/active slot once the
+  proposed IR moves go through (real roster math — a player moving from
+  active to IR always frees the slot behind him, computed from the league's
+  real `roster_positions` length and current active count, not a guess).
+  Ties directly into the mass-add workflow: those are the leagues where a
+  waiver add could follow without needing its own drop. Verified live: 41 of
+  75 real leagues would open a slot if all 50 proposed IR moves went through.
+- **Bulk execution cap: 25 → 200** (`components/manager/ProposalsPanel.tsx`,
+  `BULK_CAP`) — the owner has 200+ leagues and wanted to run bulk sends
+  across all of them, not in batches of 25. Purely the ceiling: still
+  sequential (concurrency 1, 400ms gap), still stops at the first
+  unverified result or an auth error, still one confirmation checkbox
+  before anything sends. (Phase 5's separate auto-execute "max per run" cap,
+  a deliberately more conservative limit for UNATTENDED execution, was left
+  at 25 — not part of this request and a materially different risk profile.)
+- Tests: 12 new assertions in `scripts/testCommandCenter.ts` (now 339) —
+  the combined syntax's distinct assignment and open-slot coverage in one
+  message, the IR open-bench-slot math (including a league with no real
+  move never appearing in the report).

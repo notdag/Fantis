@@ -448,7 +448,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
   };
 
   // ---- core: scan the given targets
-  const runScan = async (targets: PlayerCard[], filter: ViewFilter, wantDrops: boolean, exec?: string) => {
+  const runScan = async (targets: PlayerCard[], filter: ViewFilter, wantDrops: boolean, exec?: string, customDropOrder?: PlayerCard[]) => {
     const label = `Scanning for ${targets.map((p) => p.name).join(", ")}`;
     const { snaps, meta } = await scanAll(env, true, label, (snap) => {
       // live counts for the progress display
@@ -505,13 +505,118 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     void wantDrops;
     if (view.some((r) => ACTIONABLE.includes(r.state))) {
       blocks.push(previewFor(env, view, drops));
-      const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
-      const d = addDraftsFromScan(env, view, drops, text, faabStats);
-      const b = draftsBlock(env, permission, d.drafts, d.skipped);
-      if (b) blocks.push(b);
+      if (customDropOrder && customDropOrder.length > 0) {
+        const actionable = view.filter((r) => ACTIONABLE.includes(r.state));
+        await applyDropOrder(
+          actionable.filter((r) => r.needsDrop === true),
+          actionable.filter((r) => r.needsDrop === false),
+          customDropOrder
+        );
+      } else {
+        const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
+        const d = addDraftsFromScan(env, view, drops, text, faabStats);
+        const b = draftsBlock(env, permission, d.drafts, d.skipped);
+        if (b) blocks.push(b);
+      }
     }
   };
   const liveTotals: AvailState[] = [];
+
+  // ---- shared: apply the owner's own drop order (in the order given) to
+  // whichever leagues need a drop, and straightforwardly add wherever there's
+  // an open spot — used both by the "add X, Y, drop A, B" combined syntax and
+  // the two-message drop_preferences follow-up (which passes openSlot: [],
+  // since those leagues were already proposed on the earlier turn).
+  const applyDropOrder = async (needy: LeagueResult[], openSlot: LeagueResult[], dropOrder: PlayerCard[]) => {
+    if (needy.length === 0 && openSlot.length === 0) {
+      blocks.push({ t: "text", tone: "info", text: "Nothing from the last scan needs a drop, so there's nothing for a drop order to apply to." });
+      return;
+    }
+    const faabStats = [...needy, ...openSlot].some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
+    const drafts: ProposalDraft[] = [];
+    for (const r of openSlot) {
+      const league = env.tools.get_league_details(r.leagueId);
+      const bidMin = numSetting(league.settings, "waiver_bid_min");
+      const pos = env.pmap[r.playerId]?.p ?? "";
+      const suggestion = r.faab ? suggestBid(faabStats, r.leagueId, pos, bidMin, bidMin) : { bid: 0, n: 0, sourced: false };
+      const rationale = [r.detail, "Open roster spot — no drop needed"];
+      if (r.faab) {
+        rationale.push(
+          suggestion.sourced
+            ? `Suggested bid $${suggestion.bid} — based on ${suggestion.n} real winning ${pos} claim${suggestion.n === 1 ? "" : "s"} in this league`
+            : `No ${pos} claim history in this league yet — using the $${suggestion.bid} bid minimum`
+        );
+      }
+      drafts.push(addDraft({ league, addId: r.playerId, addName: posName(env, r.playerId), drop: null, waiver: r.state === "WAIVER", faab: r.faab, bid: suggestion.bid, rationale, command: text }));
+    }
+    const leagueIds = [...new Set(needy.map((r) => r.leagueId))];
+    const snapsById = new Map<string, LeagueSnapshot>();
+    for (const id of leagueIds) snapsById.set(id, await env.tools.get_league_snapshot(id, true));
+    // Each drop name is claimed by at most one target per league — same rule
+    // as a multi-target add's auto-suggested drops, just driven by the
+    // owner's own list and order instead of Fantis's ranking.
+    const claimedByLeague = new Map<string, Set<string>>();
+    const noMatch: { leagueId: string; leagueName: string }[] = [];
+    for (const r of needy) {
+      const snap = snapsById.get(r.leagueId);
+      const me = snap?.rosters?.find((x) => x.rosterId === snap.league.rosterId);
+      if (!me) {
+        noMatch.push({ leagueId: r.leagueId, leagueName: r.leagueName });
+        continue;
+      }
+      const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
+      const off = new Set([...me.reserve, ...me.taxi]);
+      const starterSet = new Set(me.starters.filter((id) => id && id !== "0"));
+      const pick = dropOrder.find((p) => me.players.includes(p.id) && !off.has(p.id) && !starterSet.has(p.id) && !env.signals.priority.has(p.id) && !claimed.has(p.id));
+      if (!pick) {
+        noMatch.push({ leagueId: r.leagueId, leagueName: r.leagueName });
+        continue;
+      }
+      claimed.add(pick.id);
+      claimedByLeague.set(r.leagueId, claimed);
+      const league = env.tools.get_league_details(r.leagueId);
+      const bidMin = numSetting(league.settings, "waiver_bid_min");
+      const pos = env.pmap[r.playerId]?.p ?? "";
+      const suggestion = r.faab ? suggestBid(faabStats, r.leagueId, pos, bidMin, bidMin) : { bid: 0, n: 0, sourced: false };
+      const rationale = [r.detail, `Your drop order: dropping ${pick.name}`];
+      if (r.faab) {
+        rationale.push(
+          suggestion.sourced
+            ? `Suggested bid $${suggestion.bid} — based on ${suggestion.n} real winning ${pos} claim${suggestion.n === 1 ? "" : "s"} in this league`
+            : `No ${pos} claim history in this league yet — using the $${suggestion.bid} bid minimum`
+        );
+      }
+      drafts.push(
+        addDraft({
+          league,
+          addId: r.playerId,
+          addName: posName(env, r.playerId),
+          drop: { id: pick.id, name: pick.name },
+          waiver: r.state === "WAIVER",
+          faab: r.faab,
+          bid: suggestion.bid,
+          rationale,
+          command: text,
+        })
+      );
+    }
+    const matched = needy.length - noMatch.length;
+    if (needy.length > 0) {
+      blocks.push({
+        t: "text",
+        tone: drafts.length ? "good" : "info",
+        text: `Your drop order (${dropOrder.map((p) => p.name).join(" → ")}) applies to ${matched} of ${needy.length} league${needy.length === 1 ? "" : "s"} that needed a drop${
+          openSlot.length > 0 ? `; ${openSlot.length} more had an open roster spot and needed no drop` : ""
+        }${noMatch.length > 0 ? `; ${noMatch.length} have none of your listed players as an eligible bench player (not rostered there, or only as a starter/on IR/priority-protected)` : ""}. Nothing has been changed.`,
+      });
+    }
+    if (noMatch.length > 0) {
+      blocks.push({ t: "decisions", title: "No match for your drop order", rows: noMatch.map((s) => ({ leagueId: s.leagueId, leagueName: s.leagueName, items: ["None of your listed drop players are eligible on this roster"] })), truncated: 0 });
+    }
+    const b = draftsBlock(env, permission, drafts, noMatch.length);
+    if (b) blocks.push(b);
+    recs.push(`${drafts.length} leagues matched (drop order + open slots)`);
+  };
 
   // ---------------------------------------------------------------- intents
   switch (intent.kind) {
@@ -648,76 +753,10 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       if (!dropOrder) break; // ambiguous or not found — resolveMentions already asked/explained
       const view = applyFilter(session.results, session.filter);
       const needy = view.filter((r) => ACTIONABLE.includes(r.state) && r.needsDrop === true);
-      if (needy.length === 0) {
-        blocks.push({ t: "text", tone: "info", text: "Nothing from the last scan needs a drop, so there's nothing for a drop order to apply to." });
-        break;
-      }
-      const leagueIds = [...new Set(needy.map((r) => r.leagueId))];
-      const snapsById = new Map<string, LeagueSnapshot>();
-      for (const id of leagueIds) snapsById.set(id, await env.tools.get_league_snapshot(id, true));
-      const faabStats = needy.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
-      // Each drop name is claimed by at most one target per league — same
-      // rule as a multi-target add's auto-suggested drops, just driven by
-      // the owner's own list and order instead of Fantis's ranking.
-      const claimedByLeague = new Map<string, Set<string>>();
-      const drafts: ProposalDraft[] = [];
-      const noMatch: { leagueId: string; leagueName: string }[] = [];
-      for (const r of needy) {
-        const snap = snapsById.get(r.leagueId);
-        const me = snap?.rosters?.find((x) => x.rosterId === snap.league.rosterId);
-        if (!me) {
-          noMatch.push({ leagueId: r.leagueId, leagueName: r.leagueName });
-          continue;
-        }
-        const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
-        const off = new Set([...me.reserve, ...me.taxi]);
-        const starterSet = new Set(me.starters.filter((id) => id && id !== "0"));
-        const pick = dropOrder.find((p) => me.players.includes(p.id) && !off.has(p.id) && !starterSet.has(p.id) && !env.signals.priority.has(p.id) && !claimed.has(p.id));
-        if (!pick) {
-          noMatch.push({ leagueId: r.leagueId, leagueName: r.leagueName });
-          continue;
-        }
-        claimed.add(pick.id);
-        claimedByLeague.set(r.leagueId, claimed);
-        const league = env.tools.get_league_details(r.leagueId);
-        const bidMin = numSetting(league.settings, "waiver_bid_min");
-        const pos = env.pmap[r.playerId]?.p ?? "";
-        const suggestion = r.faab ? suggestBid(faabStats, r.leagueId, pos, bidMin, bidMin) : { bid: 0, n: 0, sourced: false };
-        const rationale = [r.detail, `Your drop order: dropping ${pick.name}`];
-        if (r.faab) {
-          rationale.push(
-            suggestion.sourced
-              ? `Suggested bid $${suggestion.bid} — based on ${suggestion.n} real winning ${pos} claim${suggestion.n === 1 ? "" : "s"} in this league`
-              : `No ${pos} claim history in this league yet — using the $${suggestion.bid} bid minimum`
-          );
-        }
-        drafts.push(
-          addDraft({
-            league,
-            addId: r.playerId,
-            addName: posName(env, r.playerId),
-            drop: { id: pick.id, name: pick.name },
-            waiver: r.state === "WAIVER",
-            faab: r.faab,
-            bid: suggestion.bid,
-            rationale,
-            command: text,
-          })
-        );
-      }
-      blocks.push({
-        t: "text",
-        tone: drafts.length ? "good" : "info",
-        text: `Your drop order (${dropOrder.map((p) => p.name).join(" → ")}) applies to ${drafts.length} of ${needy.length} league${needy.length === 1 ? "" : "s"} that needed a drop${
-          noMatch.length > 0 ? `; ${noMatch.length} have none of your listed players as an eligible bench player (not rostered there, or only as a starter/on IR/priority-protected)` : ""
-        }. Nothing has been changed.`,
-      });
-      if (noMatch.length > 0) {
-        blocks.push({ t: "decisions", title: "No match for your drop order", rows: noMatch.map((s) => ({ leagueId: s.leagueId, leagueName: s.leagueName, items: ["None of your listed drop players are eligible on this roster"] })), truncated: 0 });
-      }
-      const b = draftsBlock(env, permission, drafts, noMatch.length);
-      if (b) blocks.push(b);
-      recs.push(`${drafts.length} leagues matched to your drop order`);
+      // openSlot: [] — those leagues were already proposed (auto, no drop
+      // needed) on the earlier "add ... everywhere" turn; this follow-up
+      // only touches the ones that actually needed a drop.
+      await applyDropOrder(needy, [], dropOrder);
       break;
     }
 
@@ -824,6 +863,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       blocks.push({ t: "text", tone: list.length ? "good" : "info", text: `${rows.length} player${rows.length === 1 ? "" : "s"} across ${list.length} league${list.length === 1 ? "" : "s"} could be moved to IR under each league's own IR rules (Doubtful is never suggested). Nothing has been moved.` });
       blocks.push({ t: "decisions", title: "IR opportunities", rows: list.slice(0, ROW_CAP), truncated: Math.max(0, list.length - ROW_CAP) });
       const irDrafts: ProposalDraft[] = [];
+      const movesByLeague = new Map<string, number>();
       for (const r of rows) {
         if (r.needsDrop) continue; // IR is full — never auto-proposed
         irDrafts.push(
@@ -836,9 +876,36 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
             command: text,
           })
         );
+        movesByLeague.set(r.leagueId, (movesByLeague.get(r.leagueId) ?? 0) + 1);
+      }
+      // A player moving from the active roster to IR always frees an active
+      // (bench) spot behind him — real roster math, not a guess, so this
+      // tells the owner up front where a waiver add could follow without
+      // needing its own drop.
+      const openAfter: { leagueId: string; leagueName: string; slots: number }[] = [];
+      for (const [leagueId, moves] of movesByLeague) {
+        const lgPlan = plan.find((p) => p.leagueId === leagueId);
+        const rp = lgPlan && rosterPositions(lgPlan.settings);
+        if (!lgPlan || !rp) continue;
+        const activeBefore = lgPlan.players.length - lgPlan.reserve.length;
+        const slots = Math.max(0, rp.length - (activeBefore - moves));
+        if (slots > 0) openAfter.push({ leagueId, leagueName: lgPlan.leagueName, slots });
       }
       const irb = draftsBlock(env, permission, irDrafts);
       if (irb) blocks.push(irb);
+      if (openAfter.length > 0) {
+        blocks.push({
+          t: "text",
+          tone: "info",
+          text: `If all ${irDrafts.length} of those IR moves go through, ${openAfter.length} league${openAfter.length === 1 ? "" : "s"} would have an open bench slot afterward — worth knowing before a waiver add there.`,
+        });
+        blocks.push({
+          t: "decisions",
+          title: "Open bench slot after these IR moves",
+          rows: openAfter.slice(0, ROW_CAP).map((o) => ({ leagueId: o.leagueId, leagueName: o.leagueName, items: [`${o.slots} open slot${o.slots === 1 ? "" : "s"} after the move${movesByLeague.get(o.leagueId)! > 1 ? "s" : ""}`] })),
+          truncated: Math.max(0, openAfter.length - ROW_CAP),
+        });
+      }
       recs.push(`${rows.length} IR-eligible players in ${list.length} leagues`);
       break;
     }
@@ -1531,7 +1598,17 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           blocks.push({ t: "text", tone: "info", text: `Only showing leagues that match what you asked for: ${describeFilter(intent.filter)}.` });
         }
         const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: intent.filter, wantDrops: false, execVerb: intent.verb });
-        if (resolved) await runScan(resolved, intent.filter, false, intent.verb);
+        if (!resolved) break;
+        if (intent.dropOrder && intent.dropOrder.length > 0) {
+          // "add X, Y, drop A, B if needed" in one message — resolve the
+          // owner's drop-order names too, then apply them the same way the
+          // two-message drop_preferences follow-up does.
+          const dropOrder = await resolveMentions(intent.dropOrder.map((m) => m.text), [], { filter: {}, wantDrops: false });
+          if (!dropOrder) break;
+          await runScan(resolved, intent.filter, false, intent.verb, dropOrder);
+          break;
+        }
+        await runScan(resolved, intent.filter, false, intent.verb);
         break;
       }
       const analyses = Object.values(session.drops ?? {});

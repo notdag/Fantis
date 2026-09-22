@@ -23,7 +23,7 @@ import { BulkConfirm } from "./BulkConfirm";
 import { useRefreshLeagues } from "./useRefreshLeagues";
 import { readAutoConfig, readAutoDay, readPermission, useAutoConfig, useAutoDay, useBulkEnabled, usePermission, writeAutoConfig, writeAutoDay, writeBulkEnabled } from "./ccStore";
 
-const BULK_CAP = 25;
+const BULK_CAP = 200;
 
 const STATUS_LABEL: Record<ProposalStatus, string> = {
   proposed: "Needs review",

@@ -34,7 +34,7 @@ export type Intent =
   | { kind: "waiver_opps" }
   | { kind: "ir_opps" }
   | { kind: "roster_decisions" }
-  | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter }
+  | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter; dropOrder?: Mention[] }
   | { kind: "reset" }
   | { kind: "help" }
   | { kind: "unknown" };
@@ -69,6 +69,23 @@ export function parseFilter(t: string): ViewFilter {
 }
 
 export const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
+
+// Splits an "add X, Y, drop A, B if needed" style sentence at the FIRST
+// standalone "drop"/"dropping" token (not part of another word, e.g. never
+// matches inside "Dropbox"), so the mentions before it are the add targets
+// and the mentions after it are the owner's own drop order — same split the
+// two-message drop_preferences follow-up applies, just in one sentence.
+// Returns null if there's no such keyword, or no real player mentions after
+// it (a bare "...drop him if needed" has nothing to extract).
+function splitAtDropKeyword(text: string, mentions: Mention[]): { before: Mention[]; after: Mention[] } | null {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const idx = tokens.findIndex((tok) => /^drop(ping)?[.,!?]?$/i.test(tok));
+  if (idx < 0) return null;
+  const after = mentions.filter((m) => m.start > idx);
+  if (after.length === 0) return null;
+  const before = mentions.filter((m) => m.end <= idx);
+  return { before, after };
+}
 
 export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean; hasMatchups?: boolean; hasStandings?: boolean }): Intent {
   const text = raw.trim();
@@ -179,6 +196,14 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (verb || /\b(go ahead|do it|make (it|the (move|claim|change)s?) happen|execute (it|them|all)|confirm (it|all|them)|apply (it|them)|submit (it|them|all))\b/.test(t)) {
     const ef = parseFilter(t);
     if (ef.needsDrop === undefined && ef.states?.length === 1 && ef.states[0] === "AVAILABLE") delete ef.states;
+    // "add X, Y, drop A, B if needed" in ONE message — same drop-order idea
+    // as the two-message drop_preferences follow-up, just combined. Only
+    // when the primary verb isn't itself "drop" (that's a plain drop
+    // request, nothing to split).
+    if (verb?.[1] !== "drop") {
+      const split = splitAtDropKeyword(text, mentions);
+      if (split) return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions: split.before, filter: ef, dropOrder: split.after };
+    }
     return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions, filter: ef };
   }
 

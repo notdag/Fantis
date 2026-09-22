@@ -1293,6 +1293,72 @@ async function main() {
     ok(out3.audit.intent === "drop_preferences" && !out3.blocks.some((b) => b.t === "drafts") && /Nothing from the last scan needs a drop/.test(textOf(out3.blocks)), "a scan where nothing needed a drop → says so, nothing to propose");
   }
 
+  // ---------- 26. ir_opps — open bench slot after the IR moves
+  {
+    const rp = ["QB", "WR", "BN", "BN"];
+    const settings = { roster_positions: rp, settings: { reserve_slots: 1 } };
+    const pm: PlayerMap = {
+      fq: { n: "Bench QB", p: "QB", t: "DAL" },
+      s1: { n: "Starter One", p: "WR", t: "DAL" },
+      injPlayer: { n: "Hurt Bench Guy", p: "WR", t: "DAL", inj: "IR" },
+      bench2: { n: "Healthy Bench", p: "WR", t: "DAL" },
+      healthyOnly: { n: "All Healthy Guy", p: "WR", t: "DAL" },
+    };
+    // League A: full roster, one real IR-eligible bench player → a real IR_MOVE draft, opening 1 slot.
+    const lA = { ...lg("1", "Bench Slot League A", rp), settings };
+    const rA: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "injPlayer", "bench2"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+    // League B: nobody injured → no IR draft, never appears in the open-slot report.
+    const lB = { ...lg("2", "Bench Slot League B — nobody hurt", rp), settings };
+    const rB: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "healthyOnly", "bench2"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [
+      { league: lA, rosters: [rA, otherRoster([])], txns: [] },
+      { league: lB, rosters: [rB, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Find all leagues where I have an injured player who could go on IR", newSession(), env);
+    const txt = textOf(out.blocks);
+    ok(/1 league would have an open bench slot afterward/.test(txt), "reports the real open-bench-slot count after the proposed IR moves", txt.slice(0, 400));
+    const slotBlock = out.blocks.find((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions" && b.title === "Open bench slot after these IR moves");
+    ok(!!slotBlock && slotBlock.rows.length === 1 && slotBlock.rows[0].leagueName === "Bench Slot League A" && /1 open slot/.test(slotBlock.rows[0].items[0]), "names the specific league and the real slot count (roster math: 4 active, 1 moves to IR, 4-slot roster → 1 open)", JSON.stringify(slotBlock));
+    ok(!slotBlock || !slotBlock.rows.some((r) => r.leagueName.includes("nobody hurt")), "a league with no real IR move never appears in the open-slot report");
+  }
+
+  // ---------- 27. "add X, Y, drop A, B if needed" — combined single-message drop order
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpOpen = ["QB", "WR", "WR", "WR", "BN"];
+    const rpFull = ["QB", "WR", "WR", "BN"];
+    const pm: PlayerMap = {
+      fq: { n: "Combo QB", p: "QB", t: "DAL" },
+      starter1: { n: "Combo Starter", p: "WR", t: "DAL" },
+      bigsby: { n: "Tank Bigsby", p: "WR", t: "DAL" },
+      washington: { n: "Mike Washington", p: "WR", t: "DAL" },
+      t1: { n: "Target One", p: "WR", t: "SEA" },
+      t2: { n: "Target Two", p: "WR", t: "SEA" },
+    };
+    const lOpen = { ...lg("1", "Combo League Open", rpOpen), settings: { roster_positions: rpOpen, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 2 } } };
+    const rOpen: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "starter1"], starters: ["fq", "starter1"], reserve: [], taxi: [] };
+    const lFull = { ...lg("2", "Combo League Full", rpFull), settings: { roster_positions: rpFull, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 2 } } };
+    const rFull: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "starter1", "bigsby", "washington"], starters: ["fq", "starter1"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [
+      { league: lOpen, rosters: [rOpen, otherRoster([])], txns: [] },
+      { league: lFull, rosters: [rFull, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("add Target One and Target Two everywhere, drop Tank Bigsby then Mike Washington if needed", newSession(), env);
+    ok(out.audit.intent === "execute_request", "recognised as execute_request (verb-led, still refuses to execute directly)", out.audit.intent);
+    ok(/I don't add anything from chat/.test(textOf(out.blocks)), "still states plainly that chat itself never sends anything");
+    const drafts = draftsOf(out.blocks);
+    const openDrafts = drafts.filter((d) => d.leagueName === "Combo League Open");
+    const fullDrafts = drafts.filter((d) => d.leagueName === "Combo League Full");
+    ok(openDrafts.length === 2 && openDrafts.every((d) => (d.params as { dropName: string | null }).dropName === null), "the open-roster league gets BOTH targets proposed straightforwardly, no drop needed — the combined syntax doesn't lose the ordinary open-slot leagues", JSON.stringify(openDrafts.map((d) => d.params)));
+    ok(fullDrafts.length === 2, "the full-roster league gets both targets proposed too", String(fullDrafts.length));
+    const byName = Object.fromEntries(fullDrafts.map((d) => [(d.params as { addName: string }).addName, (d.params as { dropName: string | null }).dropName]));
+    ok(byName["Target One"] === "Tank Bigsby" && byName["Target Two"] === "Mike Washington", "in the full league, each target gets a DISTINCT name from the owner's own drop order, in the order given, all from one message", JSON.stringify(byName));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }
