@@ -18,6 +18,29 @@ const ALIASES: Record<string, string> = {
   "gibby": "jahmyr gibbs",
 };
 
+// A lone surname ("Pittman", "add Diggs") is now allowed as a mention — the
+// index below also keys players by last name alone, and resolveName's
+// existing ambiguity check (active.length >= 2 → ask, never guess) already
+// covers a shared surname safely, the same way it already covers a shared
+// full name. This guard is the other half of that: words that are common in
+// how people TALK TO this app (its own command vocabulary, articles,
+// pronouns, prepositions) can never be read as a player name even if some
+// real NFL player happens to share the surname — a false "is this a player?"
+// hit here would misfire on ordinary sentences, whereas a missed real
+// surname just falls through to "I didn't understand that."
+const STOPWORDS = new Set([
+  "a", "an", "the", "i", "me", "my", "he", "him", "his", "she", "her", "it", "its", "we", "us", "our", "they", "them", "their",
+  "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "done", "has", "have", "had",
+  "and", "or", "but", "if", "then", "so", "for", "to", "of", "in", "on", "at", "by", "with", "from", "about", "not", "no", "yes",
+  "this", "that", "these", "those", "who", "what", "where", "when", "why", "how", "all", "any", "some", "one", "now",
+  "add", "drop", "claim", "submit", "execute", "approve", "confirm", "place", "send", "release", "cut", "move",
+  "activate", "start", "bench", "week", "record", "help", "show", "find", "check", "fix", "improve", "upgrade",
+  "scan", "waiver", "waivers", "roster", "rosters", "team", "teams", "league", "leagues", "sweep", "drops", "candidate", "candidates",
+  "decision", "decisions", "standing", "standings", "playoff", "playoffs", "score", "scores", "win", "wins", "winning", "lose",
+  "loses", "losing", "lost", "won", "reset", "clear", "filter", "filters", "player", "players", "lineup", "lineups", "flex",
+  "ir", "taxi", "bye", "injured", "injury", "out", "questionable", "doubtful", "need", "needs", "want", "wants", "get", "gets",
+]);
+
 export function normName(s: string): string {
   return s
     .toLowerCase()
@@ -38,14 +61,25 @@ export interface PlayerIndex {
 export function buildPlayerIndex(pmap: PlayerMap): PlayerIndex {
   const byName = new Map<string, string[]>();
   let maxTokens = 2;
+  const add = (key: string, id: string) => {
+    const arr = byName.get(key);
+    if (arr) {
+      if (!arr.includes(id)) arr.push(id);
+    } else byName.set(key, [id]);
+  };
   for (const [id, e] of Object.entries(pmap)) {
     if (!e?.n || !FANTASY_POS.has(e.p)) continue;
     const key = normName(e.n);
     if (!key) continue;
-    const arr = byName.get(key);
-    if (arr) arr.push(id);
-    else byName.set(key, [id]);
-    maxTokens = Math.max(maxTokens, key.split(" ").length);
+    add(key, id);
+    const parts = key.split(" ");
+    maxTokens = Math.max(maxTokens, parts.length);
+    // Also indexed by last name alone ("Pittman") — a shared surname is no
+    // different from a shared full name to resolveName's ambiguity check, so
+    // this is safe, not a guess. Not indexed by first name alone: those
+    // collide far more (many "Josh"/"Michael"s) for little real benefit,
+    // since "surname only" is how people actually refer to NFL players.
+    if (parts.length > 1) add(parts[parts.length - 1], id);
   }
   return { byName, pmap, maxTokens: Math.min(maxTokens, 5) };
 }
@@ -91,8 +125,10 @@ export interface Mention {
 
 // Finds player-name mentions inside a free-form sentence by matching token
 // n-grams (longest first) against the known name dictionary — no LLM needed and
-// no "first substring hit" guessing. Single-word names are only accepted as
-// known nicknames, because a lone surname is far too ambiguous to trust.
+// no "first substring hit" guessing. A single word only counts as a mention when
+// it's a known nickname or a real surname in the index AND not one of this
+// app's own stopwords — resolveName's ambiguity check still runs afterward, so
+// a shared surname asks rather than guesses, same as a shared full name always has.
 export function findMentions(text: string, index: PlayerIndex): Mention[] {
   const tokens = text.split(/\s+/).filter(Boolean);
   const norm = tokens.map((t) => normName(t));
@@ -107,7 +143,7 @@ export function findMentions(text: string, index: PlayerIndex): Mention[] {
       const aliasKey = ALIASES[key];
       const known = aliasKey ? true : index.byName.has(key);
       if (!known) continue;
-      if (slice.length === 1 && !aliasKey) continue; // lone surname/first name: too ambiguous
+      if (slice.length === 1 && !aliasKey && STOPWORDS.has(key)) continue;
       hit = { text: tokens.slice(i, i + n).join(" ").replace(/[?,.!]+$/g, ""), start: i, end: i + n };
       break;
     }

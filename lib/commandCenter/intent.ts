@@ -125,10 +125,11 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (
     mentions.length > 0 &&
     (/\bmake sure\b.*\bstart/.test(t) ||
-      /\bstart\b.*\b(everywhere|in (my )?(starting )?lineups?|across my leagues)\b/.test(t) ||
+      /\bstart\b.*\b(everywhere|in (my )?(starting )?lineups?|(in|across) (all |every )?(of )?my leagues|in every league)\b/.test(t) ||
       /\b(i want|need)\b.*\bto start\b/.test(t) ||
       /\bneeds? to (be )?start(ing)?\b/.test(t) ||
-      /\bget\b.*\b(in(to)? )?(my )?(starting )?lineups?\b/.test(t))
+      /\bget\b.*\b(in(to)? )?(my )?(starting )?lineups?\b/.test(t) ||
+      /^start\b/.test(t))
   ) {
     return { kind: "force_start", mentions };
   }

@@ -13,6 +13,7 @@ import type { RawMatchup, SleeperLeg, WeekRecordRow } from "../lib/commandCenter
 import type { FaabStats } from "../lib/faabHistory";
 import { computeFaabStats } from "../lib/faabHistory";
 import { describeProposal } from "../lib/commandCenter/proposals";
+import { buildPlayerIndex, findMentions } from "../lib/commandCenter/resolve";
 
 let pass = 0;
 let fail = 0;
@@ -1079,6 +1080,60 @@ async function main() {
     const rp5 = drafts5!.drafts[0].params as { toStarters: string[] };
     ok(rp5.toStarters[1] === "target", "forced player lands in the real WR slot (index 1), not FLEX (index 2)", JSON.stringify(rp5.toStarters));
     ok(rp5.toStarters[2] !== "target", "forced player is NOT the one sitting in the FLEX slot", JSON.stringify(rp5.toStarters));
+  }
+
+  // ---------- 21. surname-only player mentions ("Pittman", not "Michael Pittman")
+  {
+    // Unambiguous surname behaves exactly like the full name would: resolves
+    // to the one active player, discloses the team-less namesake.
+    const pm = basePmap(); // "100" active Antonio Williams, "101" team-less namesake, both surname "Williams"
+    const env = makeEnv(scenario(), pm);
+    const a = await handleCommand("Is Williams available?", newSession(), env);
+    ok(/Ignored 1 namesake/.test(textOf(a.blocks)), "surname-only still discloses the team-less namesake, never silently drops it");
+    ok(a.session.targets[0]?.id === "100", "surname-only resolves to the one current player");
+
+    // A shared surname is genuinely ambiguous → asks, exactly like a shared full name already did.
+    const pm2 = basePmap();
+    pm2["102"] = { n: "Antonio Williams", p: "TE", t: "MIA" }; // second active Antonio Williams
+    const env2 = makeEnv(scenario(), pm2);
+    const b = await handleCommand("Find Williams everywhere", newSession(), env2);
+    const cl = b.blocks.find((x) => x.t === "clarify") as Extract<Block, { t: "clarify" }> | undefined;
+    ok(!!cl && cl.options.length === 2, "a shared surname still asks which player rather than guessing", JSON.stringify(b.blocks.map((x) => x.t)));
+
+    // The app's own command vocabulary can never be misread as a player name,
+    // even when a real player happens to share that surname.
+    const pmCollide = basePmap();
+    pmCollide["105"] = { n: "Marcus Start", p: "WR", t: "SEA" }; // surname collides with the word "start"
+    const idx = buildPlayerIndex(pmCollide);
+    ok(findMentions("start my lineups", idx).length === 0, "a stopword-colliding surname is never picked up as a mention in an ordinary sentence", JSON.stringify(findMentions("start my lineups", idx)));
+    ok(findMentions("Marcus Start", idx).length === 1, "the same player IS found when actually named", JSON.stringify(findMentions("Marcus Start", idx)));
+    // "Fix my lineups" still routes correctly (requires mentions.length === 0)
+    // even with a stopword-colliding surname sitting in the player map.
+    const envCollide = makeEnv(scenario(), pmCollide);
+    const c = await handleCommand("Fix my lineups", newSession(), envCollide);
+    ok(c.audit.intent === "lineup_improvements", "a coincidental surname collision never derails an unrelated intent", c.audit.intent);
+  }
+
+  // ---------- 22. force_start phrasing: "start <player> in all my leagues"
+  {
+    const pm: PlayerMap = {
+      fq: { n: "Force QB", p: "QB", t: "DAL" },
+      target: { n: "Target WR", p: "WR", t: "IND" },
+      bench1: { n: "Weak Bench", p: "WR", t: "IND" },
+    };
+    const rpWR = ["QB", "WR", "WR", "BN"];
+    const settings = { roster_positions: rpWR, settings: { reserve_slots: 1 } };
+    const proj: ProjectionMap = { fq: { pts_ppr: 20 }, target: { pts_ppr: 5 }, bench1: { pts_ppr: 30 } };
+    const future = new Date(NOW + 86_400_000).toISOString();
+    const l1 = { ...lg("1", "Force L1", rpWR), settings };
+    const r1: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target"], starters: ["fq", "bench1", "0"], reserve: [], taxi: [] };
+    const fx: LeagueFx[] = [{ league: l1, rosters: [r1, otherRoster([])], txns: [] }];
+    const env = makeEnv(fx, pm, undefined, undefined, { projections: proj, week: 3 });
+    env.kickoffs = async () => ({ DAL: future, IND: future });
+    for (const v of ["start Target WR in all my leagues", "start Target WR across my leagues", "start Target WR in every league", "start Target WR"]) {
+      const o = await handleCommand(v, newSession(), env);
+      ok(o.audit.intent === "force_start", `phrasing → force_start: "${v}"`, o.audit.intent);
+    }
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

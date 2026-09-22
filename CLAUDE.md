@@ -574,3 +574,46 @@ difference so none of them can ever override the week's actual projections
   slot fixes consistent across leagues sharing a bye/kickoff pattern (e.g.
   Saquon Barkley repeatedly moved RB→FLEX opposite whichever RB was on his
   true-slot side), confirming the signal is real schedule data, not noise.
+
+### Chat: surname-only player names, broader "start X" phrasing (2026-09; requested explicitly by the owner)
+
+The owner's core complaint: they shouldn't have to phrase things like one of
+the example chips, "esp with the players." Still no LLM (explicitly declined
+in favor of the free, deterministic path when offered the choice) — two
+concrete, scoped gaps closed instead:
+
+- **Surname-only mentions** (`lib/commandCenter/resolve.ts`) — "Pittman" (not
+  "Michael Pittman") previously matched NOTHING: `buildPlayerIndex` only
+  keyed players by their full normalized name, and `findMentions` explicitly
+  refused every single-word candidate except a five-entry nickname table
+  ("because a lone surname is far too ambiguous to trust" — the old
+  reasoning). Now `buildPlayerIndex` also indexes every player by last name
+  alone, and `findMentions` accepts a single-word match — but ONLY when it
+  isn't one of this app's own ~90 stopwords (its command vocabulary: add,
+  drop, start, week, roster, league, etc., plus ordinary articles/pronouns/
+  prepositions). A real, unambiguous surname resolves exactly like a full
+  name always has; a SHARED surname still asks which player rather than
+  guessing (`resolveName`'s existing `active.length >= 2` check needed no
+  changes — a shared surname is no different to it than a shared full name).
+  The stopword list exists so the app's own vocabulary can never misfire as
+  a player mention even if some real NFL player happens to share it — tested
+  directly: a synthetic player surnamed "Start" is still found when actually
+  named, but never triggers on an ordinary sentence containing "start".
+  First names are deliberately NOT indexed alone — far more collisions
+  (many "Josh"/"Michael"s) for less real benefit, since surname-only is how
+  people actually refer to NFL players.
+- **`force_start` phrasing** (`lib/commandCenter/intent.ts`) — "start
+  &lt;player&gt; in all my leagues" / "...across my leagues" / "...in every
+  league" didn't match the old trigger regex (it only recognized "in my
+  lineups" or the exact phrase "across my leagues"); a bare "start
+  &lt;player&gt;" with a recognized mention now also matches directly.
+- Tests: 10 new assertions in `scripts/testCommandCenter.ts` (now 303) —
+  surname resolves like a full name, namesake disclosure still works,
+  a shared surname still asks, the stopword-collision guard (both that it
+  suppresses AND that it still finds the same player by full name), an
+  unrelated intent (`lineup_improvements`) is never derailed by a
+  stopword-colliding surname sitting in the roster, and the new `force_start`
+  phrasing variants. Verified live against the real account: "start Pittman
+  in all my leagues" resolved Michael Pittman with no clarification needed
+  and correctly routed to force_start, matching the same real IR data
+  ("on IR/taxi in 51") already confirmed in the activate-from-IR feature.
