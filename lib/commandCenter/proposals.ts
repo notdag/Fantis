@@ -140,7 +140,8 @@ export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "lea
     }
     case "SET_LINEUP": {
       const p = d.params as LineupParams;
-      return `Set lineup: ${p.changes.map((c) => `${c.inName ?? "empty"} for ${c.outName ?? "empty"} at ${c.slot}`).join("; ")} (+${p.gain.toFixed(1)} projected)`;
+      const suffix = p.gain >= 0.05 ? `(+${p.gain.toFixed(1)} projected)` : "(slot fix — no point change)";
+      return `Set lineup: ${p.changes.map((c) => `${c.inName ?? "empty"} for ${c.outName ?? "empty"} at ${c.slot}`).join("; ")} ${suffix}`;
     }
   }
 }

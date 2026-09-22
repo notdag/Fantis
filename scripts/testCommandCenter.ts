@@ -12,6 +12,7 @@ import type { PlayerMap, ProjectionMap } from "../lib/types";
 import type { RawMatchup, SleeperLeg, WeekRecordRow } from "../lib/commandCenter/tools";
 import type { FaabStats } from "../lib/faabHistory";
 import { computeFaabStats } from "../lib/faabHistory";
+import { describeProposal } from "../lib/commandCenter/proposals";
 
 let pass = 0;
 let fail = 0;
@@ -641,6 +642,77 @@ async function main() {
     luNoKo.kickoffs = async () => null;
     const nk = await handleCommand("Fix my lineups", newSession(), luNoKo);
     ok(draftsOf(nk.blocks).length === 0 && /couldn't load kickoff times/.test(textOf(nk.blocks)), "no kickoff times → no lineup proposals");
+
+    // Thursday player → true slot, Monday player → flex, even at zero real
+    // point gain (a pure reslot the 0.05-gain filter would otherwise hide).
+    const thu = new Date(NOW + 4 * 86_400_000).toISOString(); // Thursday
+    const wed = new Date(NOW + 3 * 86_400_000).toISOString(); // neither Thu nor Mon
+    const rpFlex = ["QB", "WR", "FLEX", "BN"];
+    const dayPm: PlayerMap = {
+      fq: { n: "Force QB", p: "QB", t: "DAL" },
+      thuGuy: { n: "Thursday Guy", p: "WR", t: "DAL" },
+      sunGuy: { n: "Sunday Guy", p: "WR", t: "SF" },
+      monGuy: { n: "Monday Guy", p: "WR", t: "NYJ" },
+    };
+    // League A: Thursday Guy is (wrongly) in FLEX, Sunday Guy in the true WR slot — equal points.
+    const dayLeagueA = { ...lg("1", "Day League A — Thursday", rpFlex), settings: { roster_positions: rpFlex, settings: { reserve_slots: 1 } } };
+    const dayRosterA: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "thuGuy", "sunGuy"], starters: ["fq", "sunGuy", "thuGuy"], reserve: [], taxi: [] };
+    // League B: Monday Guy is (wrongly) in the true WR slot, Sunday Guy in FLEX — equal points.
+    const dayLeagueB = { ...lg("2", "Day League B — Monday", rpFlex), settings: { roster_positions: rpFlex, settings: { reserve_slots: 1 } } };
+    const dayRosterB: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "monGuy", "sunGuy"], starters: ["fq", "monGuy", "sunGuy"], reserve: [], taxi: [] };
+    const dayProj: ProjectionMap = { fq: { pts_ppr: 20 }, thuGuy: { pts_ppr: 15 }, sunGuy: { pts_ppr: 15 }, monGuy: { pts_ppr: 15 } };
+    const dayFx: LeagueFx[] = [
+      { league: dayLeagueA, rosters: [dayRosterA, otherRoster([])], txns: [] },
+      { league: dayLeagueB, rosters: [dayRosterB, otherRoster([])], txns: [] },
+    ];
+    const dayEnv = makeEnv(dayFx, dayPm, undefined, undefined, { projections: dayProj, week: 3 });
+    dayEnv.permission = "PROPOSE_ONLY";
+    dayEnv.kickoffs = async () => ({ DAL: thu, SF: wed, NYJ: future });
+    const dayOut = await handleCommand("Fix my lineups", newSession(), dayEnv);
+    const dayDrafts = draftsOf(dayOut.blocks);
+    ok(dayDrafts.length === 2, "both Thursday and Monday placement fixes are proposed despite zero real point gain", String(dayDrafts.length));
+    const byLg = Object.fromEntries(dayDrafts.map((d) => [d.leagueName, d.params as { toStarters: string[]; gain: number }]));
+    ok(byLg["Day League A — Thursday"]?.toStarters[1] === "thuGuy" && byLg["Day League A — Thursday"]?.toStarters[2] === "sunGuy", "Thursday player moved into the true WR slot, not left in FLEX", JSON.stringify(byLg["Day League A — Thursday"]));
+    ok(byLg["Day League B — Monday"]?.toStarters[2] === "monGuy" && byLg["Day League B — Monday"]?.toStarters[1] === "sunGuy", "Monday player moved into FLEX, not left in the true WR slot", JSON.stringify(byLg["Day League B — Monday"]));
+    ok(dayDrafts.every((d) => (d.params as { gain: number }).gain < 0.05), "both fixes carry ~zero projected point change — real data, not fabricated value");
+    ok(dayDrafts.every((d) => d.rationale[0] === "No real point change — this only moves Thursday/Monday players into the right slot before their games lock"), "rationale is honest that this is a placement fix, not a point upgrade");
+    ok(dayDrafts.every((d) => /slot fix — no point change/.test(describeProposal(d))), "proposal summary reads as a slot fix, never a fake '+0.0 projected'");
+    ok(/Thursday\/Monday slot fixes with no point change/.test(textOf(dayOut.blocks)) || /Thursday\/Monday player moved into the right slot/.test(textOf(dayOut.blocks)), "headline discloses these are placement-only fixes", textOf(dayOut.blocks).slice(0, 400));
+
+    // Owner's curated rankings settle a genuine points tie for who starts.
+    const rpTie = ["QB", "WR", "BN"];
+    const tiePm: PlayerMap = {
+      tq: { n: "Tie QB", p: "QB", t: "DAL" },
+      tieStart: { n: "Tied Starter", p: "WR", t: "SF" },
+      tieBench: { n: "Tied Bench", p: "WR", t: "SF" },
+    };
+    const tieLeague = { ...lg("1", "Tie League", rpTie), settings: { roster_positions: rpTie, settings: { reserve_slots: 1 } } };
+    const tieRoster: RawRoster = { roster_id: 1, owner_id: ME, players: ["tq", "tieStart", "tieBench"], starters: ["tq", "tieStart"], reserve: [], taxi: [] };
+    const tieProj: ProjectionMap = { tq: { pts_ppr: 20 }, tieStart: { pts_ppr: 12 }, tieBench: { pts_ppr: 12 } };
+    const tieEnv = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProj, week: 3 });
+    tieEnv.permission = "PROPOSE_ONLY";
+    tieEnv.kickoffs = async () => ({ SF: wed, DAL: wed });
+    tieEnv.curatedIds = ["tieBench", "tieStart"]; // tieBench ranked ABOVE tieStart in the owner's own rankings
+    const tieOut = await handleCommand("Fix my lineups", newSession(), tieEnv);
+    const tieDrafts = draftsOf(tieOut.blocks);
+    ok(tieDrafts.length === 1, "a genuine points tie between two eligible players still gets a proposal, using the curated rankings to break it", String(tieDrafts.length));
+    const tieParams = tieDrafts[0]?.params as { toStarters: string[] } | undefined;
+    ok(tieParams?.toStarters.join() === "tq,tieBench", "the higher-curated-ranked player is preferred when the projections themselves are exactly tied", JSON.stringify(tieParams));
+    // when the curated order favors the player who's ALREADY starting, nothing changes
+    const tieEnvNoop = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProj, week: 3 });
+    tieEnvNoop.permission = "PROPOSE_ONLY";
+    tieEnvNoop.kickoffs = async () => ({ SF: wed, DAL: wed });
+    tieEnvNoop.curatedIds = ["tieStart", "tieBench"];
+    const tieOutNoop = await handleCommand("Fix my lineups", newSession(), tieEnvNoop);
+    ok(draftsOf(tieOutNoop.blocks).length === 0, "curated rankings never cause a change when the current starter is already the preferred one");
+    // a real, meaningfully-better-projected bench player still wins outright — rankings never override a genuine point edge
+    const tieProjReal: ProjectionMap = { tq: { pts_ppr: 20 }, tieStart: { pts_ppr: 20 }, tieBench: { pts_ppr: 12 } };
+    const tieEnvReal = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProjReal, week: 3 });
+    tieEnvReal.permission = "PROPOSE_ONLY";
+    tieEnvReal.kickoffs = async () => ({ SF: wed, DAL: wed });
+    tieEnvReal.curatedIds = ["tieBench", "tieStart"]; // curated favorite has the far worse real projection this week
+    const tieOutReal = await handleCommand("Fix my lineups", newSession(), tieEnvReal);
+    ok(draftsOf(tieOutReal.blocks).length === 0, "a real 8-point projection edge is never overridden by curated rankings — projections still come first");
   }
 
   // ---------- 14. FantasyCalc per-league values + playoff standings

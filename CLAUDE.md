@@ -519,3 +519,58 @@ requested explicitly and confirmed generic (not hardcoded to any one player).
   7 for the `ACTIVATE_IR` executor (now 95) — open-roster no-drop, full-roster with
   a drop, drop failure blocking activation, stale-state re-validation (no longer on
   IR / roster now full), and unconfirmed re-read never claiming success.
+
+### Lineup optimizer tie-breaks: true slot, Thursday/Monday placement, curated rankings (2026-09; requested explicitly by the owner)
+
+`lib/lineupOptimizer.ts`'s Hungarian assignment picks the real point-optimal
+lineup, but real point value doesn't depend on WHICH eligible slot a player
+lands in (a WR in "WR2" and the same WR in "FLEX" score identically) — so
+ties between a true position slot and FLEX were previously broken by solve
+order, not intent. Three small, deliberately tiny tie-break bonuses were
+added on top of the existing point-optimizer, each far below any real point
+difference so none of them can ever override the week's actual projections
+— they only decide what the projections themselves leave genuinely tied:
+
+- **A forced/priority player's own true slot over FLEX** (`PRIORITY_TRUE_SLOT_BONUS`)
+  — "make sure Drake London starts" force-starting him, or a Priority-list
+  player in "Fix my lineups", now lands in his real position slot rather
+  than FLEX when both are open and equally good. Verified the bug was real
+  before fixing it (reverted the fix, re-ran the same scenario, confirmed it
+  failed) and added a regression test that would catch a re-break.
+- **Real kickoff day → slot preference** (`gameDay`, `THU_TRUE_SLOT_BONUS` /
+  `MON_FLEX_SLOT_BONUS`, "Fix my lineups" only) — a Thursday-game player is
+  nudged into his true position slot (his decision locks first, no benefit
+  to leaving him "floating" in flex); a Monday-game player is nudged into
+  FLEX instead (his decision locks last, so the most flexible slot holds the
+  week's latest, most-informed call). Derived from the same real kickoff
+  timestamps already used to freeze locked games — never a guess, and never
+  strong enough to bench a genuinely better player just to satisfy the
+  placement preference.
+- **Curated `/admin` rankings as a tie-break, not an override** (`rankTiebreak`,
+  `RANK_TIEBREAK_STEP`/`RANK_TIEBREAK_CAP`, "Fix my lineups" only) — when two
+  eligible players are genuinely tied in real projected points, the one
+  ranked higher in the owner's own curated list wins the slot. This is
+  deliberately a SEPARATE, much smaller mechanism from `rankOrder`
+  (BulkOptimize's existing "rankings mode" toggle, a full preference BAND
+  that ranks purely by curated order and ignores the week's projections
+  entirely) — conflating the two would have made the default "Fix my
+  lineups" flow silently stop being projection-driven. Verified a genuine
+  8-point real projection edge is never overridden by curated rank.
+- Because these are pure tie-breaks, a swap with ~zero real point gain
+  (a pure Thursday/Monday reslot, or a curated-rank pick between exactly
+  tied players) would have been silently dropped by the existing "only
+  propose real gains ≥ 0.05 points" filter. Fixed by re-running the
+  optimizer WITHOUT the new tie-break bonuses when the with-bonus gain is
+  under that bar: if the plain run also finds nothing, the visible change is
+  purely a tie-break fix and is proposed anyway (labelled honestly as
+  "slot fix — no point change", never a fake "+0.0 projected"); if the plain
+  run finds a real gain, the marginal-gain filter still applies as before.
+- Tests: 11 new assertions in `scripts/testCommandCenter.ts` (now 293) —
+  Thursday player moved out of FLEX into his true slot, Monday player moved
+  the other way, both at zero real gain; curated rank deciding a genuine
+  tie; no change when curated rank already favors the current starter; a
+  real projection edge never overridden by rank. Verified live: "Fix my
+  lineups" against the real 210-league account surfaced real Thursday/Monday
+  slot fixes consistent across leagues sharing a bye/kickoff pattern (e.g.
+  Saquon Barkley repeatedly moved RB→FLEX opposite whichever RB was on his
+  true-slot side), confirming the signal is real schedule data, not noise.

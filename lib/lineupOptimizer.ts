@@ -22,8 +22,23 @@ export interface OptimizeInput {
   priorityRank?: (id: string) => number | undefined;
   avoid?: (id: string) => boolean;
   // Position in the owner's overall curated rankings (0 = best); undefined =
-  // not ranked. Optional — omit it to choose purely by projection.
+  // not ranked. This is a full preference BAND — a ranked player always beats
+  // an unranked one regardless of points — meant for an explicit "go by my
+  // rankings" mode (BulkOptimize's rankings toggle), not the default
+  // projection-driven optimizer. Optional — omit it to choose purely by
+  // projection (plus priority/avoid).
   rankOrder?: (id: string) => number | undefined;
+  // Same curated rankings, but as a genuine tie-break only — worth far less
+  // than any real point difference, so it only decides a start/sit call the
+  // projections themselves can't separate. This is what "Fix my lineups"
+  // uses by default: still projection-first, rankings only settle a coin
+  // flip. Optional — omit it to leave true ties to solve order.
+  rankTiebreak?: (id: string) => number | undefined;
+  // Real kickoff day for a player's team this week, from actual schedule
+  // data — not a guess. "THU"/"MON" nudge slot choice (see the bonuses
+  // below); any other day (including undefined, e.g. bye or unknown) gets no
+  // nudge. Optional — omit it to leave slot choice entirely to points/rank.
+  gameDay?: (id: string) => "THU" | "MON" | undefined;
 }
 
 export interface LineupChange {
@@ -66,6 +81,15 @@ const RANKING_BASE = 3e6;
 const RANKING_STEP = 1000; // per rank position; ranks are capped at 1000
 const AVOID_PENALTY = 5e5;
 const STAY_PUT_BONUS = 0.0005;
+// The default optimizer's rank tie-break (see rankTiebreak above). The step
+// must exceed STAY_PUT_BONUS or two ADJACENT curated ranks (e.g. #14 vs #15)
+// would never resolve — inertia would win every time. Capped to a shallow
+// window (only the top RANK_TIEBREAK_CAP spots get a meaningful nudge) so
+// the total possible swing stays well below any real point difference — a
+// curated rank never overrides the week's actual projections, only settles
+// a tie they leave unresolved.
+const RANK_TIEBREAK_STEP = 0.0006;
+const RANK_TIEBREAK_CAP = 50;
 // A priority-ranked player's own true position slot (WR, not FLEX) is worth
 // the exact same real points as a flex slot, so nothing above would ever
 // break a tie between them — the assignment could land him in FLEX while an
@@ -73,6 +97,15 @@ const STAY_PUT_BONUS = 0.0005;
 // solve order. This nudges a priority player toward his own true slot when
 // eligible for both, so "start him" doesn't accidentally mean "in flex."
 const PRIORITY_TRUE_SLOT_BONUS = 0.001;
+// Same idea, for real kickoff timing: a Thursday player's decision locks
+// first, so there's no benefit to leaving him "floating" in flex — put him
+// in his true slot. A Monday player locks last, so keeping him in flex (the
+// slot you'd naturally swap) leaves the week's latest, most-informed
+// decision in the most flexible spot. Bigger than STAY_PUT_BONUS so it
+// actually moves an already-correct-looking lineup when the swap is a real
+// day-of-week fix, but still far smaller than any real point difference.
+const THU_TRUE_SLOT_BONUS = 0.002;
+const MON_FLEX_SLOT_BONUS = 0.002;
 const BIG = 1e9;
 
 // Hungarian algorithm (min cost), rows <= cols. Returns, for each row, the
@@ -147,6 +180,8 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
       const order = input.rankOrder?.(id);
       if (order !== undefined) w += RANKING_BASE + (1000 - Math.min(order, 1000)) * RANKING_STEP;
     }
+    const tb = input.rankTiebreak?.(id);
+    if (tb !== undefined) w += (RANK_TIEBREAK_CAP - Math.min(tb, RANK_TIEBREAK_CAP)) * RANK_TIEBREAK_STEP;
     return w;
   };
 
@@ -171,6 +206,7 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     const cols = pool.length + freeSlots.length;
     const cost = freeSlots.map((slotIdx) => {
       const eligible = new Set(eligiblePositions(slotCodes[slotIdx]));
+      const isFlexSlot = eligible.size > 1; // true, single-position slots resolve to exactly one eligible position
       const row = new Array(cols).fill(0);
       for (let c = 0; c < pool.length; c++) {
         const id = pool[c];
@@ -179,7 +215,9 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
           row[c] = BIG * 10; // not allowed in this slot
         } else {
           const trueSlot = input.priorityRank?.(id) !== undefined && pos === slotCodes[slotIdx] ? PRIORITY_TRUE_SLOT_BONUS : 0;
-          row[c] = BIG - (weight(id) + trueSlot + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
+          const day = input.gameDay?.(id);
+          const dayBonus = day === "THU" && !isFlexSlot ? THU_TRUE_SLOT_BONUS : day === "MON" && isFlexSlot ? MON_FLEX_SLOT_BONUS : 0;
+          row[c] = BIG - (weight(id) + trueSlot + dayBonus + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
         }
       }
       for (let c = pool.length; c < cols; c++) row[c] = BIG; // empty filler, weight 0

@@ -1147,7 +1147,25 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       };
       const order = env.signals.priorityOrder ?? [...env.signals.priority];
       const prio = new Map(order.map((id, i) => [id, i]));
-      const found: { draft: ProposalDraft; league: string; gain: number }[] = [];
+      // The owner's curated /admin rankings, best-to-worst — passed as
+      // rankTiebreak (a tiny nudge, not BulkOptimize's full rankings-mode
+      // band), so it only settles a start/sit call the projections
+      // themselves leave tied.
+      const curatedOrder = env.curatedIds ? new Map(env.curatedIds.map((id, i) => [id, i])) : null;
+      // Real kickoff day, from the same kickoff times used for lock checks —
+      // not a guess. Thursday locks first (no reason to leave him in flex);
+      // Monday locks last (keep him in the flexible slot till the latest
+      // possible decision).
+      const gameDay = (id: string): "THU" | "MON" | undefined => {
+        const team = env.pmap[id]?.t;
+        const ko = team ? kickoffs[team] : undefined;
+        if (!ko) return undefined;
+        const d = new Date(ko).getDay();
+        if (d === 4) return "THU";
+        if (d === 1) return "MON";
+        return undefined;
+      };
+      const found: { draft: ProposalDraft; league: string; gain: number; reslotOnly: boolean }[] = [];
       for (const snap of snaps) {
         if (snap.status === "FAILED" || !snap.rosters) continue;
         const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId)!;
@@ -1157,22 +1175,37 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         if (slots.length === 0) continue;
         const off = new Set([...me.reserve, ...me.taxi]);
         const key = scoringKey(snap.league.settings);
-        const res = optimizeLineup({
+        const base = {
           slotCodes: slots,
           starters: me.starters,
           candidates: me.players.filter((id) => !off.has(id)),
-          posOf: (id) => env.pmap[id]?.p ?? null,
-          points: (id) => proj[id]?.[key] ?? 0,
+          posOf: (id: string) => env.pmap[id]?.p ?? null,
+          points: (id: string) => proj[id]?.[key] ?? 0,
           unavailable: isUnavailable,
           locked: isLocked,
-          priorityRank: (id) => prio.get(id),
-          avoid: (id) => env.signals.avoid.has(id),
+          priorityRank: (id: string) => prio.get(id),
+          avoid: (id: string) => env.signals.avoid.has(id),
+        };
+        const res = optimizeLineup({
+          ...base,
+          rankTiebreak: curatedOrder ? (id) => curatedOrder.get(id) : undefined,
+          gameDay,
         });
-        if (res.changes.length === 0 || res.gain < 0.05) continue;
+        if (res.changes.length === 0) continue;
+        // A real point-driven gain always clears the 0.05 bar on its own. If
+        // it doesn't, check whether the change is purely an artifact of this
+        // week's Thursday/Monday placement or curated-rankings tie-break by
+        // re-running without them — if THAT finds no real improvement either,
+        // the visible change here has ~zero point impact and is worth
+        // proposing anyway (that's the whole point of those two features);
+        // otherwise it's a genuine marginal gain too small to bother with.
+        const reslotOnly = res.gain < 0.05 && optimizeLineup(base).gain < 0.05;
+        if (res.gain < 0.05 && !reslotOnly) continue;
         const nm = (id: string | null) => (id ? posName(env, id) : null);
         found.push({
           league: snap.league.name,
           gain: res.gain,
+          reslotOnly,
           draft: {
             kind: "SET_LINEUP",
             leagueId: snap.league.id,
@@ -1186,7 +1219,9 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
               gain: Math.round(res.gain * 10) / 10,
             },
             rationale: [
-              `Projected +${res.gain.toFixed(1)} using Sleeper's own weekly projections (${key})`,
+              res.gain >= 0.05
+                ? `Projected +${res.gain.toFixed(1)} using Sleeper's own weekly projections (${key})`
+                : "No real point change — this only moves Thursday/Monday players into the right slot before their games lock",
               ...res.changes.map((c) => `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}${c.out && isUnavailable(c.out) ? " (unavailable)" : ""}`),
               "Players whose games have started are left in place; injured and bye-week players are never started",
             ],
@@ -1196,17 +1231,20 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         });
       }
       found.sort((a, b) => b.gain - a.gain);
+      const bestReal = found.find((f) => !f.reslotOnly);
       blocks.push({
         t: "text",
         tone: found.length ? "good" : "info",
         text: found.length
-          ? `${found.length} of ${meta.ok + meta.partial} leagues have a better lineup available (best first, +${found[0].gain.toFixed(1)}). These use your Priority/Avoid lists and Sleeper's projections; started games are frozen. Nothing has been changed.`
+          ? bestReal
+            ? `${found.length} of ${meta.ok + meta.partial} leagues have a better lineup available (best first, +${bestReal.gain.toFixed(1)})${found.length > 1 && found.some((f) => f.reslotOnly) ? ", including Thursday/Monday slot fixes with no point change" : ""}. These use your Priority/Avoid lists, your curated rankings, and Sleeper's projections; started games are frozen. Nothing has been changed.`
+            : `${found.length} league${found.length === 1 ? "" : "s"} could have a Thursday/Monday player moved into the right slot — no point change, just correct placement before games lock. Nothing has been changed.`
           : "No lineup improvements found — every lineup already matches the best legal one right now.",
       });
       blocks.push({
         t: "decisions",
         title: "Lineup improvements",
-        rows: found.slice(0, ROW_CAP).map((f) => ({ leagueId: f.draft.leagueId, leagueName: f.league, items: (f.draft.params as { changes: { slot: string; outName: string | null; inName: string | null }[] }).changes.map((c) => `${c.slot}: ${c.inName ?? "empty"} for ${c.outName ?? "empty"}`).concat([`+${f.gain.toFixed(1)} projected`]) })),
+        rows: found.slice(0, ROW_CAP).map((f) => ({ leagueId: f.draft.leagueId, leagueName: f.league, items: (f.draft.params as { changes: { slot: string; outName: string | null; inName: string | null }[] }).changes.map((c) => `${c.slot}: ${c.inName ?? "empty"} for ${c.outName ?? "empty"}`).concat([f.reslotOnly ? "slot fix — no point change" : `+${f.gain.toFixed(1)} projected`]) })),
         truncated: Math.max(0, found.length - ROW_CAP),
       });
       const lb = draftsBlock(env, permission, found.map((f) => f.draft));
