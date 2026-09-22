@@ -16,6 +16,7 @@ export async function GET() {
   return NextResponse.json({
     priority: rows.filter((r) => r.kind === "priority").map((r) => r.playerId),
     avoid: rows.filter((r) => r.kind === "avoid").map((r) => r.playerId),
+    irRelease: rows.filter((r) => r.kind === "ir_release").map((r) => r.playerId),
   });
 }
 
@@ -23,7 +24,7 @@ export async function GET() {
 // ordered lists, same "full replace" approach as the curated-player save).
 export async function PUT(req: Request) {
   if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
-  const body = (await req.json().catch(() => null)) as { priority?: unknown; avoid?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { priority?: unknown; avoid?: unknown; irRelease?: unknown } | null;
   const clean = (v: unknown): string[] | null => {
     if (!Array.isArray(v)) return null;
     const out: string[] = [];
@@ -35,18 +36,23 @@ export async function PUT(req: Request) {
   };
   const priority = clean(body?.priority ?? []);
   const avoid = clean(body?.avoid ?? []);
-  if (!priority || !avoid) return NextResponse.json({ error: "Invalid lists." }, { status: 400 });
+  const irRelease = clean(body?.irRelease ?? []);
+  if (!priority || !avoid || !irRelease) return NextResponse.json({ error: "Invalid lists." }, { status: 400 });
 
-  // A player can't be both — priority wins.
+  // A player can only be in one list at a time (playerId is the primary
+  // key) — priority wins over avoid, and over irRelease too (a protected
+  // player is never one you'd release from your own IR either).
   const avoidOnly = avoid.filter((id) => !priority.includes(id));
+  const irReleaseOnly = irRelease.filter((id) => !priority.includes(id) && !avoidOnly.includes(id));
   await db.$transaction([
     db.playerPreference.deleteMany({}),
     db.playerPreference.createMany({
       data: [
         ...priority.map((playerId, rank) => ({ playerId, kind: "priority", rank })),
         ...avoidOnly.map((playerId) => ({ playerId, kind: "avoid", rank: 0 })),
+        ...irReleaseOnly.map((playerId, rank) => ({ playerId, kind: "ir_release", rank })),
       ],
     }),
   ]);
-  return NextResponse.json({ ok: true, priority: priority.length, avoid: avoidOnly.length });
+  return NextResponse.json({ ok: true, priority: priority.length, avoid: avoidOnly.length, irRelease: irReleaseOnly.length });
 }

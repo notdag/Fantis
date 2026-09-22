@@ -84,7 +84,7 @@ function scenario(): LeagueFx[] {
 
 // fullRoster has 9 starters + 5 bench = 14 = WR_ROSTER length → "full".
 
-function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; values?: Record<string, number> } = {}): DropSignals {
+function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; values?: Record<string, number>; irRelease?: string[] } = {}): DropSignals {
   const values = opts.values ?? {};
   return {
     info: (id) => (pm[id] ? { id, name: pm[id].n, pos: pm[id].p, team: pm[id].t, injury: pm[id].inj ?? null, active: !!pm[id].t } : null),
@@ -93,6 +93,7 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
     curated: () => null,
     avoid: new Set(opts.avoid ?? []),
     priority: new Set(opts.priority ?? []),
+    irReleaseOrder: opts.irRelease,
   };
 }
 
@@ -1623,16 +1624,16 @@ async function main() {
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 2 && drafts.filter((d) => d.kind === "DROP").length === 1, "the release name is only used ONCE across both needing rows in the same league, never claimed twice", JSON.stringify(drafts.map((d) => d.kind)));
       const decisionsText = decisionsTextOf(out.blocks);
-      // the pure planner's own distinct-assignment already exhausted the single
-      // occupant against the first row (dropId picks are unique per buildIrPlan),
-      // so the second row's honest fallback correctly says nobody's left, not a
-      // reuse of the same name.
-      ok(/IR is full and nobody on it can be released/.test(decisionsText), "the second player who couldn't be paired still gets an honest fallback, not a silently-reused release", decisionsText);
+      // the release name is already claimed by the first row (claimedReleaseByLeague),
+      // so the second row's honest fallback names the release list itself, never a
+      // reuse of the same occupant's name.
+      ok(/IR full — none of your release list \(Sole Occupant\) is on IR in this league/.test(decisionsText), "the second player who couldn't be paired still gets an honest fallback, not a silently-reused release", decisionsText);
     }
 
-    // (c) fallback — full IR, but none of the release-order names are
-    // actually current occupants of THIS league → falls back to the
-    // original informational-only text, no drafts at all.
+    // (c) strict fallback — full IR, but none of the release-order names are
+    // actually current occupants of THIS league → the app never falls back
+    // to naming some OTHER real occupant the owner didn't approve; it says
+    // plainly that nobody on the list is really on IR there.
     {
       const pm: PlayerMap = {
         fq: { n: "Fallback QB", p: "QB", t: "DAL" },
@@ -1648,7 +1649,9 @@ async function main() {
       const out = await handleCommand("move all my IR eligible players to IR, release Not Rostered Anywhere Near if needed", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 0, "none of the release-order names are real occupants here, so nothing is drafted for this league", String(drafts.length));
-      ok(/would need to release Real Occupant Here from IR first/.test(decisionsTextOf(out.blocks)), "falls back to naming the real weakest occupant informationally, same as with no release order at all");
+      const decisionsText = decisionsTextOf(out.blocks);
+      ok(/IR full — none of your release list \(Not Rostered Anywhere Near\) is on IR in this league/.test(decisionsText), "never names the real weakest occupant (Real Occupant Here) once a release order is active — strict allow-list, not a silent fallback", decisionsText);
+      ok(!/Real Occupant Here/.test(decisionsText), "the real, unapproved occupant is never named anywhere in the output");
     }
 
     // (d) Priority protection still wins even when the owner explicitly
@@ -1669,7 +1672,125 @@ async function main() {
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 0, "naming a Priority-protected player in the release order still never drafts a release for him", String(drafts.length));
       ok(!/release Protected Release Target/.test(decisionsTextOf(out.blocks)), "he's never offered as a release candidate even though the owner named him explicitly");
-      ok(/IR is full and nobody on it can be released/.test(decisionsTextOf(out.blocks)), "with the only occupant protected, this is honestly reported as no room, not silently skipped", decisionsTextOf(out.blocks));
+      ok(/IR full — none of your release list \(Protected Release Target\) is on IR in this league/.test(decisionsTextOf(out.blocks)), "with the only occupant protected, this is honestly reported by naming the (unmet) release list, not silently skipped", decisionsTextOf(out.blocks));
+    }
+  }
+
+  // ---------- 34. ir_opps standing IR Release list — TWO SEPARATE commands
+  // ("...to IR" = report only; "...to IR and drop" = actually draft real
+  // release+move pairs using the standing list), requested explicitly by
+  // the owner after the first version made a bare report auto-draft.
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const decisionsTextOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
+    const rp = ["QB", "WR", "BN"];
+    const settings1Slot = { roster_positions: rp, settings: { reserve_slots: 1 } };
+
+    // (a) a BARE "move all my IR eligible players to IR" — even with a
+    // standing list configured — stays pure report-only: no drafts, and the
+    // ORIGINAL unrestricted wording (names the real weakest occupant, not
+    // the standing list). This is the key separation the owner asked for.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Bare QB", p: "QB", t: "DAL" },
+        s1: { n: "Bare Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Bare New Guy", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Bare Real Occupant", p: "WR", t: "IND" },
+      };
+      const sig = signals(pm, { irRelease: ["occupant"] }); // even though he IS the real occupant here
+      const league = { ...lg("1", "Bare Report League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR", newSession(), env);
+      ok(draftsOf(out.blocks).length === 0, "a bare 'move to IR' never auto-drafts a release, even with a standing list configured", String(draftsOf(out.blocks).length));
+      ok(/would need to release Bare Real Occupant from IR first/.test(decisionsTextOf(out.blocks)), "reports using the ORIGINAL unrestricted wording — the standing list only applies to the explicit 'and drop' command", decisionsTextOf(out.blocks));
+    }
+
+    // (a2) "...and drop" (no names) — the SECOND, distinct command — DOES
+    // apply the standing list and drafts the real release+move pair.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Standing QB", p: "QB", t: "DAL" },
+        s1: { n: "Standing Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Standing New Guy", p: "WR", t: "DAL", inj: "IR" },
+        occupant: { n: "Standing Occupant", p: "WR", t: "IND" },
+      };
+      const sig = signals(pm, { irRelease: ["occupant"] });
+      const league = { ...lg("1", "Standing Release League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+      env.permission = "PROPOSE_ONLY";
+      for (const v of ["move all my IR eligible players to IR and drop", "move all my IR eligible players to IR, then drop", "move all my IR eligible players to IR and drop them"]) {
+        const out = await handleCommand(v, newSession(), env);
+        const drafts = draftsOf(out.blocks);
+        ok(drafts.length === 2 && drafts[0].kind === "DROP" && drafts[1].kind === "IR_MOVE", `"${v}" applies the standing IR Release list and drafts a real pair`, JSON.stringify(drafts.map((d) => d.kind)));
+        ok((drafts[0].params as { playerName: string }).playerName === "Standing Occupant", "releases the standing-list player", JSON.stringify(drafts[0].params));
+      }
+    }
+
+    // (b) an inline release clause on ONE command drafts real pairs too —
+    // and wins over the standing list when both are present.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Override QB", p: "QB", t: "DAL" },
+        s1: { n: "Override Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Override New Guy", p: "WR", t: "DAL", inj: "IR" },
+        standingGuy: { n: "Standing List Guy", p: "WR", t: "IND" },
+        overrideGuy: { n: "Override List Guy", p: "WR", t: "SEA" },
+      };
+      const sig = signals(pm, { irRelease: ["standingGuy"] });
+      const league = { ...lg("1", "Override Release League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "overrideGuy"], starters: ["fq", "s1"], reserve: ["overrideGuy"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR, release Override List Guy if needed", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 2 && (drafts[0].params as { playerName: string }).playerName === "Override List Guy", "an inline release order on this command wins over the standing list", JSON.stringify(drafts[0]?.params));
+    }
+
+    // (c) strict fallback for the "and drop" command: a league where the
+    // standing list doesn't apply never falls back to naming some other
+    // real occupant.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Strict QB", p: "QB", t: "DAL" },
+        s1: { n: "Strict Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Strict New Guy", p: "WR", t: "DAL", inj: "IR" },
+        realOccupant: { n: "Strict Real Occupant", p: "WR", t: "IND" },
+        // a real, curated player who just isn't on IR (or even rostered) in
+        // THIS league — a valid standing-list entry that simply doesn't apply here.
+        elsewhere: { n: "Strict Elsewhere Guy", p: "WR", t: "SEA" },
+      };
+      const sig = signals(pm, { irRelease: ["elsewhere"] });
+      const league = { ...lg("1", "Strict Standing League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "realOccupant"], starters: ["fq", "s1"], reserve: ["realOccupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR and drop", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      const decisionsText = decisionsTextOf(out.blocks);
+      ok(drafts.length === 0, "nothing drafted — the standing list has nobody real on this league's IR", String(drafts.length));
+      ok(!/Strict Real Occupant/.test(decisionsText), "the real occupant is never named — strict allow-list applies to the 'and drop' command too");
+      ok(/IR full — none of your release list \(Strict Elsewhere Guy\) is on IR in this league/.test(decisionsText), "names the standing list itself in the honest fallback, same wording as an inline release order", decisionsText);
+    }
+
+    // (d) an empty standing list (the ordinary case — most owners haven't
+    // set one) makes "...and drop" a no-op fallback: original unrestricted
+    // behavior, same as a bare report.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Empty QB", p: "QB", t: "DAL" },
+        s1: { n: "Empty Starter", p: "WR", t: "DAL" },
+        newGuy: { n: "Empty New Guy", p: "WR", t: "DAL", inj: "IR" },
+        realOccupant: { n: "Empty Real Occupant", p: "WR", t: "IND" },
+      };
+      const league = { ...lg("1", "Empty Standing League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "realOccupant"], starters: ["fq", "s1"], reserve: ["realOccupant"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "PROPOSE_ONLY";
+      const out = await handleCommand("move all my IR eligible players to IR and drop", newSession(), env);
+      ok(/would need to release Empty Real Occupant from IR first/.test(decisionsTextOf(out.blocks)), "with no standing list and no inline clause, behavior is completely unchanged from before this feature existed", decisionsTextOf(out.blocks));
     }
   }
 

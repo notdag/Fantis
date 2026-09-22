@@ -1007,3 +1007,71 @@ can really pair a release with the new player's IR move in one command.
   where none of the four were real IR occupants still got the honest
   fallback text. Confirmed read-only throughout — no Sleeper token was
   connected in this session, so nothing could have been sent regardless.
+
+### Standing IR Release list + splitting the report from the real drop (2026-09; real bug reported by the owner)
+
+The owner reported that a bare "suggest me players to move to IR" was still
+naming players other than their real fixed list (Isiah Pacheco, Dylan
+Sampson, Christian Kirk, James Conner, Tank Dell — "these are the only
+players that can be dropped if we need to make space for IR"). Two real
+gaps, both fixed:
+
+1. **The release order from the section above only ever applied when typed
+   inline, every single message.** Fixed by giving `PlayerPrefs` a third,
+   persisted list — `irRelease: string[]` (ordered, same shape as
+   `priority`) — stored the same way Priority/Avoid already are, via
+   `/api/manager/preferences` (`PlayerPreference.kind = "ir_release"`; a
+   player can only be in one of the three lists at once, same as
+   priority/avoid today — `playerId` is the table's primary key). Editable
+   under Chat tab → My players (`components/manager/PlayerPreferences.tsx`,
+   a third "IR Release" section, same add/reorder/remove UI as Priority).
+   `DropSignals.irReleaseOrder` carries it into the engine.
+2. **Even WITH an inline or standing release order active, the honest
+   "IR full — would need to release X" fallback text still named the real
+   weakest IR occupant by value when none of the owner's list matched that
+   particular league — not one of the approved names.** That's the literal
+   bug reported: a real, unapproved player kept showing up. Fixed by making
+   an active release order (inline OR standing) STRICT: the fallback now
+   says "none of your release list (...) is on IR in this league" instead
+   of ever naming an unapproved occupant, in `lib/commandCenter/engine.ts`'s
+   `ir_opps` case.
+
+A third, deliberate design change came out of testing this live: the first
+version of the standing list made a completely bare "move all my IR
+eligible players to IR" auto-draft real release+move pairs the moment a
+standing list existed — collapsing what the owner explicitly wanted as
+**two separate commands** back into one. Split for real now:
+
+- **"move all my IR eligible players to IR"** (bare, no "drop"/"release"
+  word at all) — stays pure report-only, and uses the ORIGINAL unrestricted
+  wording (names the real weakest occupant), exactly as if this whole
+  feature didn't exist. A standing list configured has zero effect on this
+  phrasing.
+- **"...and drop" / "...then drop" / "...drop if needed"** (the word
+  present, names optional) — the new `Intent`'s `useStandingRelease` flag
+  (`lib/commandCenter/intent.ts`), set only when a drop/release trigger
+  word appears with no names after it. This is what actually applies the
+  standing IR Release list and drafts real `DROP`+`IR_MOVE` pairs, strict
+  allow-list, same as an inline release order.
+- An inline release order (explicit names, e.g. "...release Isiah Pacheco,
+  Dylan Sampson if needed") still works exactly as before and wins over the
+  standing list for that one command, whether or not "and drop" is also
+  present.
+
+Tests: 21 new assertions in `scripts/testCommandCenter.ts` (section 34, now
+398) — the bare command staying report-only even with a standing list
+configured, the "and drop" variants (three phrasings) applying it and
+drafting real pairs, an inline order overriding the standing list, strict
+fallback naming the list (not a real occupant) for both the inline and
+standing paths, and a no-op empty-list case matching original behavior
+exactly. Verified live against the real account after saving the owner's
+actual 5-name list via `/api/manager/preferences` (ids resolved from
+Sleeper's public player dump: Pacheco `8205`, Sampson `12469`, Kirk `4950`,
+Conner `4137`, Dell `9502`) and reordering it live to Conner-first per a
+follow-up request: the bare command reported 96 players/72 leagues with
+completely unrestricted wording (named real occupants like Zach Charbonnet
+who aren't on the owner's list); "...and drop" reported the same 96/72 but
+29 of those pairs now used only the 5 approved names, in the exact order
+saved, and neither Conner nor Kirk were used anywhere this week because
+neither is actually on any real IR right now — confirmed honest, not
+fabricated. Confirmed read-only throughout, zero Sleeper writes.

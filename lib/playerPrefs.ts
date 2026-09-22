@@ -4,15 +4,20 @@
 export interface PlayerPrefs {
   priority: string[]; // ordered, index 0 = top pick
   avoid: string[];
+  // Ordered allow-list for "who to release to make room on a full IR" —
+  // when non-empty, this is the ONLY set of players the IR-opportunities
+  // scan will ever suggest releasing, in this order. Empty = no restriction
+  // (falls back to ranking every real IR occupant by value, as before).
+  irRelease: string[];
 }
 
-export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [] };
+export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [], irRelease: [] };
 
 export async function loadPrefs(): Promise<PlayerPrefs> {
   const res = await fetch("/api/manager/preferences");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "Couldn't load your player preferences.");
-  return { priority: body.priority ?? [], avoid: body.avoid ?? [] };
+  return { priority: body.priority ?? [], avoid: body.avoid ?? [], irRelease: body.irRelease ?? [] };
 }
 
 export async function savePrefs(prefs: PlayerPrefs): Promise<void> {

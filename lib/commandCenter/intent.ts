@@ -32,7 +32,13 @@ export type Intent =
   | { kind: "aggregate_drops" }
   | { kind: "candidate_leagues"; text: string; countOnly: boolean }
   | { kind: "waiver_opps" }
-  | { kind: "ir_opps"; releaseOrder?: Mention[] }
+  // useStandingRelease: the message asked to actually free up a slot ("...
+  // and drop"/"...then drop", no names given) rather than just report —
+  // signals the engine to apply the owner's standing IR Release list and
+  // draft real release+move pairs. A bare "move all my IR eligible players
+  // to IR" with neither this nor an inline releaseOrder stays pure
+  // report-only, same as before this existed.
+  | { kind: "ir_opps"; releaseOrder?: Mention[]; useStandingRelease?: boolean }
   | { kind: "roster_decisions" }
   | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter; dropOrder?: Mention[] }
   | { kind: "reset" }
@@ -217,10 +223,21 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   {
     // The release-order variant of this (mentions.length > 0) is handled by
     // the hoisted check above, before activate_ir/send_to_ir. This is just
-    // the bare bulk scan, with no player named at all.
+    // the bare bulk scan, with no player named at all — "move all my IR
+    // eligible players to IR" stays pure report-only. Appending "...and
+    // drop"/"...then drop" with no names is a distinct, deliberate second
+    // command: it signals the owner wants real release+move pairs drafted
+    // using their standing IR Release list, not just a report (the engine
+    // reads `useStandingRelease` for this). Two separate phrasings for two
+    // separate outcomes, by design — not just "drop" appearing anywhere,
+    // since that word alone doesn't change what gets drafted.
     const irWord = /\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t);
     if (irWord) {
-      if (mentions.length === 0) return { kind: "ir_opps" };
+      if (mentions.length === 0)
+        return {
+          kind: "ir_opps",
+          useStandingRelease: /\b(and|then)\s+(drop(ping)?|release(ing)?)\b|\b(drop(ping)?|release(ing)?)\s+(if needed|them|players)\b/.test(t),
+        };
     }
   }
 

@@ -145,4 +145,9 @@ export interface DropSignals {
   // callers fall back to the single fixed-format `fcValue`.
   fcValueFor?: (leagueId: string, id: string) => number | null;
   priorityOrder?: string[]; // the owner's Priority list in order (index 0 = top pick), for lineup proposals
+  // The owner's standing, ordered "who's fine to release to make room on a
+  // full IR" allow-list (index 0 = release first). Empty/absent = no
+  // restriction — ir_opps falls back to naming the real weakest IR
+  // occupant, as before this existed.
+  irReleaseOrder?: string[];
 }

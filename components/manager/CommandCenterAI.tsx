@@ -165,6 +165,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
       avoid: new Set(prefs.avoid),
       priority: new Set(prefs.priority),
       priorityOrder: prefs.priority,
+      irReleaseOrder: prefs.irRelease,
     };
   }, [pmap, tradeValues, fc, curated, prefs, leagueFc]);
 

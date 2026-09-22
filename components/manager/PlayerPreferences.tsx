@@ -47,15 +47,24 @@ export default function PlayerPreferences({
   const posOf = (id: string) => pmap?.[id]?.p;
 
   const addPriority = (id: string) =>
-    onChange({ priority: [...prefs.priority.filter((x) => x !== id), id], avoid: prefs.avoid.filter((x) => x !== id) });
+    onChange({ priority: [...prefs.priority.filter((x) => x !== id), id], avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id) });
   const addAvoid = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: [...prefs.avoid.filter((x) => x !== id), id] });
+    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: [...prefs.avoid.filter((x) => x !== id), id], irRelease: prefs.irRelease.filter((x) => x !== id) });
+  const addIrRelease = (id: string) =>
+    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: [...prefs.irRelease.filter((x) => x !== id), id] });
   const move = (i: number, delta: number) => {
     const next = [...prefs.priority];
     const j = i + delta;
     if (j < 0 || j >= next.length) return;
     [next[i], next[j]] = [next[j], next[i]];
     onChange({ ...prefs, priority: next });
+  };
+  const moveIrRelease = (i: number, delta: number) => {
+    const next = [...prefs.irRelease];
+    const j = i + delta;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange({ ...prefs, irRelease: next });
   };
 
   const save = async () => {
@@ -119,6 +128,7 @@ export default function PlayerPreferences({
               <span className="portmeta">{p.t}</span>
               <button className="btn ghost sm" onClick={() => { addPriority(p.id); setQuery(""); }}>+ Priority</button>
               <button className="btn ghost sm" onClick={() => { addAvoid(p.id); setQuery(""); }}>+ Avoid</button>
+              <button className="btn ghost sm" onClick={() => { addIrRelease(p.id); setQuery(""); }}>+ IR Release</button>
             </TableRow>
           ))}
         </DataTable>
@@ -155,6 +165,33 @@ export default function PlayerPreferences({
               row(
                 id,
                 <button className="btn ghost sm" onClick={() => onChange({ ...prefs, avoid: prefs.avoid.filter((x) => x !== id) })}>Remove</button>
+              )
+            )}
+          </DataTable>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <SectionHead level={3} title="IR Release (only these can be dropped to make room on IR)" right={`${prefs.irRelease.length}`} style={{ marginBottom: 8 }} />
+        <p className="hint" style={{ margin: "0 0 8px" }}>
+          When a league&rsquo;s IR is full, the IR-opportunities scan will only ever
+          suggest releasing someone from this list, in this order — never any
+          other IR occupant. Leave empty for no restriction (the default: ranks
+          every real IR occupant by value, as before).
+        </p>
+        {prefs.irRelease.length === 0 ? (
+          <p className="hint">No restriction — search above to add players.</p>
+        ) : (
+          <DataTable>
+            {prefs.irRelease.map((id, i) =>
+              row(
+                id,
+                <>
+                  <button className="btn ghost sm" disabled={i === 0} onClick={() => moveIrRelease(i, -1)} aria-label="Move up">↑</button>
+                  <button className="btn ghost sm" disabled={i === prefs.irRelease.length - 1} onClick={() => moveIrRelease(i, 1)} aria-label="Move down">↓</button>
+                  <button className="btn ghost sm" onClick={() => onChange({ ...prefs, irRelease: prefs.irRelease.filter((x) => x !== id) })}>Remove</button>
+                </>,
+                `${i + 1}.`
               )
             )}
           </DataTable>

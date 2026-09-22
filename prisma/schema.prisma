@@ -121,8 +121,8 @@ model RankedPlayer {
 // slot. Saved server-side so it follows the owner across browsers/devices.
 model PlayerPreference {
   playerId  String   @id // Sleeper player_id
-  kind      String // priority | avoid
-  rank      Int      @default(0) // order within priority; unused for avoid
+  kind      String // priority | avoid | ir_release
+  rank      Int      @default(0) // order within priority/ir_release; unused for avoid
   updatedAt DateTime @updatedAt
 }
 
