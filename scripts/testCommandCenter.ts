@@ -1525,6 +1525,51 @@ async function main() {
     ok(drafts.length === 1 && (drafts[0]?.params as { dropName: string | null })?.dropName === "Tank Bigsby", "Tank Bigsby is correctly read as the drop order, not as a second player to add", JSON.stringify(drafts[0]?.params));
   }
 
+  // ---------- 32. Priority-listed players are never suggested as an IR release, in either direction
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rp = ["QB", "WR", "BN"];
+    const settings2Slots = { roster_positions: rp, settings: { reserve_slots: 2 } };
+
+    // ir_opps: IR is full (2/2), moving a NEW eligible player there would need
+    // to release the weakest current IR occupant — except he's Priority-listed.
+    const pm: PlayerMap = {
+      fq: { n: "Priority QB", p: "QB", t: "DAL" },
+      s1: { n: "Priority Starter", p: "WR", t: "DAL" },
+      injPlayer: { n: "New IR Eligible", p: "WR", t: "DAL", inj: "IR" },
+      irOccupant1: { n: "Protected IR Guy", p: "WR", t: "IND" },
+      irOccupant2: { n: "Unprotected IR Guy", p: "WR", t: "IND" },
+    };
+    const sig = signals(pm, { values: { irOccupant1: 5, irOccupant2: 10 }, priority: ["irOccupant1"] });
+    const league = { ...lg("1", "Priority IR League", rp), settings: settings2Slots };
+    const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "injPlayer", "irOccupant1", "irOccupant2"], starters: ["fq", "s1"], reserve: ["irOccupant1", "irOccupant2"], taxi: [] };
+    const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Find leagues where I have an injured player who could go on IR", newSession(), env);
+    const decisionsText = out.blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
+    ok(/would need to release Unprotected IR Guy from IR first/.test(decisionsText), "the Priority-listed IR occupant (weakest by value) is skipped — the real, unprotected occupant is suggested instead", decisionsText);
+    ok(!/release Protected IR Guy/.test(decisionsText), "the Priority-listed player is never named as a release candidate at all");
+
+    // activate_ir: roster is full, activating him needs a bench drop — except
+    // the weakest bench player is Priority-listed too.
+    const pm2: PlayerMap = {
+      fq2: { n: "Activate QB", p: "QB", t: "DAL" },
+      s2: { n: "Activate Starter", p: "WR", t: "DAL" },
+      ab1: { n: "Protected Bench Guy", p: "WR", t: "DAL" },
+      ab2: { n: "Unprotected Bench Guy", p: "WR", t: "DAL" },
+      irStar: { n: "Activate IR Star", p: "WR", t: "IND" },
+    };
+    const sig2 = signals(pm2, { values: { ab1: 5, ab2: 10 }, priority: ["ab1"] });
+    const rpFull = ["QB", "WR", "WR", "BN"];
+    const league2 = { ...lg("2", "Priority Activate League", rpFull), settings: { roster_positions: rpFull, settings: { reserve_slots: 1 } } };
+    const roster2: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq2", "s2", "ab1", "ab2", "irStar"], starters: ["fq2", "s2"], reserve: ["irStar"], taxi: [] };
+    const env2 = makeEnv([{ league: league2, rosters: [roster2, otherRoster([])], txns: [] }], pm2, sig2);
+    env2.permission = "PROPOSE_ONLY";
+    const out2 = await handleCommand("Move Activate IR Star off IR to my bench", newSession(), env2);
+    const drafts2 = draftsOf(out2.blocks);
+    ok(drafts2.length === 1 && (drafts2[0].params as { dropName: string | null }).dropName === "Unprotected Bench Guy", "activating from IR also skips the Priority-listed bench player and picks the next real candidate", JSON.stringify(drafts2[0]?.params));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

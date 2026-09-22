@@ -896,3 +896,45 @@ Tests: 2 new phrasing variants added to the existing drops test in
 `scripts/testCommandCenter.ts` (now 367). Verified live: "drop candidates
 for my worst players" now returns the real 210-league scan instead of the
 dead-end fallback.
+
+### Priority list wasn't respected when suggesting who to release from IR (2026-09; real bug reported by the owner)
+
+The owner reported "I cannot have Jordyn Tyson dropped from IR" after
+running the bulk IR scan — a league with a full IR suggested releasing him
+to make room for a different player going to IR. Root cause: unlike the
+regular bench-drop logic (`analyzeDrops`, which has always excluded the
+Priority list), the "who to release from IR" candidate pools in
+`lib/bulkPlan.ts`'s `buildIrPlan` and `buildActivateIrPlan`, and
+`lib/multiAddPlan.ts`'s `buildMultiAddPlan`, never checked it at all —
+purely ranked by Fantis/FantasyCalc value, so an uncurated player (value 0,
+sorts as "weakest") could get suggested for release regardless of whether
+the owner had marked him protected.
+
+All three now take an optional `isPriority` callback (default
+`() => false`, so nothing breaks if a caller doesn't pass one) and filter
+the candidate pool before ranking — same rule bench drops already followed,
+now consistent everywhere a "who to drop to make room" suggestion appears:
+
+- `ir_opps` and `weekly_sweep` (chat) — the informational "would need to
+  release X" text in the bulk IR scan.
+- `activate_ir` (chat) — the REAL bench-drop proposal when activating him
+  off IR needs room; this one is more serious than the informational IR
+  case since it's an actual proposal that could be approved and sent.
+- `BulkIR.tsx` and `BulkAdd.tsx` (the UI tools under /manager/lineups) —
+  neither previously received the owner's `prefs` at all; now both do
+  (threaded through from `LineupManager.tsx`), so the Mass IR and Mass
+  Add/Claim boards respect Priority the same way chat does.
+
+If every real candidate in a league is Priority-protected, the honest
+result is "nobody clear to drop" — never a silent fallback to suggesting a
+protected player anyway.
+
+Tests: 5 new assertions in `scripts/testMultiAddPlan.ts` (now 20) and 3 in
+`scripts/testCommandCenter.ts` (now 370). Verified live end-to-end against
+the real account: confirmed the owner's Priority list was actually empty
+(so Jordyn Tyson wasn't protected yet, which is why the bug was visible at
+all even before this fix existed to matter), added him via
+`/api/manager/preferences` (id `13281`, resolved from Sleeper's real player
+list — a Fantis-only preference write, never touches Sleeper), then
+re-ran the 210-league bulk IR scan and confirmed his name appears nowhere
+in the 72-league result.

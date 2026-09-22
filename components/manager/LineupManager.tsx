@@ -347,12 +347,12 @@ export default function LineupManager({
         )}
         {visited.has("ir") && (
           <div hidden={tab !== "ir"}>
-            <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} />
+            <BulkIR leagues={leagues} pmap={pmap} token={token} currentWeek={currentWeek} prefs={prefs} />
           </div>
         )}
         {visited.has("add") && (
           <div hidden={tab !== "add"}>
-            <BulkAdd leagues={leagues} pmap={pmap} token={token} />
+            <BulkAdd leagues={leagues} pmap={pmap} token={token} prefs={prefs} />
           </div>
         )}
         {tab === "lineups" && (

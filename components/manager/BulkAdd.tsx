@@ -9,6 +9,7 @@ import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
+import type { PlayerPrefs } from "@/lib/playerPrefs";
 import type { LineupLeague } from "./LineupManager";
 import { PlayerAvatar } from "./Avatar";
 import { StatCard, StatCardGrid } from "./StatCard";
@@ -40,12 +41,15 @@ export default function BulkAdd({
   leagues,
   pmap,
   token,
+  prefs,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
+  prefs: PlayerPrefs;
 }) {
   const rank = useDropRank(pmap);
+  const isPriority = useMemo(() => new Set(prefs.priority), [prefs.priority]);
   const [query, setQuery] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
   const [rosteredByTarget, setRosteredByTarget] = useState<Record<string, Set<string>> | null>(null);
@@ -193,9 +197,10 @@ export default function BulkAdd({
       (leagueId, targetId, bidMin) => {
         const pos = pmap?.[targetId]?.p ?? "";
         return suggestBid(faabStats, leagueId, pos, bidMin, bidMin).bid;
-      }
+      },
+      (id) => isPriority.has(id)
     );
-  }, [targets, rosteredByTarget, planLeagues, rank, faabStats, pmap]);
+  }, [targets, rosteredByTarget, planLeagues, rank, faabStats, pmap, isPriority]);
 
   // League x target grid — only leagues where at least one target is either
   // addable or already rostered by you/someone else are worth a row.

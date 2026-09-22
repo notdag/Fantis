@@ -851,7 +851,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank);
+      const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank, (id) => env.signals.priority.has(id));
       blocks.push({ t: "scanStatus", meta });
       const byLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
       for (const r of rows) {
@@ -1093,7 +1093,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const rowsByPlayer = new Map(players.map((p) => [p.id, buildActivateIrPlan(p.id, plan, env.rank)]));
+      const rowsByPlayer = new Map(players.map((p) => [p.id, buildActivateIrPlan(p.id, plan, env.rank, (id) => env.signals.priority.has(id))]));
       const totalRows = [...rowsByPlayer.values()].reduce((n, r) => n + r.length, 0);
       if (totalRows === 0) {
         blocks.push({ t: "text", tone: "info", text: `${players.length === 1 ? `${players[0].name} isn't` : `None of ${label} are`} on IR in any of your ${plan.length} readable leagues.` });
@@ -1592,7 +1592,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const irRows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank);
+      const irRows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank, (id) => env.signals.priority.has(id));
       const irDrafts: ProposalDraft[] = [];
       for (const r of irRows) {
         if (r.needsDrop) continue; // IR full — never auto-proposed

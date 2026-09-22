@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { buildIrPlan, type IrRow, type PlanLeague } from "@/lib/bulkPlan";
 import { runBulk, errorMessage, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
+import type { PlayerPrefs } from "@/lib/playerPrefs";
 import type { LineupLeague } from "./LineupManager";
 import { PlayerAvatar } from "./Avatar";
 import { Badge } from "./Badge";
@@ -31,13 +32,16 @@ export default function BulkIR({
   pmap,
   token,
   currentWeek,
+  prefs,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
   currentWeek: number;
+  prefs: PlayerPrefs;
 }) {
   const rank = useDropRank(pmap);
+  const isPriority = useCallback((id: string) => prefs.priority.includes(id), [prefs.priority]);
 
   const planLeagues = useMemo<PlanLeague[]>(
     () =>
@@ -57,8 +61,8 @@ export default function BulkIR({
   );
 
   const rows = useMemo(
-    () => buildIrPlan(planLeagues, (id) => pmap?.[id]?.inj ?? null, rank),
-    [planLeagues, pmap, rank]
+    () => buildIrPlan(planLeagues, (id) => pmap?.[id]?.inj ?? null, rank, isPriority),
+    [planLeagues, pmap, rank, isPriority]
   );
 
   // Everything is selected by default; the user un-checks. (Stored as the

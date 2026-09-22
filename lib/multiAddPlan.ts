@@ -47,7 +47,8 @@ export function buildMultiAddPlan(
   leagues: PlanLeague[],
   rosteredLeagueIdsByTarget: Record<string, ReadonlySet<string>>,
   rank: DropRank,
-  suggestBidFor: (leagueId: string, targetId: string, bidMin: number) => number
+  suggestBidFor: (leagueId: string, targetId: string, bidMin: number) => number,
+  isPriority: (playerId: string) => boolean = () => false
 ): { rows: MultiAddRow[]; budgetWarnings: LeagueBudgetWarning[] } {
   const asc = (a: string, b: string) => {
     const [a1, a2] = rank(a);
@@ -66,9 +67,10 @@ export function buildMultiAddPlan(
     let openSlots = Math.max(0, rosterSize - active);
 
     // Bench players droppable for THIS league, weakest first — same rule as
-    // the single-target planner: never a starter, never on IR.
+    // the single-target planner: never a starter, never on IR, never a
+    // Priority-listed player.
     const benchPool = lg.players
-      .filter((id) => !lg.starters.includes(id) && !lg.reserve.includes(id))
+      .filter((id) => !lg.starters.includes(id) && !lg.reserve.includes(id) && !isPriority(id))
       .sort(asc);
     const usedDrops = new Set<string>();
 

@@ -109,7 +109,8 @@ export interface IrRow {
 export function buildIrPlan(
   leagues: PlanLeague[],
   injuryOf: (playerId: string) => string | null,
-  rank: DropRank
+  rank: DropRank,
+  isPriority: (playerId: string) => boolean = () => false
 ): IrRow[] {
   const rows: IrRow[] = [];
   const asc = byRankAsc(rank);
@@ -127,7 +128,9 @@ export function buildIrPlan(
 
     let open = Math.max(0, slots - lg.reserve.length);
     // Current IR players, cheapest first — the drop pool when IR is full.
-    const pool = [...lg.reserve].sort(asc);
+    // Same rule the regular bench-drop suggestions already use: a
+    // Priority-listed player is never suggested as droppable, even from IR.
+    const pool = [...lg.reserve].filter((id) => !isPriority(id)).sort(asc);
     const used = new Set<string>();
 
     for (const p of eligible) {
@@ -177,7 +180,7 @@ export interface ActivateIrRow {
 // doesn't count against the active-roster limit, so freeing his reserve slot
 // can push the active roster over the limit). Only reserve → bench; setting
 // him as a starter afterward is a separate, later step (see force-start).
-export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], rank: DropRank): ActivateIrRow[] {
+export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], rank: DropRank, isPriority: (playerId: string) => boolean = () => false): ActivateIrRow[] {
   const asc = byRankAsc(rank);
   const rows: ActivateIrRow[] = [];
   for (const lg of leagues) {
@@ -188,8 +191,10 @@ export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], ran
     })();
     const activeNow = lg.players.length - lg.reserve.length;
     const needsDrop = rosterSize > 0 && activeNow + 1 > rosterSize;
+    // Same rule the regular bench-drop suggestions already use: never
+    // propose dropping a Priority-listed player, even to make room here.
     const bench = lg.players
-      .filter((id) => id !== playerId && !lg.starters.includes(id) && !lg.reserve.includes(id))
+      .filter((id) => id !== playerId && !lg.starters.includes(id) && !lg.reserve.includes(id) && !isPriority(id))
       .sort(asc);
     rows.push({
       key: `${lg.leagueId}:${playerId}`,

@@ -106,5 +106,22 @@ const rostered = (overrides: Record<string, string[]> = {}): Record<string, Read
   ok(l1Rows.every((r) => r.full) && l2Rows.every((r) => !r.full), "drop requirement in one league never leaks into another");
 }
 
+// ------------------------------------------------------------- a Priority-listed player is never suggested as a drop
+{
+  // b1 is the weakest by value (would normally be picked first), but it's on
+  // the owner's Priority list — it must never be offered, even as the only
+  // remaining candidate for a second target.
+  const full = lg("1", ["s1", "s2", "s3", "s4", "s5", "b1", "b2", "b3"], ["s1", "s2", "s3", "s4", "s5"]);
+  const { rows } = buildMultiAddPlan(["x", "y"], [full], rostered(), rank, noBid, (id) => id === "b1");
+  const byTarget = Object.fromEntries(rows.map((r) => [r.targetId, r]));
+  ok(byTarget.x.dropId === "b2", "the Priority-listed weakest player is skipped — the next real candidate is offered instead", byTarget.x.dropId ?? "null");
+  ok(!byTarget.x.dropCandidates.includes("b1") && !byTarget.y.dropCandidates.includes("b1"), "the Priority-listed player never appears in either target's dropdown at all", JSON.stringify([byTarget.x.dropCandidates, byTarget.y.dropCandidates]));
+
+  // If EVERY bench player is Priority-listed, there's honestly nothing to
+  // propose — never falls back to suggesting a protected player anyway.
+  const allProtected = buildMultiAddPlan(["x"], [full], rostered(), rank, noBid, () => true);
+  ok(allProtected.rows[0].dropId === null && allProtected.rows[0].dropCandidates.length === 0, "when every real candidate is Priority-protected, nobody is suggested — not even as a last resort", JSON.stringify(allProtected.rows[0]));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
