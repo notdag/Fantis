@@ -9,7 +9,7 @@ import type { CcLeague, DropSignals, LeagueSnapshot } from "../lib/commandCenter
 import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
 import type { RawRoster, RawTxn } from "../lib/commandCenter/classify";
 import type { PlayerMap, ProjectionMap } from "../lib/types";
-import type { RawMatchup, SleeperLeg } from "../lib/commandCenter/tools";
+import type { RawMatchup, SleeperLeg, WeekRecordRow } from "../lib/commandCenter/tools";
 import type { FaabStats } from "../lib/faabHistory";
 import { computeFaabStats } from "../lib/faabHistory";
 
@@ -96,6 +96,7 @@ function signals(pm: PlayerMap, opts: { avoid?: string[]; priority?: string[]; v
 
 interface MatchupExtra {
   faabStats?: FaabStats | null;
+  weekRecord?: Record<number, { rows: WeekRecordRow[]; noData: string[] }>;
   sleeper?: { access: boolean; legs: Record<string, SleeperLeg[] | Error>; calls?: { n: number } };
   states?: Record<string, { state: "pre" | "in" | "post"; elapsed: number }> | null;
   matchups?: Record<string, RawMatchup[] | Error>;
@@ -112,6 +113,7 @@ function makeEnv(fx: LeagueFx[], pm: PlayerMap, sig?: DropSignals, calls = { ros
     week: extra.week ?? 3,
     hasSleeperAccess: () => !!extra.sleeper?.access,
     getFaabStats: async () => extra.faabStats ?? null,
+    getWeekRecord: async (w: number) => extra.weekRecord?.[w] ?? null,
     getSleeperLegs: async (id) => {
       if (extra.sleeper?.calls) extra.sleeper.calls.n++;
       const l = extra.sleeper?.legs[id];
@@ -776,6 +778,209 @@ async function main() {
     for (const v of ["Run my weekly sweep", "sweep the week", "do my weekly check", "sweep my leagues"]) {
       const o = await handleCommand(v, newSession(), makeEnv(scenario(), pm, sig));
       ok(o.audit.intent === "weekly_sweep", `phrasing → weekly_sweep: "${v}"`, o.audit.intent);
+    }
+  }
+
+  // ---------- 17. week record (real past results, pure DB read) + relative "last/this week"
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    const wr = (leagueId: string, leagueName: string, points: number, won: boolean | null, oppPoints: number | null = null, oppName: string | null = null): WeekRecordRow => ({ leagueId, leagueName, points, won, opponentPoints: oppPoints, opponentTeamName: oppName });
+    const week2: { rows: WeekRecordRow[]; noData: string[] } = {
+      rows: [
+        wr("1", "L1 free agent", 110.5, true, 90.2, "Team A"),
+        wr("2", "L2 waiver full roster", 80, false, 95.5, "Team B"),
+        wr("3", "L3 on my roster", 70, null, null, null), // a real synced bye/unresolved week — never guessed as a loss
+      ],
+      noData: ["L4 on other roster"], // no row at all for this week — never confused with a loss
+    };
+    const env = makeEnv(scenario(), pm, undefined, undefined, { weekRecord: { 2: week2 }, week: 3 });
+    const out = await handleCommand("What was my overall record for week 2?", newSession(), env);
+    ok(out.audit.intent === "week_record", "recognised as week_record", out.audit.intent);
+    const wb = out.blocks.find((b): b is Extract<Block, { t: "week_record" }> => b.t === "week_record");
+    ok(!!wb && wb.wins === 1 && wb.losses === 1 && wb.unresolved === 1, "wins/losses/unresolved computed correctly from real per-league results", JSON.stringify(wb));
+    ok(!!wb && wb.noData.length === 1, "a league with no synced data for that week is reported separately, not counted as a loss");
+    const txt = textOf(out.blocks);
+    ok(/Week 2: 1-1 \(1 bye\/unresolved, not counted either way\) across 3 leagues/.test(txt), "headline states the real record and never guesses the unresolved one", txt.slice(0, 200));
+    ok(/1 league has no synced data for week 2/.test(txt), "headline discloses the uncovered league");
+
+    for (const v of ["What was my overall record for week 2", "How did I do week 2", "my score week 2", "week 2 results"]) {
+      const o = await handleCommand(v, newSession(), env);
+      ok(o.audit.intent === "week_record" && (o.audit as unknown as { players: unknown }) !== undefined, `phrasing → week_record: "${v}"`, o.audit.intent);
+    }
+
+    // relative "last week" / "this week" resolve against the real current week (env.week = 3), never guessed independently
+    const lastWeek = await handleCommand("what was my record last week", newSession(), env);
+    ok(lastWeek.audit.intent === "week_record", "\"last week\" recognised");
+    ok(/Week 2:/.test(textOf(lastWeek.blocks)), "\"last week\" resolves to week 2 when the current week is 3", textOf(lastWeek.blocks).slice(0, 60));
+
+    const envNoWeek = makeEnv(scenario(), pm, undefined, undefined, { weekRecord: { 2: week2 } }); // env.week defaults to 3 in makeEnv's fixture already; force unknown instead
+    const noResult = await env.tools.get_week_record(999); // sanity: an unsynced week returns null via the tool, not a guess
+    ok(noResult === null, "a week with no fixture at all comes back null from the tool, never invented");
+    void envNoWeek;
+
+    // week 1 has no "last week" — never wraps to a negative/zero week
+    const noBefore = await handleCommand("what was my record last week", newSession(), makeEnv(scenario(), pm, undefined, undefined, { weekRecord: {}, week: 1 }));
+    ok(/no week before week 1/.test(textOf(noBefore.blocks)), "never resolves to a week before 1");
+
+    // an unreadable week (tool returns null) never invents a fake 0-0 record
+    const unread = await handleCommand("what was my record for week 5", newSession(), makeEnv(scenario(), pm, undefined, undefined, { weekRecord: {} }));
+    ok(!unread.blocks.some((b) => b.t === "week_record") && /Couldn't read week 5/.test(textOf(unread.blocks)), "an unreadable week says so instead of showing an empty/fake record");
+    ok(/READ-ONLY MODE/.test(txt), "read-only line present on a week_record answer");
+  }
+
+  // ---------- 18. execute_request now applies an inline condition instead of discarding it
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    const env = makeEnv(scenario(), pm);
+    const out = await handleCommand("Add Antonio Williams if he's on waivers", newSession(), env);
+    ok(out.audit.intent === "execute_request", "still recognised as an execution attempt (never executed)", out.audit.intent);
+    const lb = out.blocks.find((b): b is Extract<Block, { t: "leagues" }> => b.t === "leagues");
+    ok(!!lb && lb.rows.every((r) => r.state === "WAIVER"), "the inline 'if on waivers' condition is now applied, not discarded — every shown league is really WAIVER", JSON.stringify(lb?.rows.map((r) => r.state)));
+    ok(/Only showing leagues that match what you asked for: waiver/.test(textOf(out.blocks)), "tells the user which condition it applied", textOf(out.blocks).slice(0, 300));
+    ok(/can't add anything|I don't add anything/.test(textOf(out.blocks)), "still refuses to actually execute anything from chat");
+
+    const out2 = await handleCommand("Add Antonio Williams only where I don't need to drop anyone", newSession(), makeEnv(scenario(), pm));
+    const lb2 = out2.blocks.find((b): b is Extract<Block, { t: "leagues" }> => b.t === "leagues");
+    ok(!!lb2 && lb2.rows.every((r) => r.needsDrop === false), "a 'no drop needed' condition is applied too", JSON.stringify(lb2?.rows.map((r) => r.needsDrop)));
+
+    // a bare "add X" with no real condition still shows everything (no over-filtering)
+    const out3 = await handleCommand("Add Antonio Williams", newSession(), makeEnv(scenario(), pm));
+    const lb3 = out3.blocks.find((b): b is Extract<Block, { t: "leagues" }> => b.t === "leagues");
+    ok(!!lb3 && lb3.rows.length > 1, "a plain 'add X' with no stated condition is not narrowed to a single state", String(lb3?.rows.length));
+  }
+
+  // ---------- 19. "move <player> off IR to my bench" (real chat request)
+  {
+    const pm = basePmap();
+    delete pm["101"];
+    pm["999"] = { n: "IR Star", p: "WR", t: "IND" };
+    const aStarters = ["aq", "ar1", "ar2", "aw1", "aw2", "at", "af", "ak", "ad"];
+    const values = { ab1: 5, ab2: 10, ab3: 20, ab4: 30, ab5: 40 };
+    const sig = signals(pm, { values });
+
+    const leagueA = { ...lg("1", "Activate League A — open"), settings: { roster_positions: WR_ROSTER, settings: { reserve_slots: 2 } } };
+    const rosterA: RawRoster = { roster_id: 1, owner_id: ME, players: [...aStarters, "ab1", "999"], starters: aStarters, reserve: ["999"], taxi: [] };
+
+    const leagueB = { ...lg("2", "Activate League B — full"), settings: { roster_positions: WR_ROSTER, settings: { reserve_slots: 2 } } };
+    const rosterB: RawRoster = { roster_id: 1, owner_id: ME, players: [...aStarters, "ab1", "ab2", "ab3", "ab4", "ab5", "999"], starters: aStarters, reserve: ["999"], taxi: [] };
+
+    const leagueC = { ...lg("3", "Activate League C — not on IR"), settings: { roster_positions: WR_ROSTER, settings: { reserve_slots: 2 } } };
+    const rosterC: RawRoster = { roster_id: 1, owner_id: ME, players: [...aStarters, "ab1"], starters: aStarters, reserve: [], taxi: [] };
+
+    const rp9 = ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "K", "DEF"]; // no bench slots at all
+    const leagueD = { ...lg("4", "Activate League D — no candidate", rp9), settings: { roster_positions: rp9, settings: { reserve_slots: 1 } } };
+    const rosterD: RawRoster = { roster_id: 1, owner_id: ME, players: [...aStarters, "999"], starters: aStarters, reserve: ["999"], taxi: [] };
+
+    const fx: LeagueFx[] = [
+      { league: leagueA, rosters: [rosterA, otherRoster([])], txns: [] },
+      { league: leagueB, rosters: [rosterB, otherRoster([])], txns: [] },
+      { league: leagueC, rosters: [rosterC, otherRoster([])], txns: [] },
+      { league: leagueD, rosters: [rosterD, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm, sig);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Move IR Star off IR to my bench", newSession(), env);
+    ok(out.audit.intent === "activate_ir", "recognised as activate_ir", out.audit.intent);
+    const decisionsBlk = out.blocks.find((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions");
+    ok(!!decisionsBlk && decisionsBlk.rows.length === 3, "reports the 3 leagues where he's really on IR (League C excluded — never on IR there)", String(decisionsBlk?.rows.length));
+    const draftsBlk = out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts");
+    ok(!!draftsBlk && draftsBlk.drafts.length === 2, "2 real proposals drafted (A: no drop, B: with a drop) — D skipped, no candidate", String(draftsBlk?.drafts.length));
+    const byLeague = Object.fromEntries(draftsBlk!.drafts.map((d) => [d.leagueName, d]));
+    ok(!(byLeague["Activate League A — open"].params as { dropId: string | null }).dropId, "open roster → no drop in the proposal");
+    ok((byLeague["Activate League B — full"].params as { dropId: string | null }).dropId === "ab1", "full roster → weakest bench player suggested as the drop (lowest Fantis value first)", JSON.stringify(byLeague["Activate League B — full"].params));
+    ok(draftsBlk!.drafts.every((d) => d.kind === "ACTIVATE_IR"), "every draft is the ACTIVATE_IR kind");
+    ok(/2 can be proposed to move him to the bench; 1 would need a drop with no clear bench candidate/.test(textOf(out.blocks)), "headline discloses the skipped no-candidate league honestly", textOf(out.blocks).slice(0, 400));
+    ok(/only moves him to your bench.*doesn't set him as a starter/.test(textOf(out.blocks)), "never conflates activating with starting him");
+
+    // never on IR anywhere → says so plainly, no drafts
+    const notOnIrFx: LeagueFx[] = [{ league: leagueC, rosters: [rosterC, otherRoster([])], txns: [] }];
+    const out2 = await handleCommand("activate IR Star from IR", newSession(), makeEnv(notOnIrFx, pm, sig));
+    ok(/isn't on IR in any of your/.test(textOf(out2.blocks)) && !out2.blocks.some((b) => b.t === "drafts"), "not on IR anywhere → plain statement, no drafts");
+
+    for (const v of ["Move IR Star off IR to my bench", "activate IR Star from IR", "get IR Star off IR", "take IR Star off reserve"]) {
+      const o = await handleCommand(v, newSession(), makeEnv(fx, pm, sig));
+      ok(o.audit.intent === "activate_ir", `phrasing → activate_ir: "${v}"`, o.audit.intent);
+    }
+  }
+
+  // ---------- 20. "make sure <player> starts" (forced single-player lineup override)
+  {
+    const pm: PlayerMap = {
+      fq: { n: "Force QB", p: "QB", t: "DAL" },
+      target: { n: "Target WR", p: "WR", t: "IND" }, // the player we want started
+      bench1: { n: "Weak Bench", p: "WR", t: "IND" },
+      hurt: { n: "Hurt Guy", p: "WR", t: "SF" },
+    };
+    const rpWR = ["QB", "WR", "WR", "BN"];
+    const settings = { roster_positions: rpWR, settings: { reserve_slots: 1 } };
+    const proj: ProjectionMap = { fq: { pts_ppr: 20 }, target: { pts_ppr: 5 }, bench1: { pts_ppr: 30 }, hurt: { pts_ppr: 25 } };
+    const future = new Date(NOW + 86_400_000).toISOString();
+    const past = new Date(NOW - 3_600_000).toISOString();
+
+    // League 1: target is benched behind a higher-projected player → forcing him should swap him in even though it costs points
+    const l1 = { ...lg("1", "Force L1 — bench swap"), settings };
+    const r1: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target"], starters: ["fq", "bench1", "0"], reserve: [], taxi: [] };
+    // League 2: target already starting → nothing to propose
+    const l2 = { ...lg("2", "Force L2 — already starting"), settings };
+    const r2: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "target", "bench1"], starters: ["fq", "target", "0"], reserve: [], taxi: [] };
+    // League 3: target not rostered at all → excluded, never reported as a failure
+    const l3 = { ...lg("3", "Force L3 — not rostered"), settings };
+    const r3: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1"], starters: ["fq", "bench1", "0"], reserve: [], taxi: [] };
+    // League 4: target on IR → can't be started, points to activation instead
+    const l4 = { ...lg("4", "Force L4 — on IR"), settings };
+    const r4: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target"], starters: ["fq", "bench1", "0"], reserve: ["target"], taxi: [] };
+
+    const fx: LeagueFx[] = [
+      { league: l1, rosters: [r1, otherRoster([])], txns: [] },
+      { league: l2, rosters: [r2, otherRoster([])], txns: [] },
+      { league: l3, rosters: [r3, otherRoster([])], txns: [] },
+      { league: l4, rosters: [r4, otherRoster([])], txns: [] },
+    ];
+    const env = makeEnv(fx, pm, undefined, undefined, { projections: proj, week: 3 });
+    env.permission = "PROPOSE_ONLY";
+    env.kickoffs = async () => ({ DAL: future, IND: future, SF: future });
+    const out = await handleCommand("Make sure Target WR starts this week", newSession(), env);
+    ok(out.audit.intent === "force_start", "recognised as force_start", out.audit.intent);
+    const draftsBlk = out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts");
+    ok(!!draftsBlk && draftsBlk.drafts.length === 1 && draftsBlk.drafts[0].leagueName === "Force L1 — bench swap", "only the one league that actually needs a change gets a proposal", JSON.stringify(draftsBlk?.drafts.map((d) => d.leagueName)));
+    const lp = draftsBlk!.drafts[0].params as { toStarters: string[] };
+    ok(lp.toStarters.includes("target"), "the forced player is really in the proposed starting lineup", JSON.stringify(lp));
+    ok(draftsBlk!.drafts[0].rationale.some((r) => /costs|gains/.test(r)), "rationale is honest about the point cost/gain of forcing him in, even when it's negative");
+    const txt = textOf(out.blocks);
+    ok(/already starting in 1 league/.test(txt), "already-starting league (L2) is reported, not silently skipped", txt.slice(0, 300));
+    ok(/On IR\/taxi in 1 \(can't start until activated/.test(txt), "an IR-listed league (L4) is reported with a pointer to activation, never force-started", txt.slice(0, 400));
+
+    // never overrides a real Out/bye status — the single most important safety rule here
+    const pmHurtTarget: PlayerMap = { ...pm, target: { ...pm.target, inj: "Out" } };
+    const envHurt = makeEnv(fx, pmHurtTarget, undefined, undefined, { projections: proj, week: 3 });
+    envHurt.kickoffs = async () => ({ DAL: future, IND: future, SF: future });
+    const outHurt2 = await handleCommand("Make sure Target WR starts this week", newSession(), envHurt);
+    ok(!outHurt2.blocks.some((b) => b.t === "drafts"), "an Out player is NEVER force-started, even when explicitly asked — no proposal at all", textOf(outHurt2.blocks).slice(0, 300));
+    ok(/Not started in 1 — his real status or bye makes him unavailable there; I never override that/.test(textOf(outHurt2.blocks)), "explains exactly why, honestly");
+
+    // a locked game (already started) is never touched
+    const envLocked = makeEnv([{ league: l1, rosters: [r1, otherRoster([])], txns: [] }], pm, undefined, undefined, { projections: proj, week: 3 });
+    envLocked.kickoffs = async () => ({ DAL: future, IND: past });
+    const outLocked = await handleCommand("Make sure Target WR starts this week", newSession(), envLocked);
+    ok(!outLocked.blocks.some((b) => b.t === "drafts") && /Too late in 1/.test(textOf(outLocked.blocks)), "a game that already started is reported as too late, never proposed");
+
+    // not rostered anywhere at all
+    const envNone = makeEnv([{ league: l3, rosters: [r3, otherRoster([])], txns: [] }], pm, undefined, undefined, { projections: proj, week: 3 });
+    envNone.kickoffs = async () => ({ DAL: future });
+    const outNone = await handleCommand("Make sure Target WR starts this week", newSession(), envNone);
+    ok(/isn't on your roster in any readable league/.test(textOf(outNone.blocks)), "not rostered anywhere → says so plainly");
+
+    // no projections loaded → refuses to guess
+    const envNoProj = makeEnv(fx, pm, undefined, undefined, { week: 3 });
+    envNoProj.kickoffs = async () => ({ DAL: future });
+    const outNoProj = await handleCommand("Make sure Target WR starts this week", newSession(), envNoProj);
+    ok(!outNoProj.blocks.some((b) => b.t === "drafts") && /projections haven't loaded/.test(textOf(outNoProj.blocks)), "no projections → no lineup change proposed");
+
+    for (const v of ["Make sure Target WR starts this week", "I want Target WR to start", "Target WR needs to start", "start Target WR in my lineups"]) {
+      const o = await handleCommand(v, newSession(), env);
+      ok(o.audit.intent === "force_start", `phrasing → force_start: "${v}"`, o.audit.intent);
     }
   }
 

@@ -18,6 +18,7 @@ import {
   canAutoExecute,
   canExecuteApproved,
   validateAgainstLive,
+  type ActivateIrParams,
   type AddParams,
   type IrParams,
   type LineupParams,
@@ -31,6 +32,7 @@ export interface ExecWriters {
   addDropFreeAgent(token: string, p: { leagueId: string; rosterId: number; addPlayerId?: string; dropPlayerId?: string }): Promise<unknown>;
   claimWaiver(token: string, p: { leagueId: string; rosterId: number; addPlayerId: string; dropPlayerId?: string; bid: number }): Promise<unknown>;
   moveToIR(token: string, p: { leagueId: string; rosterId: number; playerId: string }): Promise<unknown>;
+  activateFromIR(token: string, p: { leagueId: string; rosterId: number; playerId: string }): Promise<unknown>;
   setStarters(token: string, p: { leagueId: string; rosterId: number; starters: string[]; week: number }): Promise<unknown>;
   fetchLeagueTransactions(
     token: string,
@@ -111,6 +113,8 @@ export async function executeProposal(p: Proposal, d: ExecDeps): Promise<ExecRes
         return await runAdd(p, league, token, d);
       case "IR_MOVE":
         return await runIr(p, league, token, d, snap);
+      case "ACTIVATE_IR":
+        return await runActivateIr(p, league, token, d);
       case "SET_LINEUP":
         return await runLineup(p, league, token, d);
     }
@@ -207,6 +211,30 @@ async function runIr(p: Proposal, league: CcLeague, token: string, d: ExecDeps, 
   const me2 = after && myRoster(after);
   if (me2 && me2.reserve.includes(a.playerId)) return { status: "executed", message: `${a.playerName} moved to IR — confirmed on Sleeper.`, sent: true };
   return { status: "verify_failed", message: `The IR move was sent, but a re-read doesn't show ${a.playerName} on IR. Check Sleeper.`, sent: true };
+}
+
+async function runActivateIr(p: Proposal, league: CcLeague, token: string, d: ExecDeps): Promise<ExecResult> {
+  const a = p.params as ActivateIrParams;
+  // If a drop is needed, free the active-roster spot FIRST — activating him
+  // onto an already-full roster is the failure mode this order avoids.
+  if (a.dropId) {
+    try {
+      await d.writers.addDropFreeAgent(token, { leagueId: p.leagueId, rosterId: p.rosterId, dropPlayerId: a.dropId });
+    } catch (e) {
+      return failed(d, e, `Dropping ${a.dropName ?? "the bench player"} first`);
+    }
+  }
+  try {
+    await d.writers.activateFromIR(token, { leagueId: p.leagueId, rosterId: p.rosterId, playerId: a.playerId });
+  } catch (e) {
+    return failed(d, e, a.dropId ? `Dropped ${a.dropName ?? "the bench player"}, but activating ${a.playerName}` : `Activating ${a.playerName}`);
+  }
+  const after = await reread(league, d);
+  const me = after && myRoster(after);
+  if (me && !me.reserve.includes(a.playerId) && me.players.includes(a.playerId)) {
+    return { status: "executed", message: `${a.playerName} moved from IR to the bench${a.dropName ? ` (dropped ${a.dropName})` : ""} — confirmed on Sleeper.`, sent: true };
+  }
+  return { status: "verify_failed", message: `The activation was sent, but a re-read doesn't confirm ${a.playerName} is off IR. Check Sleeper before doing anything else.`, sent: true };
 }
 
 async function runLineup(p: Proposal, league: CcLeague, token: string, d: ExecDeps): Promise<ExecResult> {

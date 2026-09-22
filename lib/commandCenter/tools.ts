@@ -27,7 +27,19 @@ export interface SleeperLeg {
   proj_points: number | null;
 }
 
+// Real past week results, already-synced (a DB read — no Sleeper call).
+export interface WeekRecordRow {
+  leagueId: string;
+  leagueName: string;
+  points: number;
+  won: boolean | null; // null = a bye or unresolved matchup that week, real from the sync, never guessed
+  opponentPoints: number | null;
+  opponentTeamName: string | null;
+}
 export interface ToolDeps {
+  // `noData` = leagues with nothing synced for that week (too early, or it wasn't
+  // live yet) — kept separate from a real loss/bye so neither is ever confused with the other.
+  getWeekRecord?: (week: number) => Promise<{ rows: WeekRecordRow[]; noData: string[] } | null>;
   // Real winning FAAB bids by league+position, from already-synced transaction
   // history (a DB read, no Sleeper call). Fetched at most once per tool-layer
   // lifetime — the result doesn't change mid-scan.
@@ -68,6 +80,7 @@ export const READ_TOOLS = [
   "get_matchup",
   "get_sleeper_prediction",
   "get_faab_stats",
+  "get_week_record",
 ] as const;
 
 export function createReadOnlyTools(deps: ToolDeps) {
@@ -200,6 +213,11 @@ export function createReadOnlyTools(deps: ToolDeps) {
       if (!deps.getFaabStats) return Promise.resolve(null);
       if (!faabPromise) faabPromise = deps.getFaabStats().catch(() => null);
       return faabPromise;
+    },
+    get_week_record: (week: number) => {
+      rec("get_week_record", String(week));
+      if (!deps.getWeekRecord) return Promise.resolve(null);
+      return deps.getWeekRecord(week).catch(() => null);
     },
     hasSleeperAccess: (): boolean => !!deps.hasSleeperAccess?.() && !!deps.getSleeperLegs,
     // Sleeper's own projected totals for my matchup this week.

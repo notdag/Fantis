@@ -158,6 +158,50 @@ export function buildIrPlan(
   return rows;
 }
 
+// ------------------------------------------------------- Activate from IR
+
+export interface ActivateIrRow {
+  key: string;
+  leagueId: string;
+  leagueName: string;
+  rosterId: number;
+  needsDrop: boolean; // moving him off IR onto the active roster would put it over the limit
+  dropId: string | null;
+  dropCandidates: string[]; // bench players only, cheapest first — never a starter, never someone else on IR
+}
+
+// For one named player: every league where he's currently on MY reserve
+// (IR/taxi), and whether moving him to the bench needs a drop first (IR
+// doesn't count against the active-roster limit, so freeing his reserve slot
+// can push the active roster over the limit). Only reserve → bench; setting
+// him as a starter afterward is a separate, later step (see force-start).
+export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], rank: DropRank): ActivateIrRow[] {
+  const asc = byRankAsc(rank);
+  const rows: ActivateIrRow[] = [];
+  for (const lg of leagues) {
+    if (!lg.reserve.includes(playerId)) continue; // not on IR/taxi in this league
+    const rosterSize = (() => {
+      const rp = setting(lg.settings, "roster_positions");
+      return Array.isArray(rp) ? rp.length : 0;
+    })();
+    const activeNow = lg.players.length - lg.reserve.length;
+    const needsDrop = rosterSize > 0 && activeNow + 1 > rosterSize;
+    const bench = lg.players
+      .filter((id) => id !== playerId && !lg.starters.includes(id) && !lg.reserve.includes(id))
+      .sort(asc);
+    rows.push({
+      key: `${lg.leagueId}:${playerId}`,
+      leagueId: lg.leagueId,
+      leagueName: lg.leagueName,
+      rosterId: lg.rosterId,
+      needsDrop,
+      dropId: needsDrop ? bench[0] ?? null : null,
+      dropCandidates: bench,
+    });
+  }
+  return rows;
+}
+
 // ------------------------------------------------------------ Mass add/claim
 
 export interface AddRow {

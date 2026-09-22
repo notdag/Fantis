@@ -17,6 +17,9 @@ export type Intent =
   | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
   | { kind: "lineup_improvements" }
   | { kind: "weekly_sweep" }
+  | { kind: "week_record"; week: number | null; relative?: "last" | "this" }
+  | { kind: "activate_ir"; mentions: Mention[] }
+  | { kind: "force_start"; mentions: Mention[] }
   | { kind: "standings"; filter?: "IN" | "BUBBLE" | "OUT"; fresh: boolean }
   | { kind: "choice"; n: number }
   | { kind: "scan_player"; mentions: Mention[]; filter: ViewFilter; wantDrops: boolean }
@@ -29,7 +32,7 @@ export type Intent =
   | { kind: "waiver_opps" }
   | { kind: "ir_opps" }
   | { kind: "roster_decisions" }
-  | { kind: "execute_request"; verb: string; mentions: Mention[] }
+  | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter }
   | { kind: "reset" }
   | { kind: "help" }
   | { kind: "unknown" };
@@ -63,7 +66,7 @@ export function parseFilter(t: string): ViewFilter {
   return f;
 }
 
-const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
+export const hasFilter = (f: ViewFilter) => !!(f.states?.length || f.needsDrop !== undefined);
 
 export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boolean; hasDrops: boolean; pending: boolean; hasMatchups?: boolean; hasStandings?: boolean }): Intent {
   const text = raw.trim();
@@ -93,6 +96,43 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     return { kind: "standings", filter: /\bout\b/.test(t) ? "OUT" : /\bbubble\b/.test(t) ? "BUBBLE" : "IN", fresh: false };
   }
 
+  // "What was my record for week 2" / "how did I do week 3" — a real PAST-week
+  // question, distinct from "where do I stand" (current standings) and "how many
+  // am I winning" (this week, live). Needs an actual week number; without one
+  // it's ambiguous, so it falls through rather than guessing which week.
+  const recordWord = /\b(my )?(overall )?record\b.*\bweek\b|\bweek\b.*\brecord\b|\bhow did i do\b.*\bweek\b|\bweek\b.*\bhow did i do\b|\bmy (score|results?)\b.*\bweek\b|\bweek\b.*\b(results?|scores?)\b/.test(t);
+  if (recordWord) {
+    const wm = t.match(/\bweek\s*#?\s*(\d{1,2})\b/);
+    if (wm) return { kind: "week_record", week: Math.min(25, Math.max(1, Number(wm[1]))) };
+    // "last/this week" — no number was given, so the engine resolves it against
+    // the real current week rather than this pure function guessing at one.
+    if (/\blast week\b/.test(t)) return { kind: "week_record", week: null, relative: "last" };
+    if (/\bthis week\b/.test(t)) return { kind: "week_record", week: null, relative: "this" };
+  }
+
+  // "Move <player> off IR to the bench" — checked before the generic execute_request
+  // verb match below (its own trigger words overlap: move/activate/get/take).
+  if (
+    mentions.length > 0 &&
+    /\b(activate|move|get|take|bring)\b.*\b(off|from)\s+(ir|reserve)\b|\bactivate\b.*\b(ir|reserve)\b|\bun-?ir\b|\boff (ir|reserve)\b.*\bbench\b/.test(t)
+  ) {
+    return { kind: "activate_ir", mentions };
+  }
+
+  // "Make sure <player> starts" / "start <player> in my lineups" — a forced single-
+  // player override of the optimizer, distinct from lineup_improvements (which has
+  // no player mention and picks the whole lineup on its own).
+  if (
+    mentions.length > 0 &&
+    (/\bmake sure\b.*\bstart/.test(t) ||
+      /\bstart\b.*\b(everywhere|in (my )?(starting )?lineups?|across my leagues)\b/.test(t) ||
+      /\b(i want|need)\b.*\bto start\b/.test(t) ||
+      /\bneeds? to (be )?start(ing)?\b/.test(t) ||
+      /\bget\b.*\b(in(to)? )?(my )?(starting )?lineups?\b/.test(t))
+  ) {
+    return { kind: "force_start", mentions };
+  }
+
   if (/\bweekly sweep\b|\bsweep (the week|my leagues)\b|\brun (my )?(weekly )?sweep\b|\bdo my weekly (check|sweep)\b/.test(t) && mentions.length === 0) {
     return { kind: "weekly_sweep" };
   }
@@ -102,9 +142,15 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   }
 
   // Imperative "do it" phrasing → never executed; the engine refuses + previews.
+  // Any condition in the SAME sentence ("...if he's on waivers", "...only where I
+  // don't need to drop anyone") is parsed and applied to the preview, same as a
+  // plain scan below — it was silently dropped here before, which is why a
+  // compound "add X if Y" request used to just show every league regardless of Y.
   const verb = t.match(/^(?:please\s+|now\s+|then\s+|ok(?:ay)?,?\s+)?(add|drop|claim|submit|execute|approve|confirm|place|send|release|cut|pick up|put|move|activate|start|bench)\b/);
   if (verb || /\b(go ahead|do it|make (it|the (move|claim|change)s?) happen|execute (it|them|all)|confirm (it|all|them)|apply (it|them)|submit (it|them|all))\b/.test(t)) {
-    return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions };
+    const ef = parseFilter(t);
+    if (ef.needsDrop === undefined && ef.states?.length === 1 && ef.states[0] === "AVAILABLE") delete ef.states;
+    return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions, filter: ef };
   }
 
   // "How many leagues am I projected to win this week?" and follow-ups on that result.

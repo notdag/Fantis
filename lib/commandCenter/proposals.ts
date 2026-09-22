@@ -37,7 +37,7 @@ export const isPermission = (v: unknown): v is Permission => typeof v === "strin
 
 // ---------------------------------------------------------------- proposals
 
-export type ProposalKind = "ADD" | "IR_MOVE" | "SET_LINEUP";
+export type ProposalKind = "ADD" | "IR_MOVE" | "ACTIVATE_IR" | "SET_LINEUP";
 
 export interface AddParams {
   addId: string;
@@ -53,6 +53,12 @@ export interface IrParams {
   playerName: string;
   injury: string;
 }
+export interface ActivateIrParams {
+  playerId: string;
+  playerName: string;
+  dropId: string | null; // needed only if moving him off IR would put the active roster over the limit
+  dropName: string | null;
+}
 export interface LineupParams {
   week: number;
   fromStarters: string[]; // the lineup this was computed against — must still be current
@@ -61,7 +67,7 @@ export interface LineupParams {
   gain: number; // projected points gained (Sleeper's own projections)
 }
 
-export type ProposalParams = AddParams | IrParams | LineupParams;
+export type ProposalParams = AddParams | IrParams | ActivateIrParams | LineupParams;
 
 export interface ProposalDraft {
   kind: ProposalKind;
@@ -115,7 +121,7 @@ const NEXT: Record<ProposalStatus, ProposalStatus[]> = {
 export const canTransition = (from: ProposalStatus, to: ProposalStatus) => NEXT[from].includes(to);
 export const isTerminal = (s: ProposalStatus) => NEXT[s].length === 0;
 
-export const KIND_LABEL: Record<ProposalKind, string> = { ADD: "Add / claim", IR_MOVE: "Move to IR", SET_LINEUP: "Set lineup" };
+export const KIND_LABEL: Record<ProposalKind, string> = { ADD: "Add / claim", IR_MOVE: "Move to IR", ACTIVATE_IR: "Activate from IR", SET_LINEUP: "Set lineup" };
 
 export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "leagueName">): string {
   switch (d.kind) {
@@ -127,6 +133,10 @@ export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "lea
     case "IR_MOVE": {
       const p = d.params as IrParams;
       return `Move ${p.playerName} (${p.injury}) to IR`;
+    }
+    case "ACTIVATE_IR": {
+      const p = d.params as ActivateIrParams;
+      return `Move ${p.playerName} from IR to bench${p.dropName ? `, drop ${p.dropName}` : ", no drop"}`;
     }
     case "SET_LINEUP": {
       const p = d.params as LineupParams;
@@ -181,6 +191,26 @@ export function irDraft(args: { league: CcLeague; playerId: string; playerName: 
   };
 }
 
+export function activateIrDraft(args: {
+  league: CcLeague;
+  playerId: string;
+  playerName: string;
+  drop: { id: string; name: string } | null;
+  rationale: string[];
+  command: string;
+}): ProposalDraft {
+  return {
+    kind: "ACTIVATE_IR",
+    leagueId: args.league.id,
+    leagueName: args.league.name,
+    rosterId: args.league.rosterId,
+    params: { playerId: args.playerId, playerName: args.playerName, dropId: args.drop?.id ?? null, dropName: args.drop?.name ?? null },
+    rationale: args.rationale,
+    origin: "chat",
+    command: args.command,
+  };
+}
+
 // ------------------------------------------------------ live re-validation
 
 export interface LiveContext {
@@ -230,6 +260,22 @@ export function validateAgainstLive(p: Pick<ProposalDraft, "kind" | "params" | "
       const inj = live.injuryOf(a.playerId);
       if (!irAllowed(settings, inj)) return no(`${a.playerName}'s current status (${inj ?? "healthy"}) isn't IR-eligible in this league`);
       if (me.reserve.length >= irSlots(settings)) return no("IR is now full");
+      return { ok: true };
+    }
+    case "ACTIVATE_IR": {
+      const a = p.params as ActivateIrParams;
+      if (!me.reserve.includes(a.playerId)) return no(`${a.playerName} is no longer on IR`);
+      const limit = rosterPositions(settings)?.length ?? null;
+      const activeAfter = activeCount(snap) != null ? (activeCount(snap) as number) + 1 : null;
+      const needsDrop = limit != null && activeAfter != null ? activeAfter > limit : null;
+      if (needsDrop === null) return no("couldn't read your roster size to confirm the drop requirement");
+      if (needsDrop && !a.dropId) return no("activating him now needs a drop and this proposal has none");
+      if (!needsDrop && a.dropId) return no("a drop is no longer needed to activate him — re-propose without one");
+      if (a.dropId) {
+        if (!me.players.includes(a.dropId)) return no(`${a.dropName ?? "the drop"} is no longer on your roster`);
+        if (me.starters.includes(a.dropId)) return no(`${a.dropName ?? "the drop"} is now in your starting lineup`);
+        if (me.reserve.includes(a.dropId)) return no(`${a.dropName ?? "the drop"} is on IR — dropping him wouldn't free an active roster spot`);
+      }
       return { ok: true };
     }
     case "SET_LINEUP": {
@@ -334,7 +380,7 @@ export function sanitizeDraft(x: unknown): ProposalDraft | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
   const kind = o.kind;
-  if (kind !== "ADD" && kind !== "IR_MOVE" && kind !== "SET_LINEUP") return null;
+  if (kind !== "ADD" && kind !== "IR_MOVE" && kind !== "ACTIVATE_IR" && kind !== "SET_LINEUP") return null;
   if (!idStr(o.leagueId) || !/^[0-9]+$/.test(String(o.leagueId))) return null;
   if (typeof o.rosterId !== "number" || !Number.isInteger(o.rosterId) || o.rosterId < 1) return null;
   const p = (o.params && typeof o.params === "object" ? o.params : {}) as Record<string, unknown>;
@@ -354,6 +400,10 @@ export function sanitizeDraft(x: unknown): ProposalDraft | null {
   } else if (kind === "IR_MOVE") {
     if (!idStr(p.playerId)) return null;
     params = { playerId: p.playerId as string, playerName: short(p.playerName, 80), injury: short(p.injury, 20) };
+  } else if (kind === "ACTIVATE_IR") {
+    if (!idStr(p.playerId)) return null;
+    if (p.dropId != null && !idStr(p.dropId)) return null;
+    params = { playerId: p.playerId as string, playerName: short(p.playerName, 80), dropId: (p.dropId as string | null | undefined) ?? null, dropName: p.dropName == null ? null : short(p.dropName, 80) };
   } else {
     const from = strArr(p.fromStarters, 40, 32);
     const to = strArr(p.toStarters, 40, 32);
@@ -384,6 +434,8 @@ export function draftKey(d: Pick<ProposalDraft, "kind" | "leagueId" | "params">)
       return `ADD:${d.leagueId}:${(d.params as AddParams).addId}`;
     case "IR_MOVE":
       return `IR:${d.leagueId}:${(d.params as IrParams).playerId}`;
+    case "ACTIVATE_IR":
+      return `ACTIVATE:${d.leagueId}:${(d.params as ActivateIrParams).playerId}`;
     case "SET_LINEUP":
       return `LINEUP:${d.leagueId}:${(d.params as LineupParams).week}`;
   }

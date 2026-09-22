@@ -12,7 +12,7 @@ import { useTradeValues } from "@/lib/useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { useCuratedRanks } from "./useCuratedRanks";
-import { createReadOnlyTools, type RawMatchup } from "@/lib/commandCenter/tools";
+import { createReadOnlyTools, type RawMatchup, type WeekRecordRow } from "@/lib/commandCenter/tools";
 import type { FaabStats } from "@/lib/faabHistory";
 import {
   handleCommand,
@@ -30,6 +30,9 @@ import { canPropose, describeProposal, type Permission, type ProposalDraft } fro
 import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
 
 const EXAMPLES = [
+  "What was my overall record for week 2?",
+  "Move Michael Pittman off IR to my bench",
+  "Make sure Drake London starts this week",
   "Run my weekly sweep",
   "Find Antonio Williams everywhere",
   "Find my best waiver adds",
@@ -113,6 +116,16 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
           if (!res.ok) return null;
           const body = (await res.json()) as { stats?: FaabStats };
           return body.stats ?? null;
+        } catch {
+          return null;
+        }
+      },
+      // Real past week results — a DB read via our own API (already synced), no Sleeper call.
+      getWeekRecord: async (week) => {
+        try {
+          const res = await fetch(`/api/manager/week-record?week=${week}`);
+          if (!res.ok) return null;
+          return (await res.json()) as { rows: WeekRecordRow[]; noData: string[] };
         } catch {
           return null;
         }
@@ -510,6 +523,8 @@ function BlockView({ block, onAsk, disabled, ctx }: { block: Block; onAsk: (s: s
       return <StandingsRows block={block} onAsk={onAsk} disabled={disabled} />;
     case "matchups":
       return <MatchupRows block={block} onAsk={onAsk} disabled={disabled} />;
+    case "week_record":
+      return <WeekRecordRows block={block} />;
   }
 }
 
@@ -809,6 +824,42 @@ function StandingsRows({ block, onAsk, disabled }: { block: Extract<Block, { t: 
       ))}
       {block.rows.length > 15 && <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>}
       {block.truncated > 0 && <p className="hint">+{block.truncated} more not shown.</p>}
+    </div>
+  );
+}
+
+function WeekRecordRows({ block }: { block: Extract<Block, { t: "week_record" }> }) {
+  const [all, setAll] = useState(false);
+  const rows = all ? block.rows : block.rows.slice(0, 15);
+  return (
+    <div className="cctally">
+      <div className="cccounts">
+        <span className="ccstate ccv-win">Won {block.wins}</span>
+        <span className={`ccstate ccv-loss ${block.losses === 0 ? "cczero" : ""}`}>Lost {block.losses}</span>
+        {block.unresolved > 0 && <span className="ccstate ccs-unknown">Bye/unresolved {block.unresolved}</span>}
+      </div>
+      {block.rows.length === 0 && <p className="hint">No synced results for week {block.week}.</p>}
+      {rows.map((r) => (
+        <div key={r.leagueId} className="ccleague">
+          <div className="ccrow">
+            <span className={`ccstate ccstatecol ${r.won === true ? "ccv-win" : r.won === false ? "ccv-loss" : "ccs-unknown"}`}>
+              {r.won === true ? "Won" : r.won === false ? "Lost" : "Bye/unresolved"}
+            </span>
+            <span className="ccname">{r.leagueName}</span>
+            <span className="ccscore">
+              {r.points.toFixed(1)} <span className="portmeta">vs</span> {r.opponentPoints != null ? r.opponentPoints.toFixed(1) : "—"}
+            </span>
+          </div>
+          {r.opponentTeamName && <div className="portmeta ccindent">vs {r.opponentTeamName}</div>}
+        </div>
+      ))}
+      {block.rows.length > 15 && <button className="ccexample" onClick={() => setAll((v) => !v)}>{all ? "Show fewer" : `Show all ${block.rows.length}`}</button>}
+      {block.noData.length > 0 && (
+        <details className="ccdetails" style={{ marginTop: 8 }}>
+          <summary>{block.noData.length} league{block.noData.length === 1 ? " has" : "s have"} no synced data for week {block.week} — not counted as a loss</summary>
+          {block.noData.map((n) => <div key={n} className="portmeta">{n}</div>)}
+        </details>
+      )}
     </div>
   );
 }

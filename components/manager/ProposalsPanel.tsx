@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getRosters, getState, getTransactions } from "@/lib/sleeper";
 import { getWeekGameStates } from "@/lib/espnGames";
-import { addDropFreeAgent, claimWaiver, fetchLeagueTransactions, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
+import { activateFromIR, addDropFreeAgent, claimWaiver, fetchLeagueTransactions, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
 import { getStoredToken } from "@/lib/sleeperToken";
 import { isAuthError, runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { usePlayerMap } from "@/lib/usePlayerMap";
@@ -41,6 +41,7 @@ const WRITERS: ExecWriters = {
   addDropFreeAgent,
   claimWaiver,
   moveToIR,
+  activateFromIR,
   setStarters,
   fetchLeagueTransactions: async (token, p) => {
     const r = await fetchLeagueTransactions(token, p);

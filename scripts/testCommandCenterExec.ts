@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  activateIrDraft,
   addDraft,
   canAutoExecute,
   canExecuteApproved,
@@ -72,10 +73,10 @@ const asProposal = (d: ProposalDraft, status: Proposal["status"] = "approved", i
 function fake(
   lg: CcLeague,
   initial: SnapRoster,
-  opts: { applyWrites?: boolean; addDropError?: Error; pendingClaim?: boolean; writeError?: Error; irFailFirst?: Error; clearFails?: Error } = {}
+  opts: { applyWrites?: boolean; addDropError?: Error; pendingClaim?: boolean; writeError?: Error; irFailFirst?: Error; clearFails?: Error; activateError?: Error } = {}
 ) {
   let mine = { ...initial, players: [...initial.players], starters: [...initial.starters], reserve: [...initial.reserve], taxi: [...initial.taxi] };
-  const calls = { add: 0, claim: 0, ir: 0, lineup: 0, reads: 0, tx: 0 };
+  const calls = { add: 0, claim: 0, ir: 0, activate: 0, lineup: 0, reads: 0, tx: 0 };
   const apply = opts.applyWrites !== false;
   const writers: ExecWriters = {
     async addDropFreeAgent(_t, p) {
@@ -98,6 +99,13 @@ function fake(
       if (opts.irFailFirst && calls.ir === 1) throw opts.irFailFirst; // Sleeper rejects while he's a starter
       if (opts.writeError) throw opts.writeError;
       if (apply) mine.reserve.push(p.playerId);
+      return {};
+    },
+    async activateFromIR(_t, p) {
+      calls.activate++;
+      if (opts.activateError) throw opts.activateError;
+      if (opts.writeError) throw opts.writeError;
+      if (apply) mine.reserve = mine.reserve.filter((id) => id !== p.playerId);
       return {};
     },
     async setStarters(_t, p) {
@@ -300,6 +308,47 @@ async function main() {
     const flStale = fake(lg, roster({ starters: [...starters.slice(0, 8), "b2"] }));
     const rls = await executeProposal(lu, flStale.deps());
     ok(rls.status === "expired" && flStale.calls.lineup === 0, "lineup changed underneath → expired, no write");
+  }
+
+  // ============================================================ execution: activate from IR
+  {
+    const lg = league();
+    // roster with one IR player and an open active spot (13 active + 1 IR = 14, roster size 14 → full already;
+    // use a roster one short of the 14-slot limit so activating needs no drop)
+    const openRoster = roster({ players: [...starters, "b1", "b2", "b3", "b4"], reserve: ["b4"] }); // 13 active, 1 IR
+    const irPlayer = activateIrDraft({ league: lg, playerId: "b4", playerName: "Reserve Guy", drop: null, rationale: [], command: "" });
+    const noDrop = fake(lg, openRoster);
+    const r1 = await executeProposal(asProposal(irPlayer), noDrop.deps());
+    ok(r1.status === "executed" && noDrop.calls.activate === 1 && noDrop.calls.add === 0 && !noDrop.mine.reserve.includes("b4"), "open roster: activated with no drop, verified", r1.message);
+
+    // full roster (14/14 active) + 1 on IR → activating needs a drop, dropped FIRST then activated
+    const fullRoster = roster({ players: [...starters, "b1", "b2", "b3", "b4", "b5", "b6"], reserve: ["b6"] }); // 14 active + 1 IR = 15 rostered
+    const withDrop = activateIrDraft({ league: lg, playerId: "b6", playerName: "Reserve Guy 2", drop: { id: "b1", name: "Bench One" }, rationale: [], command: "" });
+    const dropCase = fake(lg, fullRoster);
+    const r2 = await executeProposal(asProposal(withDrop), dropCase.deps());
+    ok(r2.status === "executed" && dropCase.calls.add === 1 && dropCase.calls.activate === 1, "full roster: drop sent before activation, both verified", r2.message);
+    ok(!dropCase.mine.players.includes("b1") && !dropCase.mine.reserve.includes("b6") && dropCase.mine.players.includes("b6"), "the drop happened and he landed on the bench", JSON.stringify(dropCase.mine));
+
+    // the drop fails → activation is never attempted at all
+    const dropFails = fake(lg, fullRoster, { addDropError: new Error("Sleeper rejected the drop") });
+    const r3 = await executeProposal(asProposal(withDrop), dropFails.deps());
+    ok(r3.status === "failed" && dropFails.calls.add === 1 && dropFails.calls.activate === 0, "if the drop fails, activation is never attempted", r3.message);
+
+    // live re-validation: no longer on IR → expired, nothing sent
+    const notOnIr = fake(lg, roster());
+    const r4 = await executeProposal(asProposal(irPlayer), notOnIr.deps());
+    ok(r4.status === "expired" && notOnIr.calls.activate === 0, "player no longer on IR → expired, no write");
+
+    // live re-validation: roster is now full but the proposal has no drop → expired
+    const nowFull = fake(lg, fullRoster);
+    const noDropNowFull = activateIrDraft({ league: lg, playerId: "b6", playerName: "Reserve Guy 2", drop: null, rationale: [], command: "" });
+    const r6 = await executeProposal(asProposal(noDropNowFull), nowFull.deps());
+    ok(r6.status === "expired" && nowFull.calls.activate === 0, "roster is now full and the proposal has no drop → expired, no write");
+
+    // write succeeds but re-read doesn't confirm → verify_failed, never "executed"
+    const silent = fake(lg, openRoster, { applyWrites: false });
+    const r7 = await executeProposal(asProposal(irPlayer), silent.deps());
+    ok(r7.status === "verify_failed", "activation sent but unconfirmed on re-read → verify_failed");
   }
 
   // ============================================================ auto rule selection

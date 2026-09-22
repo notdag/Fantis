@@ -462,3 +462,60 @@ Fantis's own database or Sleeper's public API — none of them add a new write p
   not silently wrong. Verified against the real account: 210/210 leagues scanned in
   13.1s, 59 real IR-eligible moves found (e.g. Alec Pierce, DJ Moore, both really
   listed Out).
+
+### Chat comprehension fixes + activate-from-IR + force-start (2026-09; requested explicitly by the owner)
+
+The owner reported the chat couldn't answer "what was my record for week 2" or
+honor an inline filter like "add X if he's on waivers." Both were real gaps, not
+misunderstandings — fixed, then two new capabilities were added on top, all
+requested explicitly and confirmed generic (not hardcoded to any one player).
+
+- **Week record** (`week_record` intent) — "What was my overall record for week
+  2?" previously had no matching intent at all. `app/api/manager/week-record/route.ts`
+  is a pure DB read (`Roster` for my rosterId, `WeeklyResult` for real won/points,
+  `Matchup` for opponent) — no Sleeper call. Leagues with nothing synced for that
+  week are reported as `noData`, never silently counted as a loss. Resolves "last
+  week"/"this week" against `env.week`; refuses to guess if the current week isn't
+  known yet.
+- **`execute_request` was silently dropping inline filters** — "Add Antonio
+  Williams if he's on waivers" or "...only where I don't need to drop anyone" ran
+  against ALL leagues instead of the filtered set, because the intent parser threw
+  the condition away before the engine ever saw it. Fixed by having
+  `execute_request` carry a real `filter: ViewFilter` (same parser `scan_player`
+  already used) through to `runScan`; the response now states plainly which
+  leagues were included and why.
+- **Activate from IR** (`activate_ir` intent, `ACTIVATE_IR` proposal kind) — "Move
+  &lt;player&gt; off IR to my bench" / "activate X from IR" / "get X off IR" scans
+  every league, and for each one where the player is really on IR, drafts a
+  proposal to move him to the bench — with a distinct real drop candidate
+  (weakest bench player by Fantis value, via the same `DropRank` used elsewhere)
+  if the roster would go over the limit, or no drop at all if there's room. A full
+  roster with no real bench candidate to drop is skipped and disclosed, never
+  silently forced. This ONLY moves him to the bench — it never sets him as a
+  starter, since that's a separate lineup decision. `lib/bulkPlan.ts`'s
+  `buildActivateIrPlan` is the planner (mirrors `buildIrPlan`'s shape);
+  `lib/commandCenterExec.ts`'s `runActivateIr` drops first (if needed) then
+  activates, verifying by re-read same as every other executor. Verified against
+  the real account: Michael Pittman was really on IR in 51 of 210 leagues, each
+  got a distinct real drop suggestion (Tank Bigsby, Antonio Williams, Emari
+  Demercado, etc., varying per roster).
+- **Force start** (`force_start` intent) — "Make sure &lt;player&gt; starts this
+  week" forces ONE named player into the optimizer's priority ranking (rank 0,
+  NOT merged with the owner's saved Priority list — this is a one-off per-command
+  override, not a standing change) and re-runs `optimizeLineup` per league. The
+  hard safety rule: a player who is really `Out`/`IR`/`PUP`/`Sus`/`Doubtful` or on
+  a real bye is NEVER force-started — same `isUnavailable` check `lineup_improvements`
+  already uses — and a game that's already kicked off is never touched either. Every
+  league is accounted for in the summary (already starting / drafted / on IR / a real
+  status makes him unavailable / game locked / no eligible slot for his position) —
+  never silently dropped from the count. Requires `env.projections` and
+  `env.kickoffs`; refuses to guess if either hasn't loaded. Works for any player,
+  not just the one named in the request that prompted it. Verified against the
+  real account: Drake London was already starting in 15 of 16 leagues; the one
+  where he wasn't drafted a real proposal ("Drake London for Stefon Diggs at WR,
+  +3.7 projected").
+- Tests: 30 new assertions across `scripts/testCommandCenter.ts` (now 279) covering
+  both the bug fixes and both new intents; `scripts/testCommandCenterExec.ts` gained
+  7 for the `ACTIVATE_IR` executor (now 95) — open-roster no-drop, full-roster with
+  a drop, drop failure blocking activation, stale-state re-validation (no longer on
+  IR / roster now full), and unconfirmed re-read never claiming success.
