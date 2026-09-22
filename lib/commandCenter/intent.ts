@@ -199,6 +199,23 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (mentions.length === 0 && /\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
   if (mentions.length === 0 && (/\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t))) return { kind: "ir_opps" };
 
+  // "add X, Y, drop A, B if needed" — or just as naturally, "I want to waiver
+  // X in all leagues and drop Y": ANY sentence with real player mentions
+  // both before AND after a standalone "drop"/"dropping" token is read as
+  // add-targets + the owner's own drop order, whether or not it happens to
+  // start with a recognized imperative verb. Checked before the verb match
+  // below so non-imperative phrasing isn't swallowed by scan_player, which
+  // would otherwise treat the drop-order names as more targets to add.
+  if (mentions.length > 1) {
+    const preVerbSplit = splitAtDropKeyword(text, mentions);
+    if (preVerbSplit && preVerbSplit.before.length > 0 && preVerbSplit.after.length > 0) {
+      const ef = parseFilter(t);
+      if (ef.needsDrop === undefined && ef.states?.length === 1 && ef.states[0] === "AVAILABLE") delete ef.states;
+      const leadVerb = t.match(/^(?:please\s+|now\s+|then\s+|ok(?:ay)?,?\s+)?(add|drop|claim|submit|execute|approve|confirm|place|send|release|cut|pick up|put|move|activate|start|bench)\b/);
+      return { kind: "execute_request", verb: leadVerb?.[1] ?? "execute", mentions: preVerbSplit.before, filter: ef, dropOrder: preVerbSplit.after };
+    }
+  }
+
   // Imperative "do it" phrasing → never executed; the engine refuses + previews.
   // Any condition in the SAME sentence ("...if he's on waivers", "...only where I
   // don't need to drop anyone") is parsed and applied to the preview, same as a
@@ -208,14 +225,6 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (verb || /\b(go ahead|do it|make (it|the (move|claim|change)s?) happen|execute (it|them|all)|confirm (it|all|them)|apply (it|them)|submit (it|them|all))\b/.test(t)) {
     const ef = parseFilter(t);
     if (ef.needsDrop === undefined && ef.states?.length === 1 && ef.states[0] === "AVAILABLE") delete ef.states;
-    // "add X, Y, drop A, B if needed" in ONE message — same drop-order idea
-    // as the two-message drop_preferences follow-up, just combined. Only
-    // when the primary verb isn't itself "drop" (that's a plain drop
-    // request, nothing to split).
-    if (verb?.[1] !== "drop") {
-      const split = splitAtDropKeyword(text, mentions);
-      if (split) return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions: split.before, filter: ef, dropOrder: split.after };
-    }
     return { kind: "execute_request", verb: verb?.[1] ?? "execute", mentions, filter: ef };
   }
 

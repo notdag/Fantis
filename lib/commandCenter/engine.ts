@@ -4,7 +4,7 @@
 // in lib/commandCenter, and an instruction that sounds like a change
 // ("add him", "drop Player A everywhere") is answered with a refusal and a
 // PREVIEW of what a later phase could propose.
-import { buildActivateIrPlan, buildIrPlan, irAllowed, irSlots, type DropRank, type PlanLeague } from "../bulkPlan";
+import { buildActivateIrPlan, buildIrPlan, irAllowed, irSlots, SEVERITY, type DropRank, type PlanLeague } from "../bulkPlan";
 import { classifyPlayer, positionEligible, rosterPositions, activeCount } from "./classify";
 import { analyzeDrops } from "./drops";
 import { countStates, leaguesWhereCandidate, tallyDrops, type DropTally } from "./aggregate";
@@ -13,7 +13,7 @@ import { buildStartingSlots } from "../rosterSlots";
 import { optimizeLineup } from "../lineupOptimizer";
 import { scoringKey } from "../scoringKey";
 import { BYE_WEEKS_2026 } from "../byeWeeks";
-import { activateIrDraft, addDraft, canPropose, irDraft, type ProposalDraft } from "./proposals";
+import { activateIrDraft, addDraft, canPropose, irDraft, type ActivateIrParams, type IrParams, type ProposalDraft } from "./proposals";
 import { suggestBid, type FaabStats } from "../faabHistory";
 import { cardOf, describeCard, normName, resolveName } from "./resolve";
 import type { ReadOnlyTools } from "./tools";
@@ -1082,8 +1082,9 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     case "activate_ir": {
       const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
       if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
-      const player = resolved[0];
-      const { snaps, meta } = await scanAll(env, false, `Checking IR status for ${player.name}`);
+      const players = resolved; // one or more named players, activated together
+      const label = players.map((p) => p.name).join(", ");
+      const { snaps, meta } = await scanAll(env, false, `Checking IR status for ${label}`);
       session = { ...session, meta };
       blocks.push({ t: "scanStatus", meta });
       const plan: PlanLeague[] = [];
@@ -1092,134 +1093,187 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const rows = buildActivateIrPlan(player.id, plan, env.rank);
-      if (rows.length === 0) {
-        blocks.push({ t: "text", tone: "info", text: `${player.name} isn't on IR in any of your ${plan.length} readable leagues.` });
+      const rowsByPlayer = new Map(players.map((p) => [p.id, buildActivateIrPlan(p.id, plan, env.rank)]));
+      const totalRows = [...rowsByPlayer.values()].reduce((n, r) => n + r.length, 0);
+      if (totalRows === 0) {
+        blocks.push({ t: "text", tone: "info", text: `${players.length === 1 ? `${players[0].name} isn't` : `None of ${label} are`} on IR in any of your ${plan.length} readable leagues.` });
         break;
       }
       const drafts: ProposalDraft[] = [];
-      let skipped = 0;
-      for (const r of rows) {
-        if (r.needsDrop && !r.dropId) {
-          skipped++;
+      // Each drop candidate is claimed by at most one named player per
+      // league — same rule as a multi-target add's distinct drops — so two
+      // IR players activated together in the same league never get proposed
+      // to drop the same bench player.
+      const claimedByLeague = new Map<string, Set<string>>();
+      const skippedByPlayer = new Map(players.map((p) => [p.id, 0]));
+      const decisionsByLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
+      for (const p of players) {
+        for (const r of rowsByPlayer.get(p.id)!) {
+          let dropId = r.dropId;
+          let unclaimed = true;
+          if (r.needsDrop) {
+            const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
+            const cand = r.dropCandidates.find((id) => !claimed.has(id));
+            if (!cand) {
+              unclaimed = false;
+              skippedByPlayer.set(p.id, (skippedByPlayer.get(p.id) ?? 0) + 1);
+            } else {
+              claimed.add(cand);
+              claimedByLeague.set(r.leagueId, claimed);
+              dropId = cand;
+            }
+          }
+          const entry = decisionsByLeague.get(r.leagueId) ?? { leagueId: r.leagueId, leagueName: r.leagueName, items: [] };
+          entry.items.push(
+            `${p.name}: ${r.needsDrop ? (unclaimed && dropId ? `would drop ${posName(env, dropId)} to make room` : r.dropId ? "no unclaimed bench candidate left after the others" : "roster full, nobody clear to drop") : "open roster spot — no drop needed"}`
+          );
+          decisionsByLeague.set(r.leagueId, entry);
+          if (!unclaimed) continue;
+          const drop = r.needsDrop && dropId ? { id: dropId, name: posName(env, dropId) } : null;
+          drafts.push(
+            activateIrDraft({
+              league: env.tools.get_league_details(r.leagueId),
+              playerId: p.id,
+              playerName: p.name,
+              drop,
+              rationale: [`${p.name} is on IR in this league`, r.needsDrop ? `Roster is full — suggested drop: ${drop?.name}` : "Open roster spot — no drop needed"],
+              command: text,
+            })
+          );
+        }
+      }
+      const lines: string[] = [];
+      for (const p of players) {
+        const rows = rowsByPlayer.get(p.id)!;
+        if (rows.length === 0) {
+          lines.push(`${p.name} isn't on IR in any of your ${plan.length} readable leagues.`);
           continue;
         }
-        const drop = r.needsDrop && r.dropId ? { id: r.dropId, name: posName(env, r.dropId) } : null;
-        drafts.push(
-          activateIrDraft({
-            league: env.tools.get_league_details(r.leagueId),
-            playerId: player.id,
-            playerName: player.name,
-            drop,
-            rationale: [`${player.name} is on IR in this league`, r.needsDrop ? `Roster is full — suggested drop: ${drop?.name}` : "Open roster spot — no drop needed"],
-            command: text,
-          })
+        const draftsForP = drafts.filter((d) => (d.params as ActivateIrParams).playerId === p.id);
+        const skippedForP = skippedByPlayer.get(p.id) ?? 0;
+        lines.push(
+          `${p.name} is on IR in ${rows.length} league${rows.length === 1 ? "" : "s"}. ${draftsForP.length} can be proposed to move him to the bench${skippedForP > 0 ? `; ${skippedForP} would need a drop with no clear bench candidate` : ""}.`
         );
       }
-      blocks.push({
-        t: "text",
-        tone: "good",
-        text: `${player.name} is on IR in ${rows.length} league${rows.length === 1 ? "" : "s"}. ${drafts.length} can be proposed to move him to the bench${
-          skipped > 0 ? `; ${skipped} would need a drop with no clear bench candidate` : ""
-        }. This only moves him to your bench — it doesn't set him as a starter (ask me to start him separately once he's active). Nothing has been changed.`,
-      });
-      blocks.push({
-        t: "decisions",
-        title: "IR → bench",
-        rows: rows.map((r) => ({
-          leagueId: r.leagueId,
-          leagueName: r.leagueName,
-          items: [r.needsDrop ? (r.dropId ? `Would drop ${posName(env, r.dropId)} to make room` : "Roster full, nobody clear to drop") : "Open roster spot — no drop needed"],
-        })),
-        truncated: 0,
-      });
-      const b = draftsBlock(env, permission, drafts, skipped);
+      const trailer =
+        players.length === 1
+          ? "This only moves him to your bench — it doesn't set him as a starter (ask me to start him separately once he's active)."
+          : "This only moves them to their bench — it doesn't set anyone as a starter (ask me to start any of them separately once active).";
+      blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} ${trailer} Nothing has been changed.` });
+      blocks.push({ t: "decisions", title: "IR → bench", rows: [...decisionsByLeague.values()], truncated: 0 });
+      const b = draftsBlock(env, permission, drafts, [...skippedByPlayer.values()].reduce((a, c) => a + c, 0));
       if (b) blocks.push(b);
-      recs.push(`activate ${player.name} from IR in ${drafts.length} of ${rows.length} leagues`);
+      recs.push(`activate ${label} from IR in ${drafts.length} of ${totalRows} leagues`);
       break;
     }
 
     case "send_to_ir": {
       const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
       if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
-      const player = resolved[0];
-      const { snaps, meta } = await scanAll(env, false, `Checking where I can move ${player.name} to IR`);
+      const players = resolved; // one or more named players, sent together
+      const label = players.map((p) => p.name).join(", ");
+      const { snaps, meta } = await scanAll(env, false, `Checking where I can move ${label} to IR`);
       session = { ...session, meta };
       blocks.push({ t: "scanStatus", meta });
-      // Every readable league where he's rostered is accounted for — already on
-      // IR, or not eligible under that league's own rules (healthy, or a status
-      // like Questionable/Doubtful that doesn't qualify) — never silently
-      // dropped, same as activate_ir/force_start's bucketing.
-      const alreadyOnIr: string[] = [];
-      const notEligible: string[] = [];
-      const plan: PlanLeague[] = [];
+      // Every readable league where each is rostered is accounted for —
+      // already on IR, or not eligible under that league's own rules
+      // (healthy, or a status like Questionable/Doubtful that doesn't
+      // qualify) — never silently dropped, same as activate_ir/force_start.
+      type Candidate = { leagueId: string; leagueName: string; injury: string; inStarters: boolean };
+      const alreadyOnIrByPlayer = new Map(players.map((p) => [p.id, [] as string[]]));
+      const notEligibleByPlayer = new Map(players.map((p) => [p.id, [] as string[]]));
+      const candidatesByPlayer = new Map(players.map((p) => [p.id, [] as Candidate[]]));
+      const openSlotsByLeague = new Map<string, number>();
       for (const s of snaps) {
         if (s.status === "FAILED" || !s.rosters) continue;
         const me = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
-        if (!me.players.includes(player.id)) continue; // not rostered here — not this league's problem
-        if (me.reserve.includes(player.id)) {
-          alreadyOnIr.push(s.league.name);
-          continue;
+        for (const p of players) {
+          if (!me.players.includes(p.id)) continue; // not rostered here — not this league's problem
+          if (me.reserve.includes(p.id)) {
+            alreadyOnIrByPlayer.get(p.id)!.push(s.league.name);
+            continue;
+          }
+          const inj = env.pmap[p.id]?.inj ?? null;
+          if (!irAllowed(s.league.settings, inj)) {
+            notEligibleByPlayer.get(p.id)!.push(s.league.name);
+            continue;
+          }
+          candidatesByPlayer.get(p.id)!.push({ leagueId: s.league.id, leagueName: s.league.name, injury: inj!, inStarters: me.starters.includes(p.id) });
+          if (!openSlotsByLeague.has(s.league.id)) openSlotsByLeague.set(s.league.id, Math.max(0, irSlots(s.league.settings) - me.reserve.length));
         }
-        const inj = env.pmap[player.id]?.inj ?? null;
-        if (!irAllowed(s.league.settings, inj)) {
-          notEligible.push(s.league.name);
-          continue;
-        }
-        plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: me.rosterId, settings: s.league.settings, starters: me.starters, players: me.players, reserve: me.reserve, faabUsed: null });
       }
-      if (plan.length === 0) {
-        const bits: string[] = [];
-        if (alreadyOnIr.length) bits.push(`already on IR in ${alreadyOnIr.length}`);
-        if (notEligible.length) bits.push(`not IR-eligible (healthy, or his real status doesn't qualify) in ${notEligible.length}`);
-        blocks.push({
-          t: "text",
-          tone: "info",
-          text: `${player.name} can't be moved to IR right now — ${bits.length ? bits.join(", and ") : `he isn't on your roster in any of your ${meta.ok + meta.partial} readable leagues`}.`,
+      const totalCandidates = [...candidatesByPlayer.values()].reduce((n, c) => n + c.length, 0);
+      if (totalCandidates === 0) {
+        const lines = players.map((p) => {
+          const bits: string[] = [];
+          if (alreadyOnIrByPlayer.get(p.id)!.length) bits.push(`already on IR in ${alreadyOnIrByPlayer.get(p.id)!.length}`);
+          if (notEligibleByPlayer.get(p.id)!.length) bits.push(`not IR-eligible (healthy, or his real status doesn't qualify) in ${notEligibleByPlayer.get(p.id)!.length}`);
+          return `${p.name} can't be moved to IR right now — ${bits.length ? bits.join(", and ") : `he isn't on your roster in any of your ${meta.ok + meta.partial} readable leagues`}.`;
         });
+        blocks.push({ t: "text", tone: "info", text: lines.join(" ") });
         break;
       }
-      // Reuses the same per-league IR-slot accounting the ir_opps scan already
-      // uses (severity-ordered against real open slots), just filtered to this
-      // one named player — never re-implements that math separately.
-      const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank).filter((r) => r.playerId === player.id);
-      const drafts: ProposalDraft[] = [];
-      let skipped = 0;
-      for (const r of rows) {
-        if (r.needsDrop) {
-          skipped++; // IR is full — never auto-proposed, matches ir_opps
-          continue;
+      // Real open-IR-slot competition, shared across the NAMED players when
+      // more than one lands in the same league (most-out-first, same
+      // severity order buildIrPlan already uses) — an unrelated, un-named
+      // injured player on the same roster is never pulled into this; this
+      // command is scoped to exactly who was asked for.
+      const byLeague = new Map<string, { player: PlayerCard; c: Candidate }[]>();
+      for (const p of players) {
+        for (const c of candidatesByPlayer.get(p.id)!) {
+          const arr = byLeague.get(c.leagueId) ?? [];
+          arr.push({ player: p, c });
+          byLeague.set(c.leagueId, arr);
         }
-        drafts.push(
-          irDraft({
-            league: env.tools.get_league_details(r.leagueId),
-            playerId: player.id,
-            playerName: player.name,
-            injury: r.injury,
-            rationale: [`Sleeper lists ${player.name} as ${r.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(r.inStarters ? ["He is currently in your starting lineup"] : [])],
-            command: text,
-          })
+      }
+      for (const arr of byLeague.values()) arr.sort((a, b) => (SEVERITY[a.c.injury] ?? 9) - (SEVERITY[b.c.injury] ?? 9));
+      const drafts: ProposalDraft[] = [];
+      const fullByPlayer = new Map(players.map((p) => [p.id, 0]));
+      const decisionsByLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
+      for (const [leagueId, arr] of byLeague) {
+        let open = openSlotsByLeague.get(leagueId) ?? 0;
+        const leagueName = arr[0].c.leagueName;
+        const entry = decisionsByLeague.get(leagueId) ?? { leagueId, leagueName, items: [] };
+        for (const { player: p, c } of arr) {
+          if (open > 0) {
+            open -= 1;
+            entry.items.push(`${p.name}: open IR slot — ${c.injury}`);
+            drafts.push(
+              irDraft({
+                league: env.tools.get_league_details(leagueId),
+                playerId: p.id,
+                playerName: p.name,
+                injury: c.injury,
+                rationale: [`Sleeper lists ${p.name} as ${c.injury}`, "This league's IR rules allow it and there is an open IR slot", ...(c.inStarters ? ["He is currently in your starting lineup"] : [])],
+                command: text,
+              })
+            );
+          } else {
+            entry.items.push(`${p.name}: IR is full — release someone from IR first`);
+            fullByPlayer.set(p.id, (fullByPlayer.get(p.id) ?? 0) + 1);
+          }
+        }
+        decisionsByLeague.set(leagueId, entry);
+      }
+      const lines: string[] = [];
+      for (const p of players) {
+        const cands = candidatesByPlayer.get(p.id)!;
+        const draftsForP = drafts.filter((d) => (d.params as IrParams).playerId === p.id);
+        const full = fullByPlayer.get(p.id) ?? 0;
+        const bits: string[] = [];
+        if (alreadyOnIrByPlayer.get(p.id)!.length) bits.push(`already on IR in ${alreadyOnIrByPlayer.get(p.id)!.length}`);
+        if (notEligibleByPlayer.get(p.id)!.length) bits.push(`not IR-eligible in ${notEligibleByPlayer.get(p.id)!.length}`);
+        lines.push(
+          `${p.name} is real IR-eligible in ${cands.length} league${cands.length === 1 ? "" : "s"}. ${draftsForP.length} can be proposed to move him to IR${
+            full > 0 ? `; ${full} have a full IR — you'd need to release someone off IR first` : ""
+          }${bits.length ? `. Also: ${bits.join(", ")}` : ""}.`
         );
       }
-      const bits: string[] = [];
-      if (alreadyOnIr.length) bits.push(`already on IR in ${alreadyOnIr.length}`);
-      if (notEligible.length) bits.push(`not IR-eligible in ${notEligible.length}`);
-      blocks.push({
-        t: "text",
-        tone: drafts.length ? "good" : "info",
-        text: `${player.name} is real IR-eligible in ${rows.length} league${rows.length === 1 ? "" : "s"}. ${drafts.length} can be proposed to move him to IR${
-          skipped > 0 ? `; ${skipped} have a full IR — you'd need to release someone off IR first` : ""
-        }${bits.length ? `. Also: ${bits.join(", ")}` : ""}. Nothing has been changed.`,
-      });
-      blocks.push({
-        t: "decisions",
-        title: "Move to IR",
-        rows: rows.map((r) => ({ leagueId: r.leagueId, leagueName: r.leagueName, items: [r.needsDrop ? "IR is full — release someone from IR first" : `Open IR slot — ${r.injury}`] })),
-        truncated: 0,
-      });
-      const irb = draftsBlock(env, permission, drafts, skipped);
+      blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.` });
+      blocks.push({ t: "decisions", title: "Move to IR", rows: [...decisionsByLeague.values()], truncated: 0 });
+      const irb = draftsBlock(env, permission, drafts, [...fullByPlayer.values()].reduce((a, c) => a + c, 0));
       if (irb) blocks.push(irb);
-      recs.push(`move ${player.name} to IR in ${drafts.length} of ${rows.length} leagues`);
+      recs.push(`move ${label} to IR in ${drafts.length} of ${totalCandidates} leagues`);
       break;
     }
 

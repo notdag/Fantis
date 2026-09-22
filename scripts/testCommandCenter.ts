@@ -1438,6 +1438,83 @@ async function main() {
     ok(/Not started in 1 — his real status or bye makes him unavailable there; I never override that/.test(textOf(outHurt.blocks)), "the Out player's own line still explains why, honestly");
   }
 
+  // ---------- 29. activate_ir with MULTIPLE named players — distinct drop per player
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rpFull = ["QB", "WR", "WR", "WR", "WR", "BN"];
+    const settings = { roster_positions: rpFull, settings: { reserve_slots: 2 } };
+    const pm: PlayerMap = {
+      q: { n: "Multi IR QB", p: "QB", t: "DAL" },
+      w1: { n: "Starter W1", p: "WR", t: "DAL" },
+      w2: { n: "Starter W2", p: "WR", t: "DAL" },
+      w3: { n: "Starter W3", p: "WR", t: "DAL" },
+      w4: { n: "Starter W4", p: "WR", t: "DAL" },
+      ab1: { n: "Weakest Multi Bench", p: "WR", t: "DAL" },
+      ab2: { n: "Second Multi Bench", p: "WR", t: "DAL" },
+      ir1: { n: "IR Guy One", p: "WR", t: "IND" },
+      ir2: { n: "IR Guy Two", p: "WR", t: "IND" },
+    };
+    const sig = signals(pm, { values: { ab1: 5, ab2: 10 } });
+    const league = { ...lg("1", "Multi Activate League", rpFull), settings };
+    const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "w1", "w2", "w3", "w4", "ab1", "ab2", "ir1", "ir2"], starters: ["q", "w1", "w2", "w3", "w4"], reserve: ["ir1", "ir2"], taxi: [] };
+    const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Move IR Guy One and IR Guy Two off IR to my bench", newSession(), env);
+    ok(out.audit.intent === "activate_ir", "recognised as activate_ir with two mentions", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 2, "both named IR players get a real proposal in the one league", String(drafts.length));
+    const byName = Object.fromEntries(drafts.map((d) => [(d.params as { playerName: string }).playerName, (d.params as { dropName: string | null }).dropName]));
+    ok(byName["IR Guy One"] === "Weakest Multi Bench" && byName["IR Guy Two"] === "Second Multi Bench", "each gets a DISTINCT bench drop — never the same one twice, ordered by real Fantis value", JSON.stringify(byName));
+    ok(/IR Guy One is on IR in 1 league/.test(textOf(out.blocks)) && /IR Guy Two is on IR in 1 league/.test(textOf(out.blocks)), "each named player gets his own independent summary line", textOf(out.blocks).slice(0, 500));
+  }
+
+  // ---------- 30. send_to_ir with MULTIPLE named players competing for one real IR slot
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rp = ["QB", "WR", "BN"];
+    const settings = { roster_positions: rp, settings: { reserve_slots: 1, reserve_allow_out: 1 } };
+    const pm: PlayerMap = {
+      fq: { n: "Send Multi QB", p: "QB", t: "DAL" },
+      p1: { n: "Send Player One", p: "WR", t: "IND", inj: "Out" },
+      p2: { n: "Send Player Two", p: "WR", t: "IND", inj: "Out" },
+    };
+    const league = { ...lg("1", "Multi Send League — one slot", rp), settings };
+    const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "p1", "p2"], starters: ["fq"], reserve: [], taxi: [] };
+    const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+    env.permission = "PROPOSE_ONLY";
+    const out = await handleCommand("Put Send Player One and Send Player Two on IR", newSession(), env);
+    ok(out.audit.intent === "send_to_ir", "recognised as send_to_ir with two mentions", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 1, "only ONE real IR slot exists, so only one player gets a real proposal, not both", String(drafts.length));
+    ok((drafts[0]?.params as { playerName: string }).playerName === "Send Player One", "the FIRST named player wins the one open slot (real severity/order accounting, not arbitrary)", (drafts[0]?.params as { playerName: string })?.playerName);
+    ok(/Send Player Two is real IR-eligible in 1 league.*have a full IR/.test(textOf(out.blocks)), "the second player is honestly reported as blocked by the full IR, not silently dropped", textOf(out.blocks).slice(0, 600));
+  }
+
+  // ---------- 31. non-imperative "I want to X and drop Y" phrasing (not just "add X, drop Y")
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const rp = ["QB", "WR", "BN"];
+    const pm: PlayerMap = {
+      fq: { n: "Natural QB", p: "QB", t: "DAL" },
+      w1: { n: "Natural Starter", p: "WR", t: "DAL" },
+      target: { n: "Jonah Coleman", p: "WR", t: "SEA" },
+      bigsby: { n: "Tank Bigsby", p: "WR", t: "DAL" },
+    };
+    const settings = { roster_positions: rp, settings: { reserve_slots: 1, waiver_type: 2, waiver_bid_min: 2 } };
+    const league = { ...lg("1", "Natural Phrasing League", rp), settings };
+    // Full roster (QB + WR starter + bench, all filled) with Tank Bigsby on
+    // the bench (not a starter) so he's a real, eligible drop candidate.
+    const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "w1", "bigsby"], starters: ["fq", "w1"], reserve: [], taxi: [] };
+    const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+    env.permission = "PROPOSE_ONLY";
+    // deliberately avoids the word "waiver" here — that's a real, separate
+    // state filter (tested elsewhere); this test isolates the drop-order split.
+    const out = await handleCommand("I want to add Jonah Coleman in all my leagues and drop Tank Bigsby", newSession(), env);
+    ok(out.audit.intent === "execute_request", "a natural, non-imperative sentence is still recognised as an execute_request with a real drop order", out.audit.intent);
+    const drafts = draftsOf(out.blocks);
+    ok(drafts.length === 1 && (drafts[0]?.params as { dropName: string | null })?.dropName === "Tank Bigsby", "Tank Bigsby is correctly read as the drop order, not as a second player to add", JSON.stringify(drafts[0]?.params));
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

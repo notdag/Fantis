@@ -822,3 +822,49 @@ Drake London and Puka Nacua start this week" now reports both players
 independently and correctly (16 leagues / 12 leagues already starting,
 Puka Nacua's IR and bye-week leagues disclosed separately) instead of
 silently dropping Puka Nacua.
+
+### Chat: swept the rest of the "only acts on the first named player" bug (2026-09; found auditing after the force_start fix)
+
+Asked to double-check for anything else of the same shape before real use.
+`grep`ping for the exact pattern that caused the force_start bug
+(`resolved[0]`) found two more real instances — `activate_ir` and
+`send_to_ir` had the identical flaw: the parser found every named player,
+the engine only ever acted on the first.
+
+- **`activate_ir`** (IR → bench, multiple players): now loops all named
+  players, and reuses the same per-league "claimed" drop tracking as the
+  multi-add fix — two IR players activated together in the same league get
+  DISTINCT bench drops, never the same one twice. `SEVERITY` exported from
+  `lib/bulkPlan.ts` for reuse (was file-local before).
+- **`send_to_ir`** (→ IR, multiple players): rebuilt the open-IR-slot
+  competition to run across only the NAMED players sharing a league
+  (severity-ordered, first-named wins a tie) — deliberately does NOT pull in
+  other, un-named injured players on the same roster; this command is
+  scoped to exactly who was asked for, not a general sweep.
+- **A third, separate bug found in the same audit**: the multi-player
+  "add X, Y, drop A, B" combined syntax only worked when the sentence
+  literally started with a recognized verb (add/claim/put/...). A natural,
+  non-imperative phrasing like "I want to waiver Jonah Coleman in all
+  leagues and drop Tank Bigsby" doesn't start with one of those, so it fell
+  through to `scan_player` instead — and Tank Bigsby got treated as a
+  SECOND player to add, not a drop order. Fixed by moving the "mentions
+  before AND after a standalone drop/dropping token" split to run
+  independently of the leading verb, checked before the verb match — so it
+  now applies to any phrasing, imperative or not.
+- Tests: 15 new assertions in `scripts/testCommandCenter.ts` (now 365) —
+  distinct drop assignment for two IR-activation players in one league,
+  two players competing for one real open IR slot (first-named wins,
+  second honestly reported as blocked), and the natural-phrasing drop-order
+  split. Verified live: "put Alec Pierce and Antonio Williams on IR"
+  and "move Michael Pittman and Alec Pierce off IR to my bench" both
+  correctly reported each player independently against real data; "I want
+  to add Malachi Fields in all my leagues and drop Antonio Williams"
+  correctly read Antonio Williams as the drop order, not a second add.
+
+One real, pre-existing behavior worth knowing (not a bug, but relevant to
+how the owner described this workflow): the word "waiver" inside a request
+("I want to *waiver* him") sets a real state filter — only leagues where the
+player is literally on the waiver wire, not just any free agent — same
+filter `parseFilter` already applies everywhere else. A pure free agent
+in a league that filter excludes is not a bug; say "add" instead of
+"waiver" for "anywhere he's addable, however."

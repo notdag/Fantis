@@ -73,8 +73,10 @@ export function irAllowed(settings: unknown, injuryStatus: string | null | undef
 }
 
 // Most-out first, so if a league can't fit everyone the surest cases get
-// the open slots.
-const SEVERITY: Record<string, number> = { IR: 0, PUP: 0, Out: 1, Sus: 2, COV: 3, DNR: 4, NA: 5, Doubtful: 6 };
+// the open slots. Exported so callers that need this same real-open-slots
+// competition among a specific, smaller player set (e.g. send_to_ir's
+// multi-player case) don't redefine it and risk drifting out of sync.
+export const SEVERITY: Record<string, number> = { IR: 0, PUP: 0, Out: 1, Sus: 2, COV: 3, DNR: 4, NA: 5, Doubtful: 6 };
 
 function byRankAsc(rank: DropRank) {
   return (a: string, b: string) => {
