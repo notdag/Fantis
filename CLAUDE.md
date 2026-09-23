@@ -1111,3 +1111,45 @@ automatically, and a full-IR league with no match saying nothing more than
   mentions of Zach Charbonnet, A.J. Brown, or any other unapproved player
   anywhere in the output, and 19 leagues report plainly "IR full" with no
   name attached. Confirmed read-only, zero Sleeper writes.
+
+### Open Roster Spots page (2026-09; requested explicitly by the owner)
+
+A new standing report at `/manager/open-spots` (My Leagues nav group,
+alongside Byes/Injuries — same class of cross-league informational report,
+same page shape as `ByePlanner`/`InjuryReport`): every in-season,
+non-best-ball league where the active roster (IR excluded) isn't full,
+i.e. a waiver add there wouldn't need a drop first.
+
+- **Pure DB read, no Sleeper call** — `app/manager/open-spots/page.tsx`
+  reads `db.league.findMany({ where: { status: "in_season" } })` +
+  `db.roster.findMany()`, same data every other bulk tool already syncs.
+  Open spots = `rosterPositionsFromSettings(league.settings).length -
+  (roster.players.length - roster.reserve.length)` — reuses the existing
+  `lib/manager.ts` helpers rather than a new calculation; same "active
+  count" definition `lib/commandCenter/classify.ts`'s `activeCount()` and
+  every bulk-add/IR planner already use elsewhere in the app. Known
+  pre-existing gap this inherits, not introduced by this feature: a
+  dynasty league's taxi squad isn't tracked as a separate field in this
+  data path (`ManagedRoster`/`Roster` has no `taxi` column), so a taxi
+  player would count as "active" here the same way it already does in
+  every other bulk tool (`BulkIR`, `BulkAdd`) — a real, scoped limitation,
+  not something this page newly gets wrong.
+- `components/manager/OpenSpots.tsx` — two stat cards (leagues with a real
+  open spot, total open spots across them) plus a list sorted by most-open
+  first, each row linking to that league's overview page. Leagues whose
+  roster is completely full are simply left out of the list (same pattern
+  `ByePlanner` uses for "nothing upcoming").
+- Registered in both `components/manager/managerNav.ts` (nav entry, which
+  also drives the page's breadcrumb title automatically via
+  `ManagerHeader.tsx`'s `portfolioPageLabel()`) and
+  `components/manager/leagueSubRoutes.ts`'s `PORTFOLIO_SLUGS` — the same
+  registration step the `inbox` route's CLAUDE.md entry above flags as
+  easy to forget (a top-level `/manager/<slug>` route left out of
+  `PORTFOLIO_SLUGS` gets misread as `/manager/[leagueId]` with
+  `leagueId="open-spots"`).
+- Verified live against the real account: 16 of 210 in-season leagues
+  currently have exactly one open roster spot each (mostly 14/15 filled,
+  one 15/16), matching real synced roster data; clicking a league row
+  correctly navigates to `/manager/<leagueId>`, and `/manager/open-spots`
+  itself renders as a real portfolio page (not misread as a league) —
+  confirming the `PORTFOLIO_SLUGS` registration took.

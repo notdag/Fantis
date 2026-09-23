@@ -22,6 +22,7 @@ export const NAV_ENTRIES: NavEntry[] = [
       { href: "/manager/matchups", label: "Matchups" },
       { href: "/manager/byes", label: "Byes" },
       { href: "/manager/injuries", label: "Injuries" },
+      { href: "/manager/open-spots", label: "Open Spots" },
     ],
   },
   {
