@@ -854,25 +854,21 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank, (id) => env.signals.priority.has(id));
       blocks.push({ t: "scanStatus", meta });
 
-      // Who's allowed to be released to make room on a full IR — TWO
-      // separate commands, deliberately: a bare "move all my IR eligible
-      // players to IR" stays pure report-only (releaseOrder stays null,
-      // unrestricted, exactly as before this feature existed). Real
-      // release+move pairs are only ever drafted when the owner explicitly
-      // asks for it — either by naming a release order inline on this one
-      // command ("...release A, B, C if needed"), or by saying "...and
-      // drop"/"...then drop" with no names, which applies the owner's
-      // standing IR Release list (Chat tab → My players) instead of
-      // retyping it every time. Either way, once a release order is in
-      // effect it's a STRICT allow-list — a league where none of those
-      // names are really on IR is reported honestly as such, never falls
-      // back to naming some other real occupant the owner didn't approve.
+      // Who's allowed to be released to make room on a full IR — ONE single
+      // "move all my IR eligible players to IR" command handles this: an
+      // inline "...release A, B, C if needed" clause on THIS command wins
+      // if given; otherwise the owner's standing IR Release list (Chat tab
+      // → My players) applies automatically, silently, no extra phrasing
+      // needed. Either way, once a release order is in effect it's a STRICT
+      // allow-list — a league where none of those names are really on IR
+      // just says the IR is full, full stop; it never falls back to naming
+      // some other real occupant the owner didn't approve.
       let releaseOrder: PlayerCard[] | null = null;
       if (intent.releaseOrder && intent.releaseOrder.length > 0) {
         const resolved = await resolveMentions(intent.releaseOrder.map((m) => m.text), [], { filter: {}, wantDrops: false });
         if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
         releaseOrder = resolved;
-      } else if (intent.useStandingRelease && env.signals.irReleaseOrder && env.signals.irReleaseOrder.length > 0) {
+      } else if (env.signals.irReleaseOrder && env.signals.irReleaseOrder.length > 0) {
         const fromPrefs = env.signals.irReleaseOrder.map((id) => cardOf(env.pmap, id)).filter((c): c is PlayerCard => !!c);
         if (fromPrefs.length > 0) releaseOrder = fromPrefs;
       }
@@ -946,12 +942,12 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         }
 
         // Once a release order is in effect (inline or the standing IR
-        // Release list), it's strict: never name a real IR occupant who
-        // isn't on it, even informationally.
+        // Release list), it's strict: never name ANY real IR occupant who
+        // isn't on it, even informationally — just "IR full", full stop.
         e.items.push(
           `${label}: ${
             releaseOrder
-              ? `IR full — none of your release list (${releaseOrder.map((p) => p.name).join(", ")}) is on IR in this league`
+              ? "IR full"
               : r.noRoom
                 ? "IR is full and nobody on it can be released"
                 : `IR full — would need to release ${r.dropId ? posName(env, r.dropId) : "someone"} from IR first`

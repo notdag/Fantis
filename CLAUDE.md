@@ -1075,3 +1075,39 @@ who aren't on the owner's list); "...and drop" reported the same 96/72 but
 saved, and neither Conner nor Kirk were used anywhere this week because
 neither is actually on any real IR right now — confirmed honest, not
 fabricated. Confirmed read-only throughout, zero Sleeper writes.
+
+### Collapsed back to ONE `ir_opps` command; fallback never names anyone (2026-09; real bug reported by the owner)
+
+The two-command split above was itself the bug: the owner tested the bare
+"suggest me players to move to IR" (report-only by design) and was still
+seeing real players outside their 5-name list (Zach Charbonnet, A.J. Brown)
+— exactly the thing the whole feature exists to prevent, just surfacing on
+the phrasing that hadn't been restricted. Asked directly, the owner wanted
+**one single prompt**, with the standing list applied silently and
+automatically, and a full-IR league with no match saying nothing more than
+"IR is full" — not even naming the list itself.
+
+- Removed the `useStandingRelease` intent flag and the "...and drop"/bare
+  distinction entirely (`lib/commandCenter/intent.ts`) — a bare "move all my
+  IR eligible players to IR" now behaves exactly like the "and drop" command
+  used to: the standing IR Release list applies automatically whenever one
+  is configured, no extra phrasing required. An inline release order
+  ("...release A, B, C if needed") still overrides it for that one command.
+- The strict fallback text (`lib/commandCenter/engine.ts`'s `ir_opps` case)
+  no longer echoes the release list's names either — a league where none of
+  it applies just says **"IR full"**, full stop. (It briefly said "IR full —
+  none of your release list (...) is on IR in this league"; even that was
+  more than the owner wanted named.) The top-level summary line ("N of
+  those used your release order (...)") still names the owner's OWN list
+  once, up front — that's not an unapproved player, so it stayed.
+- Tests: rewrote `scripts/testCommandCenter.ts` section 34 for the
+  single-command design (a bare command drafting the real pair, an inline
+  override still winning, strict "IR full"-only fallback, and the
+  no-list-configured case staying completely unchanged) plus fixed three
+  section-33 assertions that depended on the old fallback wording — 391
+  total (engine tests), 103 (exec, unaffected). Verified live against the
+  real account: a single bare "move all my IR eligible players to IR" now
+  drafts 28 real release+move pairs from the 5-name list with zero
+  mentions of Zach Charbonnet, A.J. Brown, or any other unapproved player
+  anywhere in the output, and 19 leagues report plainly "IR full" with no
+  name attached. Confirmed read-only, zero Sleeper writes.
