@@ -57,10 +57,11 @@ math is inspectable and defensible.
 - **SharpAPI** (MVP odds) and **SportsGameOdds** (player props) are
   server-proxied only (real API keys, never exposed client-side) — see
   `app/api/mvp-odds` and `app/api/player-props`.
-- **No accounts, persistence, or payments yet.** The curated player list is
-  a checked-in data file (`lib/players.data.ts`), rebuilt from real Sleeper
+- **No accounts or payments yet.** The curated player list is DB-backed
+  (`RankedPlayer` in Postgres, 2026-08), rebuilt from real Sleeper
   projections via `npm run regen-players`, not user-editable except through
-  the passphrase-gated admin tool.
+  the passphrase-gated admin tool — which now writes directly to the DB
+  and takes effect on the next page load, in production too.
 - Never ask a user for a platform password; every league integration must
   stay read-only.
 - Target architecture (not yet built): Postgres/Prisma for persistence,

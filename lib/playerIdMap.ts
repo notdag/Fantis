@@ -21,10 +21,13 @@ export const sleeperId = (maps: SleeperIdMaps, p: { name: string; pos: string })
 // Resolves Sleeper player IDs for our curated list once, independent of
 // week — shared by anything that needs to cross-reference our players
 // against live Sleeper data (Rankings, trade values, ...).
+let idMapsCache: SleeperIdMaps | null = null; // built once per page load
+
 export function useSleeperIdMaps(): SleeperIdMaps | null {
-  const [idMaps, setIdMaps] = useState<SleeperIdMaps | null>(null);
+  const [idMaps, setIdMaps] = useState<SleeperIdMaps | null>(idMapsCache);
 
   useEffect(() => {
+    if (idMapsCache) return;
     let cancelled = false;
     (async () => {
       const pmap = await getPlayers();
@@ -40,7 +43,8 @@ export function useSleeperIdMaps(): SleeperIdMaps | null {
         const baseKey = `${stripSuffix(entry.n)}|${entry.p}`;
         if (!(baseKey in byBase)) byBase[baseKey] = id;
       }
-      setIdMaps({ byName, byBase });
+      idMapsCache = { byName, byBase };
+      setIdMaps(idMapsCache);
     })();
     return () => {
       cancelled = true;

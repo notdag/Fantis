@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "Matchup" ADD COLUMN     "myStarters" TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN     "myStartersPoints" DOUBLE PRECISION[] DEFAULT ARRAY[]::DOUBLE PRECISION[],
+ADD COLUMN     "opponentStarters" TEXT[] DEFAULT ARRAY[]::TEXT[],
+ADD COLUMN     "opponentStartersPoints" DOUBLE PRECISION[] DEFAULT ARRAY[]::DOUBLE PRECISION[];

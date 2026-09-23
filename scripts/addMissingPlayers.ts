@@ -1,9 +1,10 @@
-// Additive top-up for lib/players.data.ts: finds real players inside a
-// "top 300 by real Sleeper ADP" pool — roughly the depth of a real 12-team
-// mock draft — who aren't in the curated list yet, and appends them at the
-// bottom (tier G) without touching anything already curated. Unlike
-// regenPlayers.ts, this never overwrites existing tiers/order; it's safe to
-// run after manual tier-board edits. Run with `npm run add-missing-players`.
+// Additive top-up for the curated player list (RankedPlayer in the DB):
+// finds real players inside a "top 300 by real Sleeper ADP" pool — roughly
+// the depth of a real 12-team mock draft — who aren't in the curated list
+// yet, and appends them at the bottom (tier G) without touching anything
+// already curated. Unlike regenPlayers.ts, this never overwrites existing
+// tiers/order; it's safe to run after manual tier-board edits. Run with
+// `npm run add-missing-players`.
 //
 // Deliberately ADP-based, not points-based like regenPlayers.ts's core
 // selection: ADP is "who actually gets drafted," which is what a top-up
@@ -14,11 +15,11 @@
 // dynasty), not just standard redraft — confirmed the first time this ran,
 // which is why TE gets its own cap below instead of riding the shared
 // 300-player pool size like QB/RB/WR do.
+import { config } from "dotenv";
+config({ path: ".env" });
+config({ path: ".env.local", override: true });
+
 import { getPlayers, getSeasonProjectionTotals, isRankedAdp, SEASONS } from "../lib/sleeper";
-import { generatePlayersData } from "../lib/generatePlayersData";
-import { RAW } from "../lib/players.data";
-import fs from "fs";
-import path from "path";
 
 const POSITIONS = ["QB", "RB", "WR", "TE"] as const;
 const POOL_SIZE = 300;
@@ -57,10 +58,13 @@ async function main() {
   pool.sort((a, b) => a.adp - b.adp);
   const top300 = pool.slice(0, POOL_SIZE);
 
-  const existing = new Set(RAW.map(([name, pos]) => `${name}|${pos}`));
+  const { db } = await import("../lib/db");
+  const existingRows = await db.rankedPlayer.findMany({ orderBy: { order: "asc" } });
+
+  const existing = new Set(existingRows.map((r) => `${r.name}|${r.pos}`));
   const maxPosRank: Record<string, number> = { QB: 0, RB: 0, WR: 0, TE: 0 };
-  for (const [, pos, , , posRank] of RAW) {
-    if (posRank > (maxPosRank[pos] ?? 0)) maxPosRank[pos] = posRank;
+  for (const r of existingRows) {
+    if (r.posRank > (maxPosRank[r.pos] ?? 0)) maxPosRank[r.pos] = r.posRank;
   }
 
   const additions: { name: string; pos: string; team: string; tier: number; posRank: number }[] = [];
@@ -75,21 +79,19 @@ async function main() {
 
   if (additions.length === 0) {
     console.log("Nothing to add — every top-300-ADP player is already in the curated list.");
+    await db.$disconnect();
     return;
   }
 
-  const combined = [
-    ...RAW.map(([name, pos, team, tier, posRank]) => ({ name, pos, team, tier, posRank })),
-    ...additions,
-  ];
-
-  const outPath = path.join(__dirname, "..", "lib", "players.data.ts");
-  fs.writeFileSync(outPath, generatePlayersData(combined));
+  await db.rankedPlayer.createMany({
+    data: additions.map((a, i) => ({ order: existingRows.length + i, ...a })),
+  });
+  await db.$disconnect();
 
   for (const pos of POSITIONS) {
     console.log(pos, additions.filter((a) => a.pos === pos).length, "added");
   }
-  console.log("Total added:", additions.length, "| new list size:", combined.length);
+  console.log("Total added:", additions.length, "| new list size:", existingRows.length + additions.length);
 }
 
 main();

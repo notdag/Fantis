@@ -63,7 +63,6 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const dragRef = useRef<{ tier: number; idx: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ text: string; error?: boolean } | null>(null);
-  const [prodSource, setProdSource] = useState<string | null>(null);
 
   const [newName, setNewName] = useState("");
   const [newPos, setNewPos] = useState("WR");
@@ -118,7 +117,6 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const reset = () => {
     setBoard(groupByTier(initialPlayers));
     setSaveMsg(null);
-    setProdSource(null);
   };
 
   const addPlayer = () => {
@@ -163,7 +161,6 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const save = async () => {
     setSaving(true);
     setSaveMsg(null);
-    setProdSource(null);
     try {
       const players = board.flatMap((col, ti) =>
         col.map((p) => ({ name: p.name, pos: p.pos, team: p.team, tier: ti + 1 }))
@@ -178,14 +175,7 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         setSaveMsg({ text: body.error || "Save failed.", error: true });
         return;
       }
-      if (body.written) {
-        setSaveMsg({ text: "Saved to lib/players.data.ts — the app will hot-reload." });
-      } else {
-        setSaveMsg({
-          text: "This deployment can't write files at runtime. Copy the generated source below into lib/players.data.ts and commit it.",
-        });
-        setProdSource(body.source);
-      }
+      setSaveMsg({ text: "Saved — live everywhere on the next page load." });
     } catch {
       setSaveMsg({ text: "Couldn't reach the server.", error: true });
     } finally {
@@ -283,24 +273,6 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         <p className="hint" style={{ color: saveMsg.error ? "var(--red)" : "var(--mint)", marginBottom: 12 }}>
           {saveMsg.text}
         </p>
-      )}
-      {prodSource && (
-        <textarea
-          readOnly
-          value={prodSource}
-          style={{
-            width: "100%",
-            height: 220,
-            marginBottom: 16,
-            background: "var(--ink)",
-            color: "var(--bone)",
-            border: "1px solid var(--line)",
-            borderRadius: 8,
-            padding: 10,
-            fontFamily: "monospace",
-            fontSize: 12,
-          }}
-        />
       )}
 
       <div className="tierlist">

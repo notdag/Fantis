@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS, TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
+import { TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { getMvpOdds, type MvpOddsEntry } from "@/lib/sharpapi";
 import { getPlayerProps, type PropLine } from "@/lib/sportsgameodds";
+import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { sleeperId, stripSuffix, useSleeperIdMaps } from "@/lib/playerIdMap";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { useGameContext } from "@/lib/useGameContext";
@@ -44,20 +46,20 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
 // something sensible when switching modes away from a column that's about
 // to disappear.
 const WEEK_KEYS: SortKey[] = ["rank", "pos", "adp", "proj"];
-const SEASON_KEYS: SortKey[] = ["rank", "pos", "rushYd", "recYd", "passYd", "td", "proj"];
+const SEASON_KEYS: SortKey[] = ["rank", "pos", "adp", "rushYd", "recYd", "passYd", "td", "proj"];
 
 const POS_ORDER: Record<string, number> = { QB: 0, RB: 1, WR: 2, TE: 3 };
 
-// The curated list's own array order *is* the master redraft rank — set by
-// the owner's tier board (all positions mixed, e.g. Gibbs/Bijan before any
-// QB), not grouped by position. posRank is already derived from a player's
-// position within this same order (see lib/players.ts). Sorting by "pos"
-// groups into position blocks (every QB, then every RB, ...); sorting by
-// "rank" is the real thing — default view should be this, not a QB-first
-// block grouping that happens to fall out of POS_ORDER.
-const PLAYER_ORDER = new Map(PLAYERS.map((p, i) => [p.name, i]));
-
 export default function Rankings() {
+  const PLAYERS = usePlayers();
+  // The curated list's own array order *is* the master redraft rank — set
+  // by the owner's tier board (all positions mixed, e.g. Gibbs/Bijan before
+  // any QB), not grouped by position. posRank is already derived from a
+  // player's position within this same order (see lib/players.ts). Sorting
+  // by "pos" groups into position blocks (every QB, then every RB, ...);
+  // sorting by "rank" is the real thing — default view should be this, not
+  // a QB-first block grouping that happens to fall out of POS_ORDER.
+  const PLAYER_ORDER = useMemo(() => new Map(PLAYERS.map((p, i) => [p.name, i])), [PLAYERS]);
   const [pos, setPos] = useState<(typeof POSITIONS)[number]>("ALL");
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("rank");
@@ -77,6 +79,7 @@ export default function Rankings() {
 
   const [mvpOdds, setMvpOdds] = useState<Record<string, MvpOddsEntry>>({});
   const [playerProps, setPlayerProps] = useState<Record<string, PropLine[]>>({});
+  const fcValues = useFantasyCalcValues();
 
   const {
     projections,
@@ -135,7 +138,32 @@ export default function Rankings() {
       };
     }
     return merged;
-  }, [projections, idMaps]);
+  }, [PLAYERS, projections, idMaps]);
+
+  // Each player's real ADP-based overall rank, fixed regardless of which
+  // column the table is currently sorted by. Shown in the "#" cell so that
+  // sorting by e.g. Szn Pts (where QBs naturally lead on raw points) still
+  // reads as "Josh Allen, real rank ~29" instead of relabeling him "#1"
+  // just because points-sorting put him first in the row list — the row
+  // order can change with the active sort, but the real-rank number
+  // shouldn't. Same real-ADP-first, curated-order-fallback logic as the
+  // "rank" sort branch below.
+  const adpRank = useMemo(() => {
+    const withAdp: { name: string; adp: number }[] = [];
+    const withoutAdp: string[] = [];
+    for (const p of PLAYERS) {
+      const adp = live[p.name]?.adp;
+      if (adp != null) withAdp.push({ name: p.name, adp });
+      else withoutAdp.push(p.name);
+    }
+    withAdp.sort((a, b) => a.adp - b.adp);
+    withoutAdp.sort((a, b) => (PLAYER_ORDER.get(a) ?? 0) - (PLAYER_ORDER.get(b) ?? 0));
+    const map = new Map<string, number>();
+    let i = 1;
+    for (const { name } of withAdp) map.set(name, i++);
+    for (const name of withoutAdp) map.set(name, i++);
+    return map;
+  }, [PLAYERS, PLAYER_ORDER, live]);
 
   const seasonLive = useMemo(() => {
     const merged: Record<string, SeasonProjectionTotal | undefined> = {};
@@ -145,7 +173,7 @@ export default function Rankings() {
       merged[p.name] = id ? seasonTotals[id] : undefined;
     }
     return merged;
-  }, [seasonTotals, idMaps]);
+  }, [PLAYERS, seasonTotals, idMaps]);
 
   const loadSeason = async () => {
     if (!season || seasonLoading || seasonTotals) return;
@@ -200,7 +228,20 @@ export default function Rankings() {
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
       if (sortBy === "rank") {
-        return ((PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0)) * dir;
+        // Real live ADP, same source as the ADP column/sort below — not the
+        // curated list's own array order, which groups tier-major then
+        // position-major (QB before RB/WR/TE alphabetically) rather than by
+        // real cross-position value. That grouping put tier-1 QBs ahead of
+        // every other tier-1 player regardless of real ADP, which is why
+        // QBs were showing up top-10 overall. Curated order is now only a
+        // tiebreak for the handful of players with no live ADP (deep
+        // rookies mostly), same convention as every other sort below.
+        const aAdp = live[a.name]?.adp;
+        const bAdp = live[b.name]?.adp;
+        if (aAdp != null && bAdp != null) return (aAdp - bAdp) * dir;
+        if (aAdp != null) return -1;
+        if (bAdp != null) return 1;
+        return (PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0);
       }
       if (sortBy === "pos") {
         const ai = POS_ORDER[a.pos] ?? 99;
@@ -237,20 +278,26 @@ export default function Rankings() {
       if (bv == null) return -1;
       return (av - bv) * dir;
     });
-  }, [pos, query, sortBy, sortDir, live, seasonLive, projMode]);
+  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode]);
 
-  // Ticker strip: real current standings by proj value (season or week,
-  // matching the active mode) — no fabricated "market delta," since we don't
-  // track a historical baseline to compare against yet.
-  const tickerItems = useMemo(() => {
-    return PLAYERS.map((p) => ({
-      p,
-      val: projMode === "season" ? seasonLive[p.name]?.pts ?? null : live[p.name]?.proj ?? null,
-    }))
-      .filter((x): x is { p: (typeof PLAYERS)[number]; val: number } => x.val != null)
-      .sort((a, b) => b.val - a.val)
-      .slice(0, 10);
-  }, [live, seasonLive, projMode]);
+  // If the selected player gets filtered out (search/position change), close
+  // the panel instead of leaving it detached from anything on screen.
+  useEffect(() => {
+    if (selected && !list.some((p) => p.name === selected)) {
+      setSelected(null);
+    }
+  }, [list, selected]);
+
+  // The mobile bottom sheet is modal-weight UI (fixed, scrimmed) and should
+  // carry the same Escape-to-close expectation as one.
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
 
   // "vs ADP": our curated position rank compared to the market's ADP-implied
   // rank at that same position — a real, computable delta, not an invented
@@ -273,7 +320,7 @@ export default function Rankings() {
       });
     }
     return out;
-  }, [live]);
+  }, [PLAYERS, live]);
 
   const selectedPlayer = selected ? PLAYERS.find((p) => p.name === selected) || null : null;
   const selectedStat = selectedPlayer ? live[selectedPlayer.name] : undefined;
@@ -286,24 +333,12 @@ export default function Rankings() {
     : undefined;
 
   return (
-    <section className="sec rankterm">
-      <div className="ticker">
-        <div className="tickertrack">
-          {tickerItems.length === 0
-            ? [0, 1].map((i) => <span key={i}>AWAITING FEED…</span>)
-            : [...tickerItems, ...tickerItems].map((t, i) => (
-                <span key={i}>
-                  {t.p.pos}
-                  {t.p.posRank} {t.p.name.toUpperCase()} · {t.val.toFixed(1)}
-                </span>
-              ))}
-        </div>
-      </div>
+    <section className="sec">
       <div className="sechead">
         <h2>Rankings</h2>
         <span className="rt">
-          starter set · edit in code
-          {week != null && ` · ADP via Sleeper`}
+          {PLAYERS.length} players, real season points via Sleeper
+          {week != null && ` · ADP updated live`}
         </span>
       </div>
       <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
@@ -372,6 +407,9 @@ export default function Rankings() {
             ) : (
               <>
                 <div className="cell r">
+                  <SortHeader label="ADP" sortKey="adp" active={sortBy} dir={sortDir} onClick={toggleSort} />
+                </div>
+                <div className="cell r">
                   <SortHeader label="Rush Yd" sortKey="rushYd" active={sortBy} dir={sortDir} onClick={toggleSort} />
                 </div>
                 <div className="cell r">
@@ -403,10 +441,13 @@ export default function Rankings() {
                 style={{ borderLeftColor: TIER_COLOR[p.tier - 1] || "var(--oth)" }}
                 title={`Tier ${TIER_LABELS[p.tier - 1] ?? p.tier}`}
               >
-                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{i + 1}</div>
+                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{adpRank.get(p.name) ?? i + 1}</div>
                 <div className="cell team">
                   <span className="tname">{p.name}</span>
-                  <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 8 }}>
+                  {/* --dim fails contrast at this size (3.1:1, need 4.5:1) —
+                      --muted passes (~6.4:1) and is already the documented
+                      secondary-text step. */}
+                  <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: 8 }}>
                     {p.team}
                   </span>
                 </div>
@@ -416,7 +457,7 @@ export default function Rankings() {
                     {p.posRank}
                   </span>
                 </div>
-                <div className="cell r num" style={{ color: "var(--dim)" }}>
+                <div className="cell r num" style={{ color: "var(--muted)" }}>
                   {BYE_WEEKS_2026[p.team] ?? "—"}
                 </div>
                 {projMode === "week" ? (
@@ -442,13 +483,19 @@ export default function Rankings() {
                 ) : (
                   <>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
+                      {stat?.adp != null ? stat.adp : "—"}
+                    </div>
+                    <div className="cell r num" style={{ color: "var(--bone)" }}>
                       {seasonStat ? Math.round(seasonStat.rushYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
-                      {seasonStat ? Math.round(seasonStat.recYd) : "—"}
+                      {/* QBs structurally don't catch passes — "—" (not applicable),
+                          not "0" (which would misread as an earned zero). */}
+                      {seasonStat && p.pos !== "QB" ? Math.round(seasonStat.recYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
-                      {seasonStat ? Math.round(seasonStat.passYd) : "—"}
+                      {/* Same convention for non-QBs and passing yards. */}
+                      {seasonStat && p.pos === "QB" ? Math.round(seasonStat.passYd) : "—"}
                     </div>
                     <div className="cell r num" style={{ color: "var(--bone)" }}>
                       {tdTotal != null ? Math.round(tdTotal) : "—"}
@@ -464,7 +511,9 @@ export default function Rankings() {
         </div>
 
         {selectedPlayer && (
-          <div className="panel">
+          <>
+            <div className="panelscrim" onClick={() => setSelected(null)} />
+            <div className="panel">
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
               <div>
                 <h3>{selectedPlayer.name}</h3>
@@ -550,6 +599,12 @@ export default function Rankings() {
                 </div>
               </>
             )}
+            {fcValues && fantasyCalcValue(fcValues, selectedPlayer) > 0 && (
+              <div className="prow">
+                <span className="plabel">FantasyCalc Value</span>
+                <span className="pval">{Math.round(fantasyCalcValue(fcValues, selectedPlayer))}</span>
+              </div>
+            )}
             {selectedProps && selectedProps.length > 0 && (
               <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
                 <span className="plabel">Player Props</span>
@@ -577,9 +632,13 @@ export default function Rankings() {
               from the real moneyline, the same technique used for the Anytime TD prop).
               Scoring Environment is the team&rsquo;s own implied total (O/U &plusmn; spread,
               split in half) &mdash; standard sportsbook math on the same real numbers above,
-              not a new data source. Not investment or betting advice.
+              not a new data source. FantasyCalc Value is a real, independent trade-value
+              number from fantasycalc.com (redraft, 1QB, PPR), a second opinion alongside
+              Fantis&rsquo; own tier order, not a source we compute or control. Not investment
+              or betting advice.
             </div>
           </div>
+          </>
         )}
       </div>
     </section>
