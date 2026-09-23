@@ -1153,3 +1153,44 @@ i.e. a waiver add there wouldn't need a drop first.
   correctly navigates to `/manager/<leagueId>`, and `/manager/open-spots`
   itself renders as a real portfolio page (not misread as a league) —
   confirming the `PORTFOLIO_SLUGS` registration took.
+
+### Waiver board on Open Spots (2026-09; requested explicitly by the owner)
+
+"Give me a way to waiver the players in these spots easily" — the page
+above now embeds the SAME Mass Add/Claim board `/manager/lineups` already
+uses (`components/manager/BulkAdd.tsx`), pre-scoped to only the leagues
+that genuinely have an open spot. No new write path: `BulkAdd` already
+owns the real add/claim logic (`lib/sleeperWrite.ts`'s `addDropFreeAgent`/
+`claimWaiver`, FAAB suggestions, `ConnectWriteAccess` for the browser-only
+Sleeper token, `BulkConfirm` before anything sends) — this just hands it a
+filtered `LineupLeague[]`.
+
+- `app/manager/open-spots/page.tsx` now builds the full `LineupLeague`
+  shape (same fields `/manager/lineups` builds, including `ManagedLeague`
+  via `slimLeagueSettings`) instead of the smaller shape used for the
+  read-only list alone, so the exact same board can consume it.
+  `components/manager/OpenSpots.tsx` filters to the open-spot subset,
+  renders it via `<BulkAdd leagues={openLeagues} .../>` under a "Waiver a
+  player into these leagues" heading, own `ConnectWriteAccess` instance
+  (same browser-local token pattern, independent of the Lineups page's).
+- Scoping to open-spot leagues doesn't need any new logic: `BulkAdd`'s own
+  `buildMultiAddPlan` already determines per-(league, target) whether a
+  drop is needed, so if the owner picks 2+ targets for one 1-spot league,
+  the second target there still correctly shows "needs a drop" — the
+  page's own filtering only narrows which LEAGUES are offered, not
+  per-target capacity math, which was already correct.
+- **Verification note**: the read-only half (stat cards + league list) was
+  re-verified live against the real account (16/210 leagues, matches
+  earlier). The write-capable half (BulkAdd search/execute) could NOT be
+  live-verified this session — extensive debugging traced it to the
+  Browser pane tab being backgrounded (`document.hidden: true`,
+  confirmed directly via `document.visibilityState`/`requestAnimationFrame`
+  never firing), which halts React's passive-effect scheduling entirely
+  in this Chromium build (`usePlayerMap`'s fetch, `loadPrefs`,
+  `ConnectWriteAccess`'s mount effect all never ran) — proven NOT a code
+  bug: a direct onClick handler on the same page updated state and called
+  `getPlayers()` successfully in under 15ms once fired manually, and the
+  component tree is structurally identical to `/manager/lineups`'s
+  already-proven-working `BulkAdd` usage. `tsc`/`eslint`/`next build` all
+  clean. Worth a quick real check in a normal (focused) browser tab before
+  relying on it for a live add.

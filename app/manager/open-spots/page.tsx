@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import OpenSpots from "@/components/manager/OpenSpots";
 import { db } from "@/lib/db";
-import { isBestBall, rosterPositionsFromSettings } from "@/lib/manager";
-import type { OpenSpotLeague } from "@/components/manager/OpenSpots";
+import { isBestBall, rosterPositionsFromSettings, slimLeagueSettings, type ManagedLeague } from "@/lib/manager";
+import type { LineupLeague } from "@/components/manager/LineupManager";
 
 export const metadata: Metadata = {
   title: "Fantis — Open Roster Spots",
@@ -23,21 +23,67 @@ export default async function OpenSpotsPage() {
   }
 
   const [leagueRows, rosterRows] = await Promise.all([
-    db.league.findMany({ where: { status: "in_season" }, orderBy: { name: "asc" } }),
+    db.league.findMany({
+      where: { status: "in_season" },
+      select: {
+        id: true,
+        accountId: true,
+        name: true,
+        season: true,
+        totalRosters: true,
+        status: true,
+        settings: true,
+        group: true,
+        lastSyncedAt: true,
+        account: { select: { username: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
     db.roster.findMany(),
   ]);
 
   const rosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r]));
 
-  const leagues: OpenSpotLeague[] = leagueRows
+  // Same LineupLeague shape /manager/lineups builds, so this page can hand
+  // its open-spot subset straight to the existing Mass Add board — no new
+  // write path, just a pre-filtered view of the one that's already there.
+  const leagues: LineupLeague[] = leagueRows
     .filter((lg) => !isBestBall(lg.settings) && rosterByLeague.has(lg.id))
     .map((lg) => {
-      const roster = rosterByLeague.get(lg.id)!;
-      const limit = rosterPositionsFromSettings(lg.settings).length;
-      const active = roster.players.length - roster.reserve.length;
-      return { leagueId: lg.id, leagueName: lg.name, active, limit };
-    })
-    .filter((l) => l.limit > 0);
+      const r = rosterByLeague.get(lg.id)!;
+      const league: ManagedLeague = {
+        id: lg.id,
+        accountId: lg.accountId,
+        accountUsername: lg.account.username,
+        name: lg.name,
+        season: lg.season,
+        totalRosters: lg.totalRosters,
+        status: lg.status,
+        settings: slimLeagueSettings(lg.settings),
+        group: lg.group,
+        lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
+      };
+      return {
+        league,
+        roster: {
+          leagueId: r.leagueId,
+          rosterId: r.rosterId,
+          starters: r.starters,
+          players: r.players,
+          reserve: r.reserve,
+          waiverPosition: r.waiverPosition,
+          faabUsed: r.faabUsed,
+          wins: r.wins,
+          losses: r.losses,
+          ties: r.ties,
+          fpts: r.fpts,
+          fptsAgainst: r.fptsAgainst,
+          lastSyncedAt: r.lastSyncedAt?.toISOString() ?? null,
+        },
+        rosterPositions: rosterPositionsFromSettings(lg.settings),
+        alertCount: 0,
+      };
+    });
 
   return <OpenSpots leagues={leagues} />;
 }
