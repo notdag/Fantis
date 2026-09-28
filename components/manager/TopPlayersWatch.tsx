@@ -124,7 +124,7 @@ export default function TopPlayersWatch({
             onChange={(e) =>
               setLimits((prev) => ({ ...prev, [pos]: Math.min(100, Math.max(1, Number(e.target.value) || prev[pos])) }))
             }
-            style={{ width: 54, flex: "none", minWidth: 0 }}
+            style={{ width: 60, flex: "none", minWidth: 0, padding: "6px 4px", textAlign: "center" }}
           />
         </label>
       ))}
