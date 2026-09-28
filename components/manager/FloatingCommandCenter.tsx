@@ -25,7 +25,7 @@ const readOpen = () => {
   }
 };
 
-// Bottom-right launcher for the read-only Command Center AI, available on every
+// Bottom-right launcher for the Command Center AI, available on every
 // /manager page. Once opened, the panel stays mounted when collapsed so a scan
 // in progress, the conversation and the 5-minute league cache all survive
 // collapsing it or navigating between manager pages.
@@ -73,7 +73,7 @@ export default function FloatingCommandCenter() {
         <div className="ccpanel" style={{ display: open ? "flex" : "none" }} role="dialog" aria-label="Command Center AI">
           <div className="ccpanelbar">
             <strong>Command Center AI</strong>
-            <span className={`ccpanelmode ${permission === "READ_ONLY" ? "" : "live"}`}>{PERMISSION_LABEL[permission].toUpperCase()}</span>
+            <span className={`ccpanelmode ${permission === "LIVE" ? "live" : ""}`}>{PERMISSION_LABEL[permission].toUpperCase()}</span>
             <span style={{ flex: 1 }} />
             <button className="ccpanelbtn" onClick={() => toggle(false)} aria-label="Collapse Command Center AI" title="Collapse">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -109,7 +109,7 @@ export default function FloatingCommandCenter() {
             <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />
           </svg>
           Command Center AI
-          <span className="cclaunchermode">read-only</span>
+          <span className="cclaunchermode">{permission === "LIVE" ? "live" : "planning"}</span>
         </button>
       )}
     </>

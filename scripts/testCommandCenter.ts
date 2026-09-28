@@ -161,8 +161,8 @@ async function run(cmds: string[], env: EngineEnv, s: Session = newSession()) {
 }
 
 async function main() {
-  // ---------- 0. permission model is READ_ONLY and inert
-  ok(CURRENT_PERMISSION === "READ_ONLY", "permission is READ_ONLY");
+  // ---------- 0. permission model is PLANNING and inert
+  ok(CURRENT_PERMISSION === "PLANNING", "permission is PLANNING");
   ok(canExecute() === false, "canExecute() is false");
 
   // ---------- 1. static safety: no write path exists anywhere in the module tree
@@ -212,7 +212,7 @@ async function main() {
     // audit
     ok(out.audit.leaguesTotal === 8 && out.audit.leaguesFailed === 1 && out.audit.players[0]?.id === "100", "audit record", JSON.stringify(out.audit));
     ok(out.audit.errors.some((e) => e.includes("L5")), "audit records the failed league");
-    ok(out.audit.permission === "READ_ONLY", "audit records permission");
+    ok(out.audit.permission === "PLANNING", "audit records permission");
 
     // ---------- follow-ups reuse context (no re-scan)
     const callsBefore = env.calls.rosters;
@@ -409,7 +409,7 @@ async function main() {
       const o = await handleCommand(cmd, scan.session, env);
       const txt = textOf(o.blocks);
       ok(o.audit.intent === "execute_request", `"${cmd}" is an execute request`, o.audit.intent);
-      ok(/can't .* READ-ONLY/.test(txt) && /Nothing has been changed/.test(txt), `"${cmd}" refused`, txt.slice(0, 120));
+      ok(/don't .* anything from chat, in any mode/.test(txt) && /Nothing has been sent to Sleeper/.test(txt), `"${cmd}" refused`, txt.slice(0, 120));
       ok(!o.blocks.some((b) => b.t === "text" && /^(Added|Dropped|Claimed|Done)/i.test(b.text)), `"${cmd}" no fake success`);
     }
     const o = await handleCommand("Add Antonio Williams to every league", newSession(), makeEnv(scenario(), pm));
@@ -579,13 +579,13 @@ async function main() {
     ok(/connect Sleeper access on the Lineups page/.test(textOf(na.blocks)), "tells the user how to use Sleeper's own predictions");
   }
 
-  // ---------- 13. Phases 2–5 from the engine's side: drafts only, never an execution
+  // ---------- 13. drafts only, never an execution, regardless of Planning/Live mode
   {
     const pm = basePmap();
     delete pm["101"];
     const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
     const env = makeEnv(scenario(), pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Find Antonio Williams everywhere", newSession(), env);
     const ds = draftsOf(out.blocks);
     ok(ds.length === 3 && ds.every((d) => d.kind === "ADD"), "scan drafts one ADD per certain, actionable league", String(ds.length));
@@ -599,13 +599,13 @@ async function main() {
     ok(ds.every((d) => d.origin === "chat" && d.rationale.length > 0), "drafts are chat-origin and carry reasons");
     ok(/Nothing has been saved or sent to Sleeper/.test(out.blocks.find((b) => b.t === "drafts" && true) ? (out.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")!.note) : ""), "drafts note says nothing was saved or sent");
 
-    // read-only mode: still shows what could be proposed, but says it can't be saved
-    const roEnv = makeEnv(scenario(), pm);
-    const ro = await handleCommand("Find Antonio Williams everywhere", newSession(), roEnv);
-    const roNote = ro.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")?.note ?? "";
-    ok(/Read-only mode/.test(roNote) && /switch to Propose only/.test(roNote), "read-only mode: can't save, tells the user how to enable it");
+    // Planning mode: the same drafts note — saving proposals is always allowed, only sending needs Live
+    const planEnv = makeEnv(scenario(), pm);
+    const plan = await handleCommand("Find Antonio Williams everywhere", newSession(), planEnv);
+    const planNote = plan.blocks.find((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts")?.note ?? "";
+    ok(/Nothing has been saved or sent to Sleeper/.test(planNote) && /switch to Live mode to send/.test(planNote), "planning mode: same note, can still save — only sending needs Live");
 
-    // "add him" in propose mode → drafts + explanation, never an execution
+    // "add him" → drafts + explanation, never an execution, in either mode
     const sess = out.session;
     const ex = await handleCommand("Add him", sess, env);
     ok(ex.audit.intent === "execute_request" && /I don't add anything from chat, in any mode/.test(textOf(ex.blocks)), "chat 'add him' → not executed; turned into a proposal", textOf(ex.blocks).slice(0, 160));
@@ -616,7 +616,7 @@ async function main() {
     const pmIr = basePmap();
     pmIr["400"] = { ...pmIr["400"], inj: "IR" };
     const envIr = makeEnv(scenario(), pmIr);
-    envIr.permission = "PROPOSE_ONLY";
+    envIr.permission = "LIVE";
     const irOut = await handleCommand("Find all leagues where I have an injured player who could go on IR", newSession(), envIr);
     const irDrafts = draftsOf(irOut.blocks);
     ok(irDrafts.length > 0 && irDrafts.every((d) => d.kind === "IR_MOVE" && (d.params as { injury: string }).injury === "IR"), "IR scan drafts IR_MOVE proposals for open-slot leagues");
@@ -634,7 +634,7 @@ async function main() {
     const luProj: ProjectionMap = { q: { pts_ppr: 20 }, r1: { pts_ppr: 15 }, r2: { pts_ppr: 9 } };
     const future = new Date(NOW + 86_400_000).toISOString();
     const luEnv = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
-    luEnv.permission = "PROPOSE_ONLY";
+    luEnv.permission = "LIVE";
     luEnv.kickoffs = async () => ({ DAL: future });
     const lu = await handleCommand("Fix my lineups", newSession(), luEnv);
     const luD = draftsOf(lu.blocks);
@@ -644,13 +644,13 @@ async function main() {
     // started games are frozen
     const past = new Date(NOW - 3_600_000).toISOString();
     const luLocked = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
-    luLocked.permission = "PROPOSE_ONLY";
+    luLocked.permission = "LIVE";
     luLocked.kickoffs = async () => ({ DAL: past });
     const lk = await handleCommand("Fix my lineups", newSession(), luLocked);
     ok(draftsOf(lk.blocks).length === 0, "players whose games started are never moved");
     // no kickoff data → refuses rather than guessing
     const luNoKo = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
-    luNoKo.permission = "PROPOSE_ONLY";
+    luNoKo.permission = "LIVE";
     luNoKo.kickoffs = async () => null;
     const nk = await handleCommand("Fix my lineups", newSession(), luNoKo);
     ok(draftsOf(nk.blocks).length === 0 && /couldn't load kickoff times/.test(textOf(nk.blocks)), "no kickoff times → no lineup proposals");
@@ -678,7 +678,7 @@ async function main() {
       { league: dayLeagueB, rosters: [dayRosterB, otherRoster([])], txns: [] },
     ];
     const dayEnv = makeEnv(dayFx, dayPm, undefined, undefined, { projections: dayProj, week: 3 });
-    dayEnv.permission = "PROPOSE_ONLY";
+    dayEnv.permission = "LIVE";
     dayEnv.kickoffs = async () => ({ DAL: thu, SF: wed, NYJ: future });
     const dayOut = await handleCommand("Fix my lineups", newSession(), dayEnv);
     const dayDrafts = draftsOf(dayOut.blocks);
@@ -702,7 +702,7 @@ async function main() {
     const tieRoster: RawRoster = { roster_id: 1, owner_id: ME, players: ["tq", "tieStart", "tieBench"], starters: ["tq", "tieStart"], reserve: [], taxi: [] };
     const tieProj: ProjectionMap = { tq: { pts_ppr: 20 }, tieStart: { pts_ppr: 12 }, tieBench: { pts_ppr: 12 } };
     const tieEnv = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProj, week: 3 });
-    tieEnv.permission = "PROPOSE_ONLY";
+    tieEnv.permission = "LIVE";
     tieEnv.kickoffs = async () => ({ SF: wed, DAL: wed });
     tieEnv.curatedIds = ["tieBench", "tieStart"]; // tieBench ranked ABOVE tieStart in the owner's own rankings
     const tieOut = await handleCommand("Fix my lineups", newSession(), tieEnv);
@@ -712,7 +712,7 @@ async function main() {
     ok(tieParams?.toStarters.join() === "tq,tieBench", "the higher-curated-ranked player is preferred when the projections themselves are exactly tied", JSON.stringify(tieParams));
     // when the curated order favors the player who's ALREADY starting, nothing changes
     const tieEnvNoop = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProj, week: 3 });
-    tieEnvNoop.permission = "PROPOSE_ONLY";
+    tieEnvNoop.permission = "LIVE";
     tieEnvNoop.kickoffs = async () => ({ SF: wed, DAL: wed });
     tieEnvNoop.curatedIds = ["tieStart", "tieBench"];
     const tieOutNoop = await handleCommand("Fix my lineups", newSession(), tieEnvNoop);
@@ -720,7 +720,7 @@ async function main() {
     // a real, meaningfully-better-projected bench player still wins outright — rankings never override a genuine point edge
     const tieProjReal: ProjectionMap = { tq: { pts_ppr: 20 }, tieStart: { pts_ppr: 20 }, tieBench: { pts_ppr: 12 } };
     const tieEnvReal = makeEnv([{ league: tieLeague, rosters: [tieRoster, otherRoster([])], txns: [] }], tiePm, undefined, undefined, { projections: tieProjReal, week: 3 });
-    tieEnvReal.permission = "PROPOSE_ONLY";
+    tieEnvReal.permission = "LIVE";
     tieEnvReal.kickoffs = async () => ({ SF: wed, DAL: wed });
     tieEnvReal.curatedIds = ["tieBench", "tieStart"]; // curated favorite has the far worse real projection this week
     const tieOutReal = await handleCommand("Fix my lineups", newSession(), tieEnvReal);
@@ -964,7 +964,7 @@ async function main() {
       { league: leagueD, rosters: [rosterD, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm, sig);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Move IR Star off IR to my bench", newSession(), env);
     ok(out.audit.intent === "activate_ir", "recognised as activate_ir", out.audit.intent);
     const decisionsBlk = out.blocks.find((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions");
@@ -1023,7 +1023,7 @@ async function main() {
       { league: l4, rosters: [r4, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm, undefined, undefined, { projections: proj, week: 3 });
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     env.kickoffs = async () => ({ DAL: future, IND: future, SF: future });
     const out = await handleCommand("Make sure Target WR starts this week", newSession(), env);
     ok(out.audit.intent === "force_start", "recognised as force_start", out.audit.intent);
@@ -1170,7 +1170,7 @@ async function main() {
       { league: lC, rosters: [rC, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, irPm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Put IR Candidate on IR", newSession(), env);
     ok(out.audit.intent === "send_to_ir", "recognised as send_to_ir", out.audit.intent);
     const drafts = draftsOf(out.blocks);
@@ -1217,7 +1217,7 @@ async function main() {
     const fx: LeagueFx[] = [{ league, rosters: [roster, otherRoster([])], txns: [] }];
 
     const env = makeEnv(fx, pm, sig);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Target One and Target Two", newSession(), env);
     ok(out.audit.intent === "scan_player", "bare multi-mention still recognised as scan_player", out.audit.intent);
     const drafts = draftsOf(out.blocks);
@@ -1229,7 +1229,7 @@ async function main() {
     // the "add X and Y" phrasing (a real execute_request) reaches the exact
     // same real scan+draft pipeline, not just a bare refusal.
     const env2 = makeEnv(fx, pm, sig);
-    env2.permission = "PROPOSE_ONLY";
+    env2.permission = "LIVE";
     const out2 = await handleCommand("add Target One and Target Two everywhere", newSession(), env2);
     ok(out2.audit.intent === "execute_request", "verb-led phrasing recognised as execute_request", out2.audit.intent);
     const drafts2 = draftsOf(out2.blocks);
@@ -1271,7 +1271,7 @@ async function main() {
       { league: lC, rosters: [rC, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
 
     const out1 = await handleCommand("add Target One and Target Two everywhere", newSession(), env);
     ok(!!out1.session.results && out1.session.targets.length === 2, "the add scan leaves real targets/results on the session for a follow-up");
@@ -1326,7 +1326,7 @@ async function main() {
       { league: lB, rosters: [rB, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Find all leagues where I have an injured player who could go on IR", newSession(), env);
     const txt = textOf(out.blocks);
     ok(/1 league would have an open bench slot afterward/.test(txt), "reports the real open-bench-slot count after the proposed IR moves", txt.slice(0, 400));
@@ -1371,7 +1371,7 @@ async function main() {
       { league: lFull, rosters: [rFull, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("add Target One and Target Two everywhere, drop Tank Bigsby then Mike Washington if needed", newSession(), env);
     ok(out.audit.intent === "execute_request", "recognised as execute_request (verb-led, still refuses to execute directly)", out.audit.intent);
     ok(/I don't add anything from chat/.test(textOf(out.blocks)), "still states plainly that chat itself never sends anything");
@@ -1413,7 +1413,7 @@ async function main() {
       { league: lC, rosters: [rC, otherRoster([])], txns: [] },
     ];
     const env = makeEnv(fx, pm, undefined, undefined, { projections: proj, week: 3 });
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     env.kickoffs = async () => ({ ATL: future, LAR: future, DAL: future });
     const out = await handleCommand("make sure Force Player One and Force Player Two start this week", newSession(), env);
     ok(out.audit.intent === "force_start", "recognised as force_start with two mentions", out.audit.intent);
@@ -1469,7 +1469,7 @@ async function main() {
     const league = { ...lg("1", "Multi Activate League", rpFull), settings };
     const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "w1", "w2", "w3", "w4", "ab1", "ab2", "ir1", "ir2"], starters: ["q", "w1", "w2", "w3", "w4"], reserve: ["ir1", "ir2"], taxi: [] };
     const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Move IR Guy One and IR Guy Two off IR to my bench", newSession(), env);
     ok(out.audit.intent === "activate_ir", "recognised as activate_ir with two mentions", out.audit.intent);
     const drafts = draftsOf(out.blocks);
@@ -1492,7 +1492,7 @@ async function main() {
     const league = { ...lg("1", "Multi Send League — one slot", rp), settings };
     const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "p1", "p2"], starters: ["fq"], reserve: [], taxi: [] };
     const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Put Send Player One and Send Player Two on IR", newSession(), env);
     ok(out.audit.intent === "send_to_ir", "recognised as send_to_ir with two mentions", out.audit.intent);
     const drafts = draftsOf(out.blocks);
@@ -1517,7 +1517,7 @@ async function main() {
     // the bench (not a starter) so he's a real, eligible drop candidate.
     const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "w1", "bigsby"], starters: ["fq", "w1"], reserve: [], taxi: [] };
     const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     // deliberately avoids the word "waiver" here — that's a real, separate
     // state filter (tested elsewhere); this test isolates the drop-order split.
     const out = await handleCommand("I want to add Jonah Coleman in all my leagues and drop Tank Bigsby", newSession(), env);
@@ -1545,7 +1545,7 @@ async function main() {
     const league = { ...lg("1", "Priority IR League", rp), settings: settings2Slots };
     const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "injPlayer", "irOccupant1", "irOccupant2"], starters: ["fq", "s1"], reserve: ["irOccupant1", "irOccupant2"], taxi: [] };
     const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-    env.permission = "PROPOSE_ONLY";
+    env.permission = "LIVE";
     const out = await handleCommand("Find leagues where I have an injured player who could go on IR", newSession(), env);
     const decisionsText = out.blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
     ok(/would need to release Unprotected IR Guy from IR first/.test(decisionsText), "the Priority-listed IR occupant (weakest by value) is skipped — the real, unprotected occupant is suggested instead", decisionsText);
@@ -1565,7 +1565,7 @@ async function main() {
     const league2 = { ...lg("2", "Priority Activate League", rpFull), settings: { roster_positions: rpFull, settings: { reserve_slots: 1 } } };
     const roster2: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq2", "s2", "ab1", "ab2", "irStar"], starters: ["fq2", "s2"], reserve: ["irStar"], taxi: [] };
     const env2 = makeEnv([{ league: league2, rosters: [roster2, otherRoster([])], txns: [] }], pm2, sig2);
-    env2.permission = "PROPOSE_ONLY";
+    env2.permission = "LIVE";
     const out2 = await handleCommand("Move Activate IR Star off IR to my bench", newSession(), env2);
     const drafts2 = draftsOf(out2.blocks);
     ok(drafts2.length === 1 && (drafts2[0].params as { dropName: string | null }).dropName === "Unprotected Bench Guy", "activating from IR also skips the Priority-listed bench player and picks the next real candidate", JSON.stringify(drafts2[0]?.params));
@@ -1591,7 +1591,7 @@ async function main() {
       const league = { ...lg("1", "Release Order League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR, release Current Occupant if needed", newSession(), env);
       ok(out.audit.intent === "ir_opps", "the release-order phrasing still recognises as ir_opps, not execute_request", out.audit.intent);
       const drafts = draftsOf(out.blocks);
@@ -1619,7 +1619,7 @@ async function main() {
       const league = { ...lg("1", "Distinct Release League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newA", "newB", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR, release Sole Occupant if needed", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 2 && drafts.filter((d) => d.kind === "DROP").length === 1, "the release name is only used ONCE across both needing rows in the same league, never claimed twice", JSON.stringify(drafts.map((d) => d.kind)));
@@ -1645,7 +1645,7 @@ async function main() {
       const league = { ...lg("1", "Fallback Release League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR, release Not Rostered Anywhere Near if needed", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 0, "none of the release-order names are real occupants here, so nothing is drafted for this league", String(drafts.length));
@@ -1667,7 +1667,7 @@ async function main() {
       const league = { ...lg("1", "Priority Release League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR, release Protected Release Target if needed", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 0, "naming a Priority-protected player in the release order still never drafts a release for him", String(drafts.length));
@@ -1702,7 +1702,7 @@ async function main() {
       const league = { ...lg("1", "Standing Release League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "occupant"], starters: ["fq", "s1"], reserve: ["occupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 2 && drafts[0].kind === "DROP" && drafts[1].kind === "IR_MOVE", "a bare 'move to IR' applies the standing list and drafts a real pair — no extra phrasing needed", JSON.stringify(drafts.map((d) => d.kind)));
@@ -1723,7 +1723,7 @@ async function main() {
       const league = { ...lg("1", "Override Release League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "overrideGuy"], starters: ["fq", "s1"], reserve: ["overrideGuy"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR, release Override List Guy if needed", newSession(), env);
       const drafts = draftsOf(out.blocks);
       ok(drafts.length === 2 && (drafts[0].params as { playerName: string }).playerName === "Override List Guy", "an inline release order on this command wins over the standing list", JSON.stringify(drafts[0]?.params));
@@ -1746,7 +1746,7 @@ async function main() {
       const league = { ...lg("1", "Strict Standing League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "realOccupant"], starters: ["fq", "s1"], reserve: ["realOccupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm, sig);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR", newSession(), env);
       const drafts = draftsOf(out.blocks);
       const decisionsText = decisionsTextOf(out.blocks);
@@ -1766,7 +1766,7 @@ async function main() {
       const league = { ...lg("1", "Empty Standing League", rp), settings: settings1Slot };
       const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "newGuy", "realOccupant"], starters: ["fq", "s1"], reserve: ["realOccupant"], taxi: [] };
       const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
-      env.permission = "PROPOSE_ONLY";
+      env.permission = "LIVE";
       const out = await handleCommand("move all my IR eligible players to IR", newSession(), env);
       ok(/would need to release Empty Real Occupant from IR first/.test(decisionsTextOf(out.blocks)), "with no standing list and no inline clause, behavior is completely unchanged from before this feature existed", decisionsTextOf(out.blocks));
     }

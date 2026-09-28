@@ -27,7 +27,7 @@ import {
   type Progress,
   type Session,
 } from "@/lib/commandCenter/engine";
-import { canPropose, describeProposal, type Permission, type ProposalDraft } from "@/lib/commandCenter/proposals";
+import { describeProposal, type Permission, type ProposalDraft } from "@/lib/commandCenter/proposals";
 import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
 
 // Grouped instead of one long flat row — pick a category, see just its
@@ -67,7 +67,6 @@ interface AuditEntry {
 const stateClass = (s: AvailState) => `ccstate cc-${s.toLowerCase().replace(/_/g, "-")}`;
 
 interface BlockCtx {
-  permission: Permission;
   onSave: (drafts: ProposalDraft[]) => Promise<string>;
 }
 
@@ -236,7 +235,6 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
 
   // Saving drafts is an explicit click (never chat text). It only records proposals; nothing is sent to Sleeper.
   const saveDrafts = async (drafts: ProposalDraft[]): Promise<string> => {
-    if (!canPropose(permission)) return "Read-only mode — switch to Propose only to save proposals.";
     try {
       const res = await fetch("/api/manager/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drafts }) });
       const body = await res.json().catch(() => ({}));
@@ -248,7 +246,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
       return "Couldn't reach the server to save the proposals.";
     }
   };
-  const blockCtx: BlockCtx = { permission, onSave: saveDrafts };
+  const blockCtx: BlockCtx = { onSave: saveDrafts };
 
   const loadHistory = async () => {
     setHistoryErr("");
@@ -761,7 +759,6 @@ function DraftsView({ block, ctx }: { block: Extract<Block, { t: "drafts" }>; ct
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState("");
-  const can = canPropose(ctx.permission);
   const shown = open ? block.drafts : block.drafts.slice(0, 4);
   return (
     <div className="ccpreview">
@@ -778,8 +775,8 @@ function DraftsView({ block, ctx }: { block: Extract<Block, { t: "drafts" }>; ct
       <div className="field" style={{ marginTop: 8, alignItems: "center" }}>
         <button
           className="btn sm"
-          disabled={!can || saving || !!result.startsWith("Saved")}
-          title={can ? "Saves these for review only — nothing is sent to Sleeper" : "Switch to Propose only to save proposals"}
+          disabled={saving || !!result.startsWith("Saved")}
+          title="Saves these for review only — nothing is sent to Sleeper"
           onClick={async () => {
             setSaving(true);
             setResult(await ctx.onSave(block.drafts));

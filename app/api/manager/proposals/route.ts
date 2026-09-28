@@ -34,9 +34,8 @@ export async function GET() {
   });
 }
 
-// Body: { drafts: ProposalDraft[] }. Human-origin drafts always start as
-// "proposed" — never approved. Only a trusted auto rule (origin "auto") may create
-// an already-approved proposal, and it records that in its event log.
+// Body: { drafts: ProposalDraft[] }. Every proposal starts as "proposed" — there
+// is no separate approval step; a person sends it directly from the Proposals tab.
 export async function POST(req: Request) {
   if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
   const body = (await req.json().catch(() => null)) as { drafts?: unknown } | null;
@@ -64,11 +63,8 @@ export async function POST(req: Request) {
     live.add(keys[i]);
     const d = clean[i];
     const now = Date.now();
-    const status: ProposalStatus = d.origin === "auto" ? "approved" : "proposed";
-    const events = [
-      { at: now, status: "proposed", message: d.origin === "auto" ? `Created by trusted auto rule: ${d.command}` : `Proposed from chat: ${d.command}` },
-      ...(status === "approved" ? [{ at: now, status: "approved", message: "Approved by the auto rule that created it (rule only covers IR/PUP → open IR slot)" }] : []),
-    ];
+    const status: ProposalStatus = "proposed";
+    const events = [{ at: now, status: "proposed", message: `Proposed from chat: ${d.command}` }];
     const row = await db.commandProposal.create({
       data: {
         kind: d.kind,

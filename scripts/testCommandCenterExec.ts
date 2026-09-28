@@ -1,23 +1,18 @@
-// Tests for Phases 2–5: proposals, the permission ladder, the executor's gates,
-// live re-validation, verification, and the auto rule. Fakes only — nothing here
+// Tests for proposals, the Planning/Live permission model, the executor's
+// gates, live re-validation, and verification. Fakes only — nothing here
 // touches Sleeper or the database. Run: npx tsx scripts/testCommandCenterExec.ts
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   activateIrDraft,
   addDraft,
-  canAutoExecute,
-  canExecuteApproved,
-  canPropose,
+  canSend,
   canTransition,
   draftKey,
   dropDraft,
   irDraft,
-  normalizeAuto,
   sanitizeDraft,
-  selectAutoIrMoves,
   validateAgainstLive,
-  type Permission,
   type Proposal,
   type ProposalDraft,
 } from "../lib/commandCenter/proposals";
@@ -68,7 +63,7 @@ const snap = (lg: CcLeague, mine: SnapRoster, others: SnapRoster[] = [other([])]
 // ---- draft/proposal builders
 const addD = (lg = league(), over: Partial<Parameters<typeof addDraft>[0]> = {}): ProposalDraft =>
   addDraft({ league: lg, addId: "new", addName: "New Guy", drop: { id: "b1", name: "Bench One" }, waiver: false, faab: true, bid: 5, rationale: ["r"], command: "cmd", ...over });
-const asProposal = (d: ProposalDraft, status: Proposal["status"] = "approved", id = "p1"): Proposal => ({ ...d, id, status, createdAt: NOW, updatedAt: NOW, events: [] });
+const asProposal = (d: ProposalDraft, status: Proposal["status"] = "proposed", id = "p1"): Proposal => ({ ...d, id, status, createdAt: NOW, updatedAt: NOW, events: [] });
 
 // ---- a fake Sleeper: mutable rosters + writers that (optionally) apply their change
 function fake(
@@ -126,7 +121,7 @@ function fake(
     },
   };
   const deps = (over: Partial<ExecDeps> = {}): ExecDeps => ({
-    permission: "EXECUTE_APPROVED",
+    permission: "LIVE",
     mode: "individual",
     token: "tok",
     week: 3,
@@ -145,18 +140,15 @@ function fake(
 }
 
 async function main() {
-  // ============================================================ permission ladder
-  const P: Permission[] = ["READ_ONLY", "PROPOSE_ONLY", "EXECUTE_APPROVED", "AUTO_EXECUTE"];
-  ok(!canPropose("READ_ONLY") && canPropose("PROPOSE_ONLY") && canPropose("AUTO_EXECUTE"), "propose needs Propose-only or higher");
-  ok(!canExecuteApproved("PROPOSE_ONLY") && canExecuteApproved("EXECUTE_APPROVED") && canExecuteApproved("AUTO_EXECUTE"), "execute needs Execute-approved or higher");
-  ok(P.filter(canAutoExecute).join() === "AUTO_EXECUTE", "only AUTO_EXECUTE allows auto");
+  // ============================================================ permission model
+  ok(!canSend("PLANNING") && canSend("LIVE"), "sending needs Live mode");
 
   // ============================================================ state machine
-  ok(canTransition("proposed", "approved") && canTransition("approved", "executing") && canTransition("executing", "executed"), "happy path is legal");
-  ok(!canTransition("proposed", "executing"), "cannot execute an unapproved proposal");
+  ok(canTransition("proposed", "executing") && canTransition("executing", "executed"), "happy path is legal: proposed sends straight to executing, no approval step");
+  ok(canTransition("approved", "executing"), "a legacy 'approved' row (saved before the approval step was removed) can still be sent");
   ok(!canTransition("proposed", "executed") && !canTransition("approved", "executed"), "cannot jump to executed");
-  ok(!canTransition("executed", "approved") && !canTransition("failed", "approved") && !canTransition("rejected", "approved") && !canTransition("expired", "approved"), "terminal states stay terminal");
-  ok(canTransition("approved", "proposed") && canTransition("approved", "rejected"), "can un-approve or reject before running");
+  ok(!canTransition("executed", "proposed") && !canTransition("failed", "proposed") && !canTransition("rejected", "proposed") && !canTransition("expired", "proposed"), "terminal states stay terminal");
+  ok(canTransition("proposed", "rejected") && canTransition("approved", "rejected"), "can reject before running, from either status");
   ok(canTransition("executing", "verify_failed") && canTransition("executing", "submitted"), "execution can end unverified or as a pending claim");
 
   // ============================================================ sanitizing
@@ -202,30 +194,21 @@ async function main() {
   {
     const lg = league();
     const f = fake(lg, roster());
-    const approved = asProposal(addD(lg));
-    ok(gate(approved, f.deps()) === null, "gate opens for an approved proposal in Execute-approved mode with access");
-    for (const perm of ["READ_ONLY", "PROPOSE_ONLY"] as Permission[]) ok(gate(approved, f.deps({ permission: perm })) !== null, `gate closed in ${perm}`);
-    ok(gate(asProposal(addD(lg), "proposed"), f.deps()) !== null, "gate closed for a merely proposed change");
+    const proposed = asProposal(addD(lg));
+    ok(gate(proposed, f.deps()) === null, "gate opens for a proposed change in Live mode with access — no approval step needed");
+    ok(gate(proposed, f.deps({ permission: "PLANNING" })) !== null, "gate closed in Planning mode");
+    const legacyApproved = asProposal(addD(lg), "approved");
+    ok(gate(legacyApproved, f.deps()) === null, "gate also opens for a legacy 'approved' row (saved before the approval step was removed)");
     ok(gate(asProposal(addD(lg), "rejected"), f.deps()) !== null && gate(asProposal(addD(lg), "executed"), f.deps()) !== null, "gate closed for rejected/already-executed");
-    ok(gate(approved, f.deps({ token: null })) !== null, "gate closed without Sleeper access");
-    ok(gate(approved, f.deps({ mode: "bulk", bulkEnabled: false })) !== null && gate(approved, f.deps({ mode: "bulk", bulkEnabled: true })) === null, "bulk needs its own switch");
-    // auto is limited to the one trusted rule
-    const autoIr = asProposal({ ...irDraft({ league: lg, playerId: "b2", playerName: "H", injury: "IR", rationale: [], command: "auto", origin: "auto" }) });
-    const autoDeps = (over: Partial<ExecDeps> = {}) => f.deps({ mode: "auto", permission: "AUTO_EXECUTE", autoRuleEnabled: true, ...over });
-    ok(gate(autoIr, autoDeps()) === null, "auto gate opens for an IR-status auto proposal");
-    ok(gate(autoIr, autoDeps({ permission: "EXECUTE_APPROVED" })) !== null, "auto refused below Auto-execute mode");
-    ok(gate(autoIr, autoDeps({ autoRuleEnabled: false })) !== null, "auto refused when the rule is off");
-    ok(gate({ ...autoIr, origin: "chat" }, autoDeps()) !== null, "auto refuses a chat-origin proposal");
-    ok(gate(asProposal(addD(lg)), autoDeps()) !== null, "auto refuses an add/claim");
-    ok(gate({ ...autoIr, params: { playerId: "b2", playerName: "H", injury: "Out" } }, autoDeps()) !== null, "auto refuses a non-IR/PUP status (Out)");
-    ok(gate({ ...autoIr, kind: "SET_LINEUP" }, autoDeps()) !== null, "auto refuses lineup changes");
+    ok(gate(proposed, f.deps({ token: null })) !== null, "gate closed without Sleeper access");
+    ok(gate(proposed, f.deps({ mode: "bulk", bulkEnabled: false })) !== null && gate(proposed, f.deps({ mode: "bulk", bulkEnabled: true })) === null, "bulk needs its own switch");
   }
 
   // ============================================================ execution: nothing sent unless valid
   {
     const lg = league();
     const blocked = fake(lg, roster());
-    const r1 = await executeProposal(asProposal(addD(lg)), blocked.deps({ permission: "PROPOSE_ONLY" }));
+    const r1 = await executeProposal(asProposal(addD(lg)), blocked.deps({ permission: "PLANNING" }));
     ok(r1.sent === false && blocked.calls.add + blocked.calls.claim === 0 && blocked.calls.reads === 0, "blocked by mode → no read, no write");
 
     const stale = fake(lg, roster());
@@ -397,37 +380,6 @@ async function main() {
     ok(releaseResult.status === "executed", "the release runs first and succeeds", releaseResult.message);
     const moveResult = await executeProposal(asProposal(move, "approved", "p-move-2"), pair.deps({ injuryOf }));
     ok(moveResult.status === "executed" && pair.mine.reserve.includes("newIrGuy"), "the IR move now succeeds — the slot the release freed is really being used, not assumed", moveResult.message);
-  }
-
-  // ============================================================ auto rule selection
-  {
-    const lgA = league("1");
-    const lgB = league("2", { reserve_slots: 0 });
-    const lgC = league("3");
-    const inj: Record<string, string> = { b1: "IR", b2: "PUP", b3: "Out", b4: "Doubtful", b5: "Questionable" };
-    const snaps = [
-      snap(lgA, roster()),
-      { ...snap(lgB, roster()), league: lgB },
-      { ...snap(lgC, roster({ reserve: ["x"] })), league: lgC },
-      { ...snap(league("4"), roster()), status: "FAILED" as const, rosters: null },
-    ];
-    const drafts = selectAutoIrMoves(snaps, (id) => inj[id] ?? null, (id) => id, 10);
-    ok(drafts.length === 1 && drafts[0].leagueId === "1", "one open IR slot → exactly one move, only in the league that has room", drafts.map((d) => d.leagueId).join());
-    ok(drafts.every((d) => d.origin === "auto" && d.kind === "IR_MOVE"), "auto drafts are IR moves marked auto");
-    ok(!drafts.some((d) => ["b3", "b4", "b5"].includes((d.params as { playerId: string }).playerId)), "never Out / Doubtful / Questionable");
-    ok(selectAutoIrMoves(snaps, (id) => inj[id] ?? null, (id) => id, 0).length === 0, "budget of 0 → nothing");
-    const two = selectAutoIrMoves([snap(league("1", { reserve_slots: 2 }), roster())], (id) => inj[id] ?? null, (id) => id, 10);
-    ok(two.length === 2, "two open slots → two moves");
-    ok(selectAutoIrMoves([snap(league("1", { reserve_slots: 2 }), roster())], (id) => inj[id] ?? null, (id) => id, 1).length === 1, "per-run budget is respected");
-  }
-
-  // ============================================================ auto config bounds
-  {
-    const n = normalizeAuto({ enabled: true, irMove: true, maxPerRun: 9999, maxPerDay: -5, intervalMin: 1 });
-    ok(n.enabled && n.irMove && n.maxPerRun === 25 && n.maxPerDay === 1 && n.intervalMin === 5, "auto limits are clamped", JSON.stringify(n));
-    const off = normalizeAuto("garbage");
-    ok(!off.enabled && !off.irMove, "garbage config → everything off");
-    ok(!normalizeAuto({ enabled: "yes", irMove: 1 }).enabled, "only literal true enables anything");
   }
 
   // ============================================================ static separation

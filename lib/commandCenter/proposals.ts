@@ -1,9 +1,9 @@
 // Proposals: the structured, reviewable form of "a change Fantis could make".
 // PURE — no fetching, no Sleeper calls, no writes. The read-only engine produces
-// drafts; a person approves them; a separate executor (lib/commandCenterExec.ts,
-// the only place that may call the Sleeper write layer) carries out approved
-// ones. This file also owns the permission ladder and the status state machine
-// so the rules live in one tested place.
+// drafts; a separate executor (lib/commandCenterExec.ts, the only place that may
+// call the Sleeper write layer) carries out the ones a person sends. This file
+// also owns the two-state permission model (Planning/Live) and the status state
+// machine so the rules live in one tested place.
 import { irAllowed, irSlots } from "../bulkPlan";
 import { activeCount, rosterPositions } from "./classify";
 import type { CcLeague, LeagueSnapshot, Permission, SnapRoster } from "./types";
@@ -12,27 +12,19 @@ import type { CcLeague, LeagueSnapshot, Permission, SnapRoster } from "./types";
 
 export type { Permission };
 
-export const PERMISSION_ORDER: Permission[] = ["READ_ONLY", "PROPOSE_ONLY", "EXECUTE_APPROVED", "AUTO_EXECUTE"];
+export const PERMISSION_ORDER: Permission[] = ["PLANNING", "LIVE"];
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
-  READ_ONLY: "Read-only",
-  PROPOSE_ONLY: "Propose only",
-  EXECUTE_APPROVED: "Execute approved",
-  AUTO_EXECUTE: "Auto-execute (trusted rules)",
+  PLANNING: "Planning",
+  LIVE: "Live",
 };
 
 export const PERMISSION_BLURB: Record<Permission, string> = {
-  READ_ONLY: "Scan and recommend. Nothing can be saved or changed.",
-  PROPOSE_ONLY: "Also save proposals for review. Nothing is sent to Sleeper.",
-  EXECUTE_APPROVED: "Also send a proposal to Sleeper, but only after you approve that specific one and confirm it.",
-  AUTO_EXECUTE: "Also run a few narrow rules you switch on yourself while this page is open. Everything is logged and verified.",
+  PLANNING: "Scan, chat and save proposals for review. Nothing is ever sent to Sleeper.",
+  LIVE: "Proposals can be sent to Sleeper — one at a time, or as a reviewed batch. Each shows exactly what it will do; you confirm once and it's re-checked, sent, then verified.",
 };
 
-const rank = (p: Permission) => PERMISSION_ORDER.indexOf(p);
-export const atLeast = (p: Permission, min: Permission) => rank(p) >= rank(min);
-export const canPropose = (p: Permission) => atLeast(p, "PROPOSE_ONLY");
-export const canExecuteApproved = (p: Permission) => atLeast(p, "EXECUTE_APPROVED");
-export const canAutoExecute = (p: Permission) => p === "AUTO_EXECUTE";
+export const canSend = (p: Permission) => p === "LIVE";
 export const isPermission = (v: unknown): v is Permission => typeof v === "string" && (PERMISSION_ORDER as string[]).includes(v);
 
 // ---------------------------------------------------------------- proposals
@@ -118,10 +110,12 @@ export interface Proposal extends ProposalDraft {
   events: ProposalEvent[];
 }
 
-// Legal moves only. In particular nothing but "approved" can become "executing",
-// and "executed"/"submitted" can only be reached from "executing".
+// Legal moves only. There is no separate approval step: a person sends a
+// proposal straight from "proposed" to "executing". "approved" stays legal
+// too, purely so a proposal saved before that step was removed still works.
+// "executed"/"submitted" can only be reached from "executing".
 const NEXT: Record<ProposalStatus, ProposalStatus[]> = {
-  proposed: ["approved", "rejected", "expired"],
+  proposed: ["rejected", "expired", "executing"],
   approved: ["proposed", "rejected", "expired", "executing"],
   executing: ["executed", "submitted", "failed", "verify_failed", "expired"],
   executed: [],
@@ -335,72 +329,6 @@ export function validateAgainstLive(p: Pick<ProposalDraft, "kind" | "params" | "
       return { ok: true };
     }
   }
-}
-
-// -------------------------------------------------- auto-execution (Phase 5)
-
-// A trusted rule is deliberately tiny and reversible. Today there is exactly one:
-// move a player Sleeper lists as IR or PUP to an OPEN IR slot in a league whose own
-// rules allow it. Never Out/Doubtful/Questionable, never anything that needs a
-// drop, never a lineup or waiver change.
-export interface AutoConfig {
-  enabled: boolean; // master switch for the runner
-  irMove: boolean; // the one rule
-  maxPerRun: number;
-  maxPerDay: number;
-  intervalMin: number;
-}
-export const DEFAULT_AUTO: AutoConfig = { enabled: false, irMove: false, maxPerRun: 10, maxPerDay: 30, intervalMin: 15 };
-
-export function normalizeAuto(v: unknown): AutoConfig {
-  const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
-  const n = (x: unknown, d: number, lo: number, hi: number) => (typeof x === "number" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, Math.trunc(x))) : d);
-  return {
-    enabled: o.enabled === true,
-    irMove: o.irMove === true,
-    maxPerRun: n(o.maxPerRun, DEFAULT_AUTO.maxPerRun, 1, 25),
-    maxPerDay: n(o.maxPerDay, DEFAULT_AUTO.maxPerDay, 1, 100),
-    intervalMin: n(o.intervalMin, DEFAULT_AUTO.intervalMin, 5, 240),
-  };
-}
-
-const AUTO_IR_STATUSES = new Set(["IR", "PUP"]);
-
-export function selectAutoIrMoves(
-  snapshots: LeagueSnapshot[],
-  injuryOf: (playerId: string) => string | null,
-  nameOf: (playerId: string) => string,
-  budget: number
-): ProposalDraft[] {
-  const out: ProposalDraft[] = [];
-  for (const snap of snapshots) {
-    if (out.length >= budget) break;
-    if (snap.status === "FAILED" || !snap.rosters) continue;
-    const me = mine(snap);
-    if (!me) continue;
-    const settings = snap.league.settings;
-    let open = irSlots(settings) - me.reserve.length;
-    if (open <= 0) continue;
-    for (const id of me.players) {
-      if (open <= 0 || out.length >= budget) break;
-      if (me.reserve.includes(id)) continue;
-      const inj = injuryOf(id);
-      if (!inj || !AUTO_IR_STATUSES.has(inj) || !irAllowed(settings, inj)) continue;
-      open--;
-      out.push(
-        irDraft({
-          league: snap.league,
-          playerId: id,
-          playerName: nameOf(id),
-          injury: inj,
-          rationale: [`Sleeper lists ${nameOf(id)} as ${inj}`, "This league has an open IR slot and allows it", "Auto rule: IR/PUP → open IR slot (no drop, no lineup change)"],
-          command: "auto: IR/PUP → open IR slot",
-          origin: "auto",
-        })
-      );
-    }
-  }
-  return out;
 }
 
 // ------------------------------------------------------------- sanitizing

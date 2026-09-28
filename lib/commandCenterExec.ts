@@ -2,9 +2,9 @@
 // here goes through the existing, schema-checked write layer (lib/sleeperWrite.ts,
 // injected as `writers` so it can be tested with fakes), and every path is gated:
 //
-//   1. the mode must allow it (Execute-approved / Auto-execute),
-//   2. the proposal must be "approved" (a person clicked Approve, or — for the one
-//      trusted auto rule — the rule that created it),
+//   1. the owner must have switched the panel to Live mode,
+//   2. the proposal must not already be rejected/expired/finished — a person
+//      sends it directly from "proposed" (there is no separate approval step),
 //   3. Sleeper access must be connected,
 //   4. the proposal is RE-VALIDATED against a fresh live read; if the world changed
 //      it is marked "expired" and nothing is sent,
@@ -14,9 +14,7 @@
 //
 // The chat engine (lib/commandCenter/**) cannot import this file or the write layer.
 import {
-  atLeast,
-  canAutoExecute,
-  canExecuteApproved,
+  canSend,
   validateAgainstLive,
   type ActivateIrParams,
   type AddParams,
@@ -41,13 +39,12 @@ export interface ExecWriters {
   ): Promise<{ trades: unknown[]; waivers: { status: string; adds?: Record<string, number> | null; roster_ids?: number[] | null }[] }>;
 }
 
-export type ExecMode = "individual" | "bulk" | "auto";
+export type ExecMode = "individual" | "bulk";
 
 export interface ExecDeps {
   permission: Permission;
   mode: ExecMode;
-  bulkEnabled?: boolean; // Phase 4 switch, off unless the owner turned it on
-  autoRuleEnabled?: boolean; // Phase 5 rule switch
+  bulkEnabled?: boolean; // bulk's own switch, off unless the owner turned it on
   token: string | null;
   week: number; // current week — needed to clear a starter slot before an IR move
   league: (leagueId: string) => CcLeague | null;
@@ -70,20 +67,11 @@ const FINISHED_WAIVER = new Set(["complete", "completed", "failed", "cancelled",
 // One at a time per proposal: a double click can never send it twice.
 const inFlight = new Set<string>();
 
-// Auto rule scope, re-checked at execution time (not trusted from the row alone).
-const AUTO_IR = new Set(["IR", "PUP"]);
-
 export function gate(p: Proposal, d: ExecDeps): string | null {
-  if (d.mode === "auto") {
-    if (!canAutoExecute(d.permission)) return "Auto-execute mode is not enabled";
-    if (!d.autoRuleEnabled) return "the auto rule is switched off";
-    if (p.origin !== "auto" || p.kind !== "IR_MOVE") return "only the trusted IR/PUP auto rule can run automatically";
-    if (!AUTO_IR.has((p.params as IrParams).injury)) return "the auto rule only covers players listed IR or PUP";
-  } else if (!canExecuteApproved(d.permission)) {
-    return "the current mode doesn't allow executing — switch to Execute approved";
-  }
-  if (d.mode === "bulk" && (!d.bulkEnabled || !atLeast(d.permission, "EXECUTE_APPROVED"))) return "bulk execution is switched off";
-  if (p.status !== "approved") return `it hasn't been approved (status: ${p.status})`;
+  if (!canSend(d.permission)) return "Planning mode is on — switch to Live to send anything";
+  if (d.mode === "bulk" && !d.bulkEnabled) return "bulk execution is switched off";
+  // "approved" is accepted too, for any proposal saved before the approval step was removed.
+  if (p.status !== "proposed" && p.status !== "approved") return `it can't be sent (status: ${p.status})`;
   if (!d.token) return "Sleeper access isn't connected";
   return null;
 }

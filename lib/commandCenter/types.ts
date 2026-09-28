@@ -4,15 +4,14 @@
 // write layer (lib/sleeperWrite.ts) or send any request that changes Sleeper
 // data; scripts/testCommandCenter.ts enforces that statically.
 
-export type Permission = "READ_ONLY" | "PROPOSE_ONLY" | "EXECUTE_APPROVED" | "AUTO_EXECUTE";
+export type Permission = "PLANNING" | "LIVE";
 
-// The one switch for the whole feature. Later phases move this up the ladder
-// (READ_ONLY → PROPOSE_ONLY → EXECUTE_APPROVED); AUTO_EXECUTE is deliberately
-// not wired to anything.
-export const CURRENT_PERMISSION: Permission = "READ_ONLY";
+// The one switch for the whole feature. Planning (default): scan, chat and
+// save proposals — nothing is ever sent to Sleeper. Live: proposals can be
+// sent, one at a time or as a reviewed batch, each after one confirmation.
+export const CURRENT_PERMISSION: Permission = "PLANNING";
 
-export const canExecute = (p: Permission = CURRENT_PERMISSION) =>
-  p === "EXECUTE_APPROVED" || p === "AUTO_EXECUTE";
+export const canExecute = (p: Permission = CURRENT_PERMISSION) => p === "LIVE";
 
 // Every classified state stays distinct — never collapsed together.
 export type AvailState =

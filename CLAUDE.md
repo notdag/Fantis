@@ -1344,11 +1344,90 @@ unchanged. Verified live: all 6 category pills render correctly (confirmed
 via the real page's `.chip-filter` list) alongside the existing standings/
 exposure filter chips elsewhere on the page.
 
-**Still pending, deliberately not started yet**: collapsing the mode ladder
-(Read-only/Propose-only/Execute-approved/Auto-execute) down to a two-state
-planning/live model with a single confirm-and-send per command, and
-dropping Phase 5's unattended auto-IR-rule entirely (the owner chose "every
-execution needs a 1-click confirm, no more unattended sends" over keeping
-it as an opt-in). This is a real rearchitecture of the safety-critical
-execute path documented above under "Command Center AI — Phases 2–5" —
-scoped and confirmed with the owner, not yet built.
+### Command Center: collapsed the 4-mode ladder to Planning/Live, dropped Phase 5's auto rule (2026-09; requested explicitly by the owner)
+
+The mode ladder (Read-only → Propose-only → Execute-approved → Auto-execute)
+was itself the friction the owner was complaining about: "the command center
+should be reformatted to execute only, after 1 confirmation of what exactly
+will be done." Scoped via two rounds of `AskUserQuestion` before touching
+code: (1) collapse the ladder entirely to two states, planning (default,
+nothing sends) and live (flip it on once) — in live mode a command shows
+exactly what it'll do and one Send button does it, no separate approve step,
+no per-item checkbox screen; (2) bulk execution stays exactly as it was —
+review the list once, then send; (3) drop Phase 5's unattended auto-IR rule
+entirely — every execution now needs the same 1-click confirm, no more
+timer-driven sends while the page is merely open.
+
+- **`Permission` is now `"PLANNING" | "LIVE"`** (`lib/commandCenter/types.ts`,
+  re-exported from `lib/commandCenter/proposals.ts`). `PERMISSION_ORDER`/
+  `_LABEL`/`_BLURB` shrank to the two values; `canPropose`/`canExecuteApproved`/
+  `canAutoExecute`/`atLeast` were replaced by one `canSend(p) => p === "LIVE"`.
+  `CURRENT_PERMISSION` (the static, always-inert value the read-only engine's
+  own architecture test checks) is now `"PLANNING"`.
+- **Saving a proposal from chat no longer depends on the mode at all** — it's
+  a DB write, not a Sleeper write, so it was always safe; the old "Read-only
+  mode — switch to Propose only to save" refusal is gone from both
+  `CommandCenterAI.tsx` (the Save button) and `engine.ts`'s `draftsBlock`/
+  `execute_request` text, which now say the same thing regardless of mode.
+  Only *sending* a saved proposal to Sleeper still requires Live.
+- **No more separate approval step.** `ProposalsPanel.tsx`'s per-proposal UI
+  used to be Approve → Execute… → a confirm box with its own "I've reviewed
+  this" checkbox → Yes, send (three clicks across two screens). It's now one
+  "Send to Sleeper" button on the proposal itself; the proposal's full
+  description and rationale are always visible (previously the reasons were
+  behind a collapsed "Why" toggle) so the button's context IS the "shows
+  exactly what it will do" — no modal needed. The **mode switch itself**
+  still needs one explicit confirmation (the "I understand this can change my
+  real Sleeper leagues" checkbox in `PermissionBar.tsx`, now shown once when
+  switching Planning → Live), which is where that safety step now lives
+  instead of being repeated per proposal.
+- **State machine stayed almost untouched, on purpose** (`lib/commandCenter/
+  proposals.ts`): `ProposalStatus` still includes `"approved"` and
+  `canTransition`'s `NEXT` map still allows `approved → executing`, purely so
+  any proposal a real user had already saved/approved under the old UI before
+  this shipped keeps working — the executor's `gate()` now accepts sending
+  from *either* `"proposed"` or `"approved"`. The one real state-machine
+  change: `NEXT.proposed` now also allows `"executing"` directly (it only
+  allowed `approved/rejected/expired` before), since a person now sends
+  straight from "proposed" with no approval step in between. Caught this by
+  writing the test first: the server route (`/api/manager/proposals/[id]`)
+  calls `canTransition` and would have silently 409'd every real send attempt
+  without this change — never manually exercised the money path, would have
+  been an ugly surprise on the first real Live-mode send.
+- **Phase 5 (the trusted IR/PUP auto rule) is fully removed**, not just
+  hidden: `AutoConfig`, `DEFAULT_AUTO`, `normalizeAuto`, `selectAutoIrMoves`
+  (`proposals.ts`), the `autoStore`/`autoDayStore`/`AutoDay` localStorage
+  stores (`ccStore.ts`), the entire "Trusted auto rule" panel and its
+  interval timer (`ProposalsPanel.tsx`), and `ExecMode`'s `"auto"` value +
+  `autoRuleEnabled` gate (`commandCenterExec.ts`) are all gone. There is no
+  code path left anywhere that can send a Sleeper write without a person
+  clicking Send in that moment.
+- `ProposalsPanel.tsx`'s two tabs are now "To send" (status `proposed` or
+  `approved`, plus `executing`) and "History" (everything terminal) — the
+  old three-tab Review/Approved/History split doesn't apply once there's no
+  separate approved state to browse. Bulk selection now pulls straight from
+  the sendable list in "To send" instead of a dedicated Approved tab.
+- Old `CommandProposal` rows and `CommandAudit.permission` values from the
+  4-mode era are handled, not migrated: `isPermission()` rejects the retired
+  values and callers fall back to `"PLANNING"`, and a stray `origin: "auto"`
+  row (from the now-removed Phase 5) still displays fine, just labelled as
+  historical.
+- Tests: `scripts/testCommandCenter.ts` (still 391 — permission-model checks
+  updated in place, no new count since this was a UI/architecture
+  simplification, not new player-facing logic) and
+  `scripts/testCommandCenterExec.ts` (84, down from 103 — the ~19 Phase 5
+  auto-rule assertions were deleted along with the feature, not replaced).
+  `tsc`/`eslint`/`next build` all clean.
+- Verified live against the real 246-league account (no Sleeper token
+  connected in this browser, so nothing could actually send regardless): the
+  Planning/Live buttons and blurb render correctly; clicking Live shows the
+  one-checkbox confirm with the "Sleeper access isn't connected" warning;
+  Cancel returns to Planning; a real chat scan ("Find Malachi Fields
+  everywhere") drafted 47 real ADD proposals and saving them worked in
+  Planning mode exactly as designed; the Proposals tab listed all 47 as
+  "Ready to send" with a single disabled "Send to Sleeper" button each
+  (confirmed disabled via `button.disabled` in the page, not just visually)
+  and "Switch to Live to send this."; History tab correctly showed 5 older
+  rejected rows from an earlier smoke test. Cleaned up all 47 verification
+  proposals afterward (rejected via the same PATCH endpoint the UI uses) so
+  nothing was left cluttering the owner's real Proposals tab.

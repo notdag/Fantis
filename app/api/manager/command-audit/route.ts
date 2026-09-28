@@ -40,7 +40,7 @@ export async function POST(req: Request) {
       command: b.command.slice(0, 500),
       intent: b.intent.slice(0, 40),
       // The mode the owner had selected when the command ran (chat itself never writes in any mode).
-      permission: isPermission(b.permission) ? b.permission : "READ_ONLY",
+      permission: isPermission(b.permission) ? b.permission : "PLANNING",
       players,
       leaguesTotal: int(b.leaguesTotal),
       leaguesScanned: int(b.leaguesScanned),

@@ -482,7 +482,7 @@ model CommandAudit {
   createdAt         DateTime @default(now())
   command           String
   intent            String
-  permission        String // READ_ONLY in Phase 1
+  permission        String // PLANNING | LIVE (older rows may carry a retired 4-mode ladder value)
   players           Json // [{id, name}]
   leaguesTotal      Int
   leaguesScanned    Int
@@ -498,12 +498,14 @@ model CommandAudit {
   @@index([createdAt])
 }
 
-// Command Center AI proposals (Phase 2+): a reviewable change Fantis could make
-// to one league. Created by the read-only engine's drafts (chat) or by a trusted
-// auto rule; moved forward ONLY by explicit user actions in the UI, with legal
-// transitions enforced server-side (lib/commandCenter/proposals.ts canTransition).
-// Execution itself happens in the browser (the Sleeper login token never reaches
-// the server); this table records what was proposed, approved and what happened.
+// Command Center AI proposals: a reviewable change Fantis could make to one
+// league, created by the read-only engine's drafts (chat). Moved forward ONLY
+// by explicit user actions in the UI (Planning/Live mode, lib/commandCenter/
+// proposals.ts), with legal transitions enforced server-side (canTransition).
+// Execution itself happens in the browser (the Sleeper login token never
+// reaches the server); this table records what was proposed and what happened.
+// "approved" is a legacy status from before the separate approval step was
+// removed — old rows may still carry it and are treated like "proposed".
 model CommandProposal {
   id         String   @id @default(cuid())
   createdAt  DateTime @default(now())
@@ -514,7 +516,7 @@ model CommandProposal {
   rosterId   Int
   params     Json
   rationale  Json
-  origin     String // chat | auto
+  origin     String // chat (always, now) | auto (legacy — the Phase 5 auto rule was removed)
   command    String
   status     String // proposed | approved | rejected | expired | executing | executed | submitted | failed | verify_failed
   dedupeKey  String

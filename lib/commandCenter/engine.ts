@@ -13,7 +13,7 @@ import { buildStartingSlots } from "../rosterSlots";
 import { optimizeLineup } from "../lineupOptimizer";
 import { scoringKey } from "../scoringKey";
 import { BYE_WEEKS_2026 } from "../byeWeeks";
-import { activateIrDraft, addDraft, canPropose, dropDraft, irDraft, type ActivateIrParams, type IrParams, type ProposalDraft } from "./proposals";
+import { activateIrDraft, addDraft, dropDraft, irDraft, type ActivateIrParams, type IrParams, type ProposalDraft } from "./proposals";
 import { suggestBid, type FaabStats } from "../faabHistory";
 import { cardOf, describeCard, normName, resolveName } from "./resolve";
 import type { ReadOnlyTools } from "./tools";
@@ -198,7 +198,7 @@ export interface EngineEnv {
   curatedIds: string[] | null;
   rank: DropRank; // [fantisValue, fcValue], higher = keep
   projections?: ProjectionMap | null; // Sleeper's single-week point projections for `week`
-  permission?: Permission; // the owner's chosen mode; defaults to READ_ONLY. The engine never executes in any mode.
+  permission?: Permission; // the owner's chosen mode; defaults to PLANNING. The engine never executes in any mode.
   kickoffs?: () => Promise<Record<string, string> | null>; // team → kickoff ISO, to freeze started games in lineup proposals
   getGameStates?: () => Promise<Record<string, GameState> | null>; // live NFL game status (ESPN), fetched fresh per question
   week?: number | null;
@@ -406,8 +406,8 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
   };
 
   // The engine has NO write path in any permission mode. Execution lives in
-  // lib/commandCenterExec.ts and only ever runs a proposal a person approved in the UI.
-  const permission: Permission = env.permission ?? "READ_ONLY";
+  // lib/commandCenterExec.ts and only ever runs a proposal a person sent from the UI.
+  const permission: Permission = env.permission ?? "PLANNING";
   void canExecute;
 
   // ---- resolve player names for intents that carry them
@@ -515,7 +515,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       } else {
         const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
         const d = addDraftsFromScan(env, view, drops, text, faabStats);
-        const b = draftsBlock(env, permission, d.drafts, d.skipped);
+        const b = draftsBlock(env, d.drafts, d.skipped);
         if (b) blocks.push(b);
       }
     }
@@ -613,7 +613,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
     if (noMatch.length > 0) {
       blocks.push({ t: "decisions", title: "No match for your drop order", rows: noMatch.map((s) => ({ leagueId: s.leagueId, leagueName: s.leagueName, items: ["None of your listed drop players are eligible on this roster"] })), truncated: 0 });
     }
-    const b = draftsBlock(env, permission, drafts, noMatch.length);
+    const b = draftsBlock(env, drafts, noMatch.length);
     if (b) blocks.push(b);
     recs.push(`${drafts.length} leagues matched (drop order + open slots)`);
   };
@@ -691,7 +691,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         blocks.push(previewFor(env, view, session.drops));
         const faabStats = view.some((r) => r.faab) ? await env.tools.get_faab_stats() : null;
         const d = addDraftsFromScan(env, view, session.drops, text, faabStats);
-        const b = draftsBlock(env, permission, d.drafts, d.skipped);
+        const b = draftsBlock(env, d.drafts, d.skipped);
         if (b) blocks.push(b);
       }
       break;
@@ -977,7 +977,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const slots = Math.max(0, rp.length - (activeBefore - moves));
         if (slots > 0) openAfter.push({ leagueId, leagueName: lgPlan.leagueName, slots });
       }
-      const irb = draftsBlock(env, permission, irDrafts);
+      const irb = draftsBlock(env, irDrafts);
       if (irb) blocks.push(irb);
       if (openAfter.length > 0) {
         blocks.push({
@@ -1247,7 +1247,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           : "This only moves them to their bench — it doesn't set anyone as a starter (ask me to start any of them separately once active).";
       blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} ${trailer} Nothing has been changed.` });
       blocks.push({ t: "decisions", title: "IR → bench", rows: [...decisionsByLeague.values()], truncated: 0 });
-      const b = draftsBlock(env, permission, drafts, [...skippedByPlayer.values()].reduce((a, c) => a + c, 0));
+      const b = draftsBlock(env, drafts, [...skippedByPlayer.values()].reduce((a, c) => a + c, 0));
       if (b) blocks.push(b);
       recs.push(`activate ${label} from IR in ${drafts.length} of ${totalRows} leagues`);
       break;
@@ -1357,7 +1357,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       }
       blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.` });
       blocks.push({ t: "decisions", title: "Move to IR", rows: [...decisionsByLeague.values()], truncated: 0 });
-      const irb = draftsBlock(env, permission, drafts, [...fullByPlayer.values()].reduce((a, c) => a + c, 0));
+      const irb = draftsBlock(env, drafts, [...fullByPlayer.values()].reduce((a, c) => a + c, 0));
       if (irb) blocks.push(irb);
       recs.push(`move ${label} to IR in ${drafts.length} of ${totalCandidates} leagues`);
       break;
@@ -1486,7 +1486,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       }
       blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.`.trim() });
       if (drafts.length) {
-        const b = draftsBlock(env, permission, drafts);
+        const b = draftsBlock(env, drafts);
         if (b) blocks.push(b);
       }
       recs.push(`start ${label}: ${drafts.length} leagues affected`);
@@ -1633,7 +1633,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         rows: found.slice(0, ROW_CAP).map((f) => ({ leagueId: f.draft.leagueId, leagueName: f.league, items: (f.draft.params as { changes: { slot: string; outName: string | null; inName: string | null }[] }).changes.map((c) => `${c.slot}: ${c.inName ?? "empty"} for ${c.outName ?? "empty"}`).concat([f.reslotOnly ? "slot fix — no point change" : `+${f.gain.toFixed(1)} projected`]) })),
         truncated: Math.max(0, found.length - ROW_CAP),
       });
-      const lb = draftsBlock(env, permission, found.map((f) => f.draft));
+      const lb = draftsBlock(env, found.map((f) => f.draft));
       if (lb) blocks.push(lb);
       recs.push(`${found.length} leagues with a better lineup`);
       break;
@@ -1727,24 +1727,17 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           (priorityCount === 0 ? " Add players to your Priority list (Chat tab → My players) to include them in a sweep." : "") +
           (addResult.skipped > 0 ? ` ${addResult.skipped} priority-league combinations were left out because the drop requirement couldn't be determined.` : ""),
       });
-      const b = draftsBlock(env, permission, allDrafts);
+      const b = draftsBlock(env, allDrafts);
       if (b) blocks.push(b);
       recs.push(`weekly sweep: ${irDrafts.length} IR moves, ${addResult.drafts.length} adds/claims`);
       break;
     }
 
     case "execute_request": {
-      if (canPropose(permission)) {
-        blocks.push({
-          t: "text",
-          tone: "warn",
-          text: `I don't ${intent.verb} anything from chat, in any mode. What I can do is turn it into a proposal for you to review: below are the changes I'd propose. Nothing has been sent to Sleeper — save them, then approve and execute each one yourself from the Proposals tab.`,
-        });
-      } else
       blocks.push({
         t: "text",
-        tone: "bad",
-        text: `I can't ${intent.verb} anything — Command Center is in READ-ONLY mode. I never add, drop, claim, move IR, set lineups or change anything on Sleeper from chat, and no message can switch modes. Nothing has been changed. Below is only a preview of what an approved action could look like.`,
+        tone: "warn",
+        text: `I don't ${intent.verb} anything from chat, in any mode. What I can do is turn it into a proposal for you to review: below are the changes I'd propose. Nothing has been sent to Sleeper — save them, then send each one yourself from the Proposals tab (switch to Live mode first).`,
       });
       if (intent.mentions.length > 0) {
         if (hasFilter(intent.filter)) {
@@ -1922,15 +1915,13 @@ const bidMin = numSetting(league.settings, "waiver_bid_min");
   return { drafts, skipped };
 }
 
-function draftsBlock(env: EngineEnv, permission: Permission, drafts: ProposalDraft[], skipped = 0): Block | null {
+function draftsBlock(env: EngineEnv, drafts: ProposalDraft[], skipped = 0): Block | null {
   if (drafts.length === 0) return null;
   const extra = skipped > 0 ? ` ${skipped} leagues were left out because the drop requirement or a droppable player couldn't be determined.` : "";
   return {
     t: "drafts",
     drafts,
-    note: canPropose(permission)
-      ? `${drafts.length} change${drafts.length === 1 ? "" : "s"} drafted as proposals. Nothing has been saved or sent to Sleeper — save the ones you want, then approve and execute each from the Proposals tab.${extra}`
-      : `${drafts.length} change${drafts.length === 1 ? "" : "s"} could be proposed. You're in Read-only mode, so they can't be saved — switch to Propose only (top of this panel) to save them for review.${extra}`,
+    note: `${drafts.length} change${drafts.length === 1 ? "" : "s"} drafted as proposals. Nothing has been saved or sent to Sleeper — save the ones you want, then send them from the Proposals tab (switch to Live mode to send).${extra}`,
   };
 }
 
