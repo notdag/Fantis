@@ -121,8 +121,20 @@ model RankedPlayer {
 // slot. Saved server-side so it follows the owner across browsers/devices.
 model PlayerPreference {
   playerId  String   @id // Sleeper player_id
-  kind      String // priority | avoid | ir_release
-  rank      Int      @default(0) // order within priority/ir_release; unused for avoid
+  kind      String // priority | avoid | ir_release | never_start
+  rank      Int      @default(0) // order within priority/ir_release; unused for avoid/never_start
+  updatedAt DateTime @updatedAt
+}
+
+// Free-text memory the owner can attach to any player — "he's dealing with
+// a nagging injury", "never trust his Thursday snap counts", etc. Purely
+// informational context surfaced back in chat rationale (never parsed or
+// acted on automatically — that's what the categorical PlayerPreference
+// kinds above are for, e.g. never_start). Independent of PlayerPreference:
+// a player can have both a note and a priority/avoid/etc. kind at once.
+model PlayerNote {
+  playerId  String   @id // Sleeper player_id
+  note      String
   updatedAt DateTime @updatedAt
 }
 

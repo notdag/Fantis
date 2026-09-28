@@ -306,7 +306,7 @@ export default function LineupManager({
             Optimize
           </button>
           <button className={`chip-filter ${tab === "players" ? "on" : ""}`} onClick={() => go("players")}>
-            My players{prefs.priority.length + prefs.avoid.length > 0 ? ` (${prefs.priority.length + prefs.avoid.length})` : ""}
+            My players{prefs.priority.length + prefs.avoid.length + prefs.neverStart.length > 0 ? ` (${prefs.priority.length + prefs.avoid.length + prefs.neverStart.length})` : ""}
           </button>
           <button className={`chip-filter ${tab === "ir" ? "on" : ""}`} onClick={() => go("ir")}>
             Mass IR

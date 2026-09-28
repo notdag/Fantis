@@ -11,6 +11,7 @@ import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useTradeValues } from "@/lib/useTradeValues";
 import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
+import { loadNotes, type PlayerNotes } from "@/lib/playerNotes";
 import { useCuratedRanks } from "./useCuratedRanks";
 import { createReadOnlyTools, type RawMatchup, type WeekRecordRow } from "@/lib/commandCenter/tools";
 import type { FaabStats } from "@/lib/faabHistory";
@@ -29,19 +30,16 @@ import {
 import { canPropose, describeProposal, type Permission, type ProposalDraft } from "@/lib/commandCenter/proposals";
 import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSignals } from "@/lib/commandCenter/types";
 
-const EXAMPLES = [
-  "What was my overall record for week 2?",
-  "Move Michael Pittman off IR to my bench",
-  "Make sure Drake London starts this week",
-  "Run my weekly sweep",
-  "Find Antonio Williams everywhere",
-  "Find my best waiver adds",
-  "How many leagues am I winning this week?",
-  "Where do I stand for the playoffs?",
-  "Fix my lineups",
-  "Show me my weakest players",
-  "Find leagues where I have an injured player who could go on IR",
-  "Show me every league where I have a roster decision to make",
+// Grouped instead of one long flat row — pick a category, see just its
+// examples. Requested explicitly by the owner ("restructure the questions,
+// I don't like how it's all listed").
+const EXAMPLE_GROUPS: { label: string; examples: string[] }[] = [
+  { label: "Lineups", examples: ["Fix my lineups", "Make sure Drake London starts this week"] },
+  { label: "Waivers & Adds", examples: ["Find my best waiver adds", "Find Antonio Williams everywhere"] },
+  { label: "IR", examples: ["Move Michael Pittman off IR to my bench", "Find leagues where I have an injured player who could go on IR"] },
+  { label: "Standings & Record", examples: ["Where do I stand for the playoffs?", "How many leagues am I winning this week?", "What was my overall record for week 2?"] },
+  { label: "Roster health", examples: ["Show me my weakest players", "Show me every league where I have a roster decision to make"] },
+  { label: "Weekly sweep", examples: ["Run my weekly sweep"] },
 ];
 
 interface Turn {
@@ -81,6 +79,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
   const leagueFc = useLeagueFcValues();
   const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
   const [prefsOk, setPrefsOk] = useState<boolean | null>(null);
+  const [notes, setNotes] = useState<PlayerNotes>({});
   const [leg, setLeg] = useState<number | null>(null);
   const [week, setWeek] = useState<number | null>(null);
   const [season, setSeason] = useState<string | null>(null);
@@ -88,6 +87,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
 
   useEffect(() => {
     loadPrefs().then((p) => { setPrefs(p); setPrefsOk(true); }).catch(() => setPrefsOk(false));
+    loadNotes().then(setNotes).catch(() => {});
     getState()
       .then((s) => {
         setLeg(s.leg || s.week || 1);
@@ -166,11 +166,14 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
       priority: new Set(prefs.priority),
       priorityOrder: prefs.priority,
       irReleaseOrder: prefs.irRelease,
+      neverStart: new Set(prefs.neverStart),
+      noteFor: (id) => notes[id],
     };
-  }, [pmap, tradeValues, fc, curated, prefs, leagueFc]);
+  }, [pmap, tradeValues, fc, curated, prefs, leagueFc, notes]);
 
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
+  const [exampleGroup, setExampleGroup] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const session = useRef<Session>(newSession());
@@ -299,11 +302,27 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
         </form>
 
         <div className="field" style={{ marginTop: 10, gap: 6 }}>
-          {EXAMPLES.map((ex) => (
-            <button key={ex} className="ccexample" disabled={!ready || running} onClick={() => void ask(ex)}>
-              {ex}
+          {EXAMPLE_GROUPS.map((g, i) => (
+            <button
+              key={g.label}
+              className={`chip-filter ${exampleGroup === i ? "on" : ""}`}
+              disabled={!ready || running}
+              onClick={() => setExampleGroup((cur) => (cur === i ? null : i))}
+            >
+              {g.label}
             </button>
           ))}
+        </div>
+        {exampleGroup !== null && (
+          <div className="field" style={{ marginTop: 6, gap: 6 }}>
+            {EXAMPLE_GROUPS[exampleGroup].examples.map((ex) => (
+              <button key={ex} className="ccexample" disabled={!ready || running} onClick={() => void ask(ex)}>
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="field" style={{ marginTop: 6, gap: 6 }}>
           {turns.length > 0 && (
             <button
               className="ccexample"

@@ -687,7 +687,7 @@ async function main() {
     ok(byLg["Day League A — Thursday"]?.toStarters[1] === "thuGuy" && byLg["Day League A — Thursday"]?.toStarters[2] === "sunGuy", "Thursday player moved into the true WR slot, not left in FLEX", JSON.stringify(byLg["Day League A — Thursday"]));
     ok(byLg["Day League B — Monday"]?.toStarters[2] === "monGuy" && byLg["Day League B — Monday"]?.toStarters[1] === "sunGuy", "Monday player moved into FLEX, not left in the true WR slot", JSON.stringify(byLg["Day League B — Monday"]));
     ok(dayDrafts.every((d) => (d.params as { gain: number }).gain < 0.05), "both fixes carry ~zero projected point change — real data, not fabricated value");
-    ok(dayDrafts.every((d) => d.rationale[0] === "No real point change — this only moves Thursday/Monday players into the right slot before their games lock"), "rationale is honest that this is a placement fix, not a point upgrade");
+    ok(dayDrafts.every((d) => d.rationale[0] === "No real point change — this only reslots early/late-week players before their games lock"), "rationale is honest that this is a placement fix, not a point upgrade");
     ok(dayDrafts.every((d) => /slot fix — no point change/.test(describeProposal(d))), "proposal summary reads as a slot fix, never a fake '+0.0 projected'");
     ok(/Thursday\/Monday slot fixes with no point change/.test(textOf(dayOut.blocks)) || /Thursday\/Monday player moved into the right slot/.test(textOf(dayOut.blocks)), "headline discloses these are placement-only fixes", textOf(dayOut.blocks).slice(0, 400));
 

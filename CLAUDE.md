@@ -1265,3 +1265,90 @@ priority order requested: Thu > Fri > Sat > Sun > Mon.
   at full scale, not just in the unit tests. "All weeks" computed across
   all 219 leagues × 16 remaining weeks (2,882 total changes) with no
   errors. Confirmed zero Sleeper writes throughout (no token connected).
+
+### Player memory: Never Start + free-text Notes (2026-09; requested explicitly by the owner)
+
+"I need a way for you to keep a memory of my leagues and for me to action
+based on it... all my players, all my notes, what my preferences are so I
+can ask questions that are easily executable, e.g. if I want X player
+moved away from my lineup." Split into two real, distinct things rather
+than one fuzzy "memory" blob, since only one of them can honestly be made
+"executable" without an LLM in the loop:
+
+- **`neverStart`** (new 4th `PlayerPreference` kind, `never_start`) — a
+  genuine hard exclude, not a preference: a listed player is never proposed
+  as a starter by Optimize or chat's "Fix my lineups", in any league, full
+  stop — stronger than the existing `avoid` (which still starts him as a
+  last resort if nobody else can fill the slot). This is the actually
+  "executable" half of the request. Wired straight into
+  `lib/lineupOptimizer.ts` as a new `neverStart?: (id) => boolean` input:
+  excluded from the assignment pool entirely, weighted below an empty slot
+  (`-BIG`) so the "never propose a worse lineup" safety check can't block
+  his removal, matching every other hard exclude's shape.
+  - **Real bug found and fixed while building this**: the existing "nobody
+    to put in a slot, leave whoever's already there" fallback (there for
+    injured/bye players, where leaving them is scoring-neutral) doesn't
+    know about `neverStart` — without a fix, a hard-excluded player with no
+    replacement available would get silently placed right back by that
+    fallback, defeating the whole rule in exactly the case it matters most.
+    Fixed by excluding `neverStart` players from that fallback specifically
+    (`unavailable`'s use of it is intentionally unchanged — leaving an
+    injured player in place is genuinely harmless there). Caught by a new
+    direct test, not spotted by inspection.
+  - Same one-column-of-mutual-exclusivity pattern as `priority`/`avoid`/
+    `ir_release` (a player can only be in one list; priority wins over all).
+  - Wired into `components/manager/BulkOptimize.tsx` (new `neverStartSet`,
+    a `⛔` flag next to the existing ★/⊘, and a `"never start"` swap reason)
+    and `lib/commandCenter/engine.ts`'s `lineup_improvements` case, so chat
+    and the UI tool both honor it.
+- **`PlayerNote`** (new table, `playerId` PK, free-text `note`) — purely
+  informational memory, deliberately NOT auto-executed (there's no LLM in
+  this app to safely interpret arbitrary free text as an instruction — see
+  Command Center's own "no LLM" rule). `app/api/manager/player-notes/route.ts`
+  is a single-player upsert/delete (empty note deletes), not a full-list
+  replace like `/preferences` — notes are free text per player, not list
+  membership. Surfaced in `lineup_improvements`'s rationale as `— note: …`
+  whenever the noted player is the one coming IN on a real swap.
+- Both editable under Lineups → My players (`components/manager/PlayerPreferences.tsx`):
+  a "Never Start" section (same add/remove UI as the other three lists) and
+  a "Notes" section (search, a per-player textarea, independent save/remove
+  per note — its own load/save lifecycle, since it isn't part of the
+  `prefs`/`savePrefs` full-replace object).
+- Migration: `20260928051736_add_player_note` (additive only — a new table
+  plus a doc-comment change to `PlayerPreference.kind`; no data loss, no
+  column changes).
+- Tests: 4 new assertions in `scripts/testLineupOptimizer.ts` (now 21) —
+  hard-excluded even as the only candidate for an otherwise-empty slot,
+  correctly benched when already started (the fallback bug above, caught
+  by this exact test), and an unbanned replacement still fills the slot
+  normally. One existing rationale-wording assertion updated in
+  `scripts/testCommandCenter.ts` for the generalized Thu–Sat text (391
+  total, unaffected otherwise).
+- Verified live against the real account: added Tank Bigsby to Never Start
+  and a real note to Antonio Williams via the actual UI, confirmed both
+  persisted (`GET /api/manager/preferences` → `neverStart: ["9225"]`,
+  `GET /api/manager/player-notes` → real note text keyed by Antonio
+  Williams's id), then ran chat's "Fix my lineups" across the real 210-league
+  account and confirmed zero proposals ever place Tank Bigsby as an
+  incoming starter. Confirmed read-only throughout, zero Sleeper writes.
+
+### Command Center chat: reorganized example prompts into categories (2026-09; requested explicitly by the owner)
+
+"Restructure the questions, I don't like how it's all listed" — the 12
+example prompts under the chat box were one long flat row. Grouped into 6
+labeled categories (Lineups, Waivers & Adds, IR, Standings & Record, Roster
+health, Weekly sweep) as toggleable pills; clicking one reveals just that
+category's 2–3 examples below it, collapsed by default. Pure UI
+reorganization — the underlying example strings and what they do are
+unchanged. Verified live: all 6 category pills render correctly (confirmed
+via the real page's `.chip-filter` list) alongside the existing standings/
+exposure filter chips elsewhere on the page.
+
+**Still pending, deliberately not started yet**: collapsing the mode ladder
+(Read-only/Propose-only/Execute-approved/Auto-execute) down to a two-state
+planning/live model with a single confirm-and-send per command, and
+dropping Phase 5's unattended auto-IR-rule entirely (the owner chose "every
+execution needs a 1-click confirm, no more unattended sends" over keeping
+it as an opt-in). This is a real rearchitecture of the safety-critical
+execute path documented above under "Command Center AI — Phases 2–5" —
+scoped and confirmed with the owner, not yet built.

@@ -150,4 +150,11 @@ export interface DropSignals {
   // restriction — ir_opps falls back to naming the real weakest IR
   // occupant, as before this existed.
   irReleaseOrder?: string[];
+  // Hard exclude for "Fix my lineups" — never proposed as a starter, full
+  // stop (stronger than `avoid`, which still starts him as a last resort).
+  neverStart?: ReadonlySet<string>;
+  // Free-text memory the owner attached to a player, if any — surfaced as
+  // an extra rationale line where a player comes up in a real proposal.
+  // Purely informational; never parsed or acted on.
+  noteFor?: (id: string) => string | undefined;
 }

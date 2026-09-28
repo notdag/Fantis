@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { posChipStyle } from "@/lib/players";
 import { savePrefs, type PlayerPrefs } from "@/lib/playerPrefs";
+import { loadNotes, saveNote, type PlayerNotes } from "@/lib/playerNotes";
 import type { PlayerMap } from "@/lib/types";
 import { PlayerAvatar } from "./Avatar";
 import { SectionHead } from "./PageHead";
@@ -31,6 +32,50 @@ export default function PlayerPreferences({
 
   const dirty = JSON.stringify(prefs) !== savedJson;
 
+  // Notes have their own save lifecycle (one player at a time, via a
+  // separate API) rather than the full-list replace the four lists above
+  // use, so they're loaded/edited independently of `prefs`/`onChange`.
+  const [notes, setNotes] = useState<PlayerNotes>({});
+  const [notesLoaded, setNotesLoaded] = useState(false);
+  const [notesError, setNotesError] = useState("");
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [noteSaving, setNoteSaving] = useState<string | null>(null);
+  const [noteQuery, setNoteQuery] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    loadNotes()
+      .then((n) => { if (!cancelled) { setNotes(n); setNotesLoaded(true); } })
+      .catch((e) => { if (!cancelled) setNotesError(e instanceof Error ? e.message : "Couldn't load notes."); });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const draftFor = (id: string) => (id in noteDrafts ? noteDrafts[id] : (notes[id] ?? ""));
+  const noteDirty = (id: string) => draftFor(id) !== (notes[id] ?? "");
+  const commitNote = async (id: string) => {
+    const text = draftFor(id).trim();
+    setNoteSaving(id);
+    setNotesError("");
+    try {
+      await saveNote(id, text);
+      setNotes((prev) => {
+        const next = { ...prev };
+        if (text) next[id] = text;
+        else delete next[id];
+        return next;
+      });
+      setNoteDrafts((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    } catch (e) {
+      setNotesError(e instanceof Error ? e.message : "Couldn't save that note.");
+    } finally {
+      setNoteSaving(null);
+    }
+  };
+
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!pmap || q.length < 2) return [];
@@ -47,11 +92,13 @@ export default function PlayerPreferences({
   const posOf = (id: string) => pmap?.[id]?.p;
 
   const addPriority = (id: string) =>
-    onChange({ priority: [...prefs.priority.filter((x) => x !== id), id], avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id) });
+    onChange({ priority: [...prefs.priority.filter((x) => x !== id), id], avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: prefs.neverStart.filter((x) => x !== id) });
   const addAvoid = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: [...prefs.avoid.filter((x) => x !== id), id], irRelease: prefs.irRelease.filter((x) => x !== id) });
+    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: [...prefs.avoid.filter((x) => x !== id), id], irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: prefs.neverStart.filter((x) => x !== id) });
   const addIrRelease = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: [...prefs.irRelease.filter((x) => x !== id), id] });
+    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: [...prefs.irRelease.filter((x) => x !== id), id], neverStart: prefs.neverStart.filter((x) => x !== id) });
+  const addNeverStart = (id: string) =>
+    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: [...prefs.neverStart.filter((x) => x !== id), id] });
   const move = (i: number, delta: number) => {
     const next = [...prefs.priority];
     const j = i + delta;
@@ -129,6 +176,7 @@ export default function PlayerPreferences({
               <button className="btn ghost sm" onClick={() => { addPriority(p.id); setQuery(""); }}>+ Priority</button>
               <button className="btn ghost sm" onClick={() => { addAvoid(p.id); setQuery(""); }}>+ Avoid</button>
               <button className="btn ghost sm" onClick={() => { addIrRelease(p.id); setQuery(""); }}>+ IR Release</button>
+              <button className="btn ghost sm" onClick={() => { addNeverStart(p.id); setQuery(""); }}>+ Never Start</button>
             </TableRow>
           ))}
         </DataTable>
@@ -195,6 +243,116 @@ export default function PlayerPreferences({
               )
             )}
           </DataTable>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <SectionHead level={3} title="Never Start (hard exclude, every league)" right={`${prefs.neverStart.length}`} style={{ marginBottom: 8 }} />
+        <p className="hint" style={{ margin: "0 0 8px" }}>
+          A real standing rule, not just a preference — a player here is never proposed as a
+          starter by Fix my lineups/Optimize, anywhere, even if nobody else is available for the
+          slot (unlike Avoid, which still starts him as a last resort). Use it for &ldquo;move X
+          away from my lineup&rdquo;-type calls.
+        </p>
+        {prefs.neverStart.length === 0 ? (
+          <p className="hint">Nobody hard-excluded — search above to add someone.</p>
+        ) : (
+          <DataTable>
+            {prefs.neverStart.map((id) =>
+              row(
+                id,
+                <button className="btn ghost sm" onClick={() => onChange({ ...prefs, neverStart: prefs.neverStart.filter((x) => x !== id) })}>Remove</button>
+              )
+            )}
+          </DataTable>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <SectionHead level={3} title="Notes (free text, informational)" right={`${Object.keys(notes).length}`} style={{ marginBottom: 8 }} />
+        <p className="hint" style={{ margin: "0 0 8px" }}>
+          Anything worth remembering about a player — chat surfaces this alongside its own
+          rationale when he comes up (IR moves, force-start, drops, etc.). Read-only context, never
+          parsed or acted on automatically; for an actually-enforced rule, use Never Start above.
+        </p>
+        {notesError && <div className="err">{notesError}</div>}
+        <div className="field" style={{ marginBottom: 8, alignItems: "center" }}>
+          <input
+            className="input"
+            placeholder="Search a player to note…"
+            value={noteQuery}
+            onChange={(e) => setNoteQuery(e.target.value)}
+            style={{ maxWidth: 280 }}
+          />
+        </div>
+        {noteQuery.trim().length >= 2 && pmap && (
+          <DataTable>
+            {Object.entries(pmap)
+              .filter(([, e]) => e.t && ["QB", "RB", "WR", "TE", "K", "DEF"].includes(e.p) && e.n.toLowerCase().includes(noteQuery.trim().toLowerCase()))
+              .slice(0, 8)
+              .map(([id, e]) => (
+                <TableRow key={id}>
+                  <PlayerAvatar playerId={id} pos={e.p} size={24} />
+                  <span className="tname" style={{ flex: 1 }}>{e.n}</span>
+                  <span className="pos" style={posChipStyle(e.p)}>{e.p}</span>
+                  <button
+                    className="btn ghost sm"
+                    onClick={() => { setNoteDrafts((prev) => ({ ...prev, [id]: prev[id] ?? notes[id] ?? "" })); setNoteQuery(""); }}
+                  >
+                    + Note
+                  </button>
+                </TableRow>
+              ))}
+          </DataTable>
+        )}
+        {!notesLoaded ? (
+          <p className="hint">Loading notes…</p>
+        ) : Object.keys(notes).length === 0 && Object.keys(noteDrafts).length === 0 ? (
+          <p className="hint">No notes yet — search above to add one.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[...new Set([...Object.keys(notes), ...Object.keys(noteDrafts)])].map((id) => (
+              <div key={id} className="card sync" style={{ maxWidth: "none" }}>
+                <div className="field" style={{ alignItems: "center", marginBottom: 6 }}>
+                  <PlayerAvatar playerId={id} pos={posOf(id)} size={24} />
+                  <span className="tname" style={{ flex: 1 }}>{nameOf(id)}</span>
+                  {posOf(id) && <span className="pos" style={posChipStyle(posOf(id)!)}>{posOf(id)}</span>}
+                  <button
+                    className="btn"
+                    disabled={noteSaving === id || !noteDirty(id)}
+                    onClick={() => void commitNote(id)}
+                  >
+                    {noteSaving === id ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    className="btn ghost sm"
+                    disabled={noteSaving === id}
+                    onClick={() => {
+                      if (notes[id]) {
+                        setNoteDrafts((prev) => ({ ...prev, [id]: "" }));
+                        void commitNote(id);
+                      } else {
+                        setNoteDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[id];
+                          return next;
+                        });
+                      }
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <textarea
+                  className="input"
+                  style={{ width: "100%", minHeight: 60, resize: "vertical" }}
+                  placeholder="e.g. nagging injury, don't trust his Thursday snap counts, always start him vs weak run D…"
+                  value={draftFor(id)}
+                  onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [id]: e.target.value }))}
+                />
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </>

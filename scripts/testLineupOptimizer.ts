@@ -22,7 +22,7 @@ function run(
   slotCodes: string[],
   starters: string[],
   players: Player[],
-  opts: { gameDay?: boolean; lockedIds?: Set<string> } = { gameDay: true }
+  opts: { gameDay?: boolean; lockedIds?: Set<string>; neverStartIds?: Set<string> } = { gameDay: true }
 ) {
   const byId = new Map(players.map((p) => [p.id, p]));
   const input: OptimizeInput = {
@@ -38,6 +38,7 @@ function run(
     // without the solver reshuffling the pinned player elsewhere.
     locked: (id) => !!opts.lockedIds?.has(id),
     gameDay: opts.gameDay === false ? undefined : (id) => byId.get(id)?.day,
+    neverStart: opts.neverStartIds ? (id) => !!opts.neverStartIds?.has(id) : undefined,
   };
   return optimizeLineup(input);
 }
@@ -212,6 +213,40 @@ async function main() {
     const res = run(slots, ["rbThu", "0"], players);
     ok(res.starters[0] === "rbThu", "a Thursday RB already correctly in his true slot stays there", res.starters[0]);
     ok(res.changes.length === 1 && res.changes[0].in === "wrBench", "only the genuinely empty FLEX slot gets filled — no pointless churn", JSON.stringify(res.changes));
+  }
+
+  // ---------- 10. neverStart is a genuine hard exclude — never proposed as
+  // a starter even as the only real candidate for an otherwise-empty slot;
+  // the slot is left empty rather than starting him.
+  {
+    const slots = ["WR"];
+    const players: Player[] = [{ id: "wrBanned", pos: "WR", pts: 30 }];
+    const res = run(slots, ["0"], players, { gameDay: false, neverStartIds: new Set(["wrBanned"]) });
+    ok(res.starters[0] === "0", "a hard-excluded player is never started, even with no other real candidate for the slot", res.starters[0]);
+  }
+
+  // ---------- 11. neverStart correctly benches a player already sitting in
+  // the CURRENT lineup — and the "never propose a worse lineup" safety net
+  // does not block his removal, even when there's nobody better to replace
+  // him with (the slot goes empty, which is still the correct outcome).
+  {
+    const slots = ["WR"];
+    const players: Player[] = [{ id: "wrBanned", pos: "WR", pts: 30 }];
+    const res = run(slots, ["wrBanned"], players, { gameDay: false, neverStartIds: new Set(["wrBanned"]) });
+    ok(res.starters[0] === "0", "a hard-excluded player already started is benched, not left in place", res.starters[0]);
+    ok(res.changes.length === 1 && res.changes[0].out === "wrBanned" && res.changes[0].in === null, "the change is reported honestly as a removal with nothing to replace him", JSON.stringify(res.changes));
+  }
+
+  // ---------- 12. neverStart doesn't affect anyone else — a real, better
+  // replacement still gets the slot normally.
+  {
+    const slots = ["WR"];
+    const players: Player[] = [
+      { id: "wrBanned", pos: "WR", pts: 30 },
+      { id: "wrOk", pos: "WR", pts: 10 },
+    ];
+    const res = run(slots, ["wrBanned"], players, { gameDay: false, neverStartIds: new Set(["wrBanned"]) });
+    ok(res.starters[0] === "wrOk", "a real, unbanned replacement takes the slot instead of leaving it empty", res.starters[0]);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

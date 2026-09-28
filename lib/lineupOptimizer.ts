@@ -21,6 +21,12 @@ export interface OptimizeInput {
   // Optional — without it this is a pure best-projection optimizer.
   priorityRank?: (id: string) => number | undefined;
   avoid?: (id: string) => boolean;
+  // Hard exclude — never a real candidate for any slot, full stop (not just
+  // deprioritized like `avoid`, which can still start if nothing else can
+  // fill the slot). A locked player already in this slot is left alone
+  // regardless (his game already started; this only affects the open
+  // reassignment, never yanks someone mid-game).
+  neverStart?: (id: string) => boolean;
   // Position in the owner's overall curated rankings (0 = best); undefined =
   // not ranked. This is a full preference BAND — a ranked player always beats
   // an unranked one regardless of points — meant for an explicit "go by my
@@ -184,6 +190,12 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
   // preference band. (Empty slots and unavailable players are worth 0.)
   const weight = (id: string) => {
     if (isEmpty(id) || unavailable(id)) return 0;
+    // Never-start is a hard rule, not a preference: weighted as worse than
+    // leaving the slot empty, so the "don't propose a worse lineup" safety
+    // check below never blocks removing him — an empty slot always
+    // outscores this. He's already excluded from `pool` above; this only
+    // matters for scoring the CURRENT lineup if he's already started.
+    if (input.neverStart?.(id)) return -BIG;
     let w = REAL_PLAYER_BONUS + points(id);
     const rank = input.priorityRank?.(id);
     if (rank !== undefined) w += PRIORITY_BASE + (500 - Math.min(rank, 500)) * PRIORITY_RANK_STEP;
@@ -209,7 +221,7 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
   });
 
   const freeSlots = slotCodes.map((_, i) => i).filter((i) => !fixed.has(i));
-  const pool = candidates.filter((id) => !frozen.has(id) && !locked(id) && !unavailable(id) && posOf(id));
+  const pool = candidates.filter((id) => !frozen.has(id) && !locked(id) && !unavailable(id) && !input.neverStart?.(id) && posOf(id));
 
   const result = [...current];
   if (freeSlots.length > 0) {
@@ -244,10 +256,15 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     });
     // Nobody to put in a slot: leave whoever is already there (e.g. an
     // injured starter with no healthy replacement) rather than proposing to
-    // empty it — unless that player got moved to another slot.
+    // empty it — unless that player got moved to another slot. Never applies
+    // to a neverStart player, though: unlike "unavailable" (where leaving him
+    // is scoring-neutral, so there's no point manufacturing a change), the
+    // whole ask here is "get him out" — leaving him back in would silently
+    // defeat the rule the moment there's no replacement, the exact case it
+    // most needs to hold.
     const placed = new Set(result.filter((id) => !isEmpty(id)));
     freeSlots.forEach((slotIdx) => {
-      if (result[slotIdx] === EMPTY && !isEmpty(current[slotIdx]) && !placed.has(current[slotIdx])) {
+      if (result[slotIdx] === EMPTY && !isEmpty(current[slotIdx]) && !placed.has(current[slotIdx]) && !input.neverStart?.(current[slotIdx])) {
         result[slotIdx] = current[slotIdx];
         placed.add(current[slotIdx]);
       }

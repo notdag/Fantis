@@ -1566,6 +1566,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           locked: isLocked,
           priorityRank: (id: string) => prio.get(id),
           avoid: (id: string) => env.signals.avoid.has(id),
+          neverStart: (id: string) => !!env.signals.neverStart?.has(id),
         };
         const res = optimizeLineup({
           ...base,
@@ -1602,9 +1603,13 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
             rationale: [
               res.gain >= 0.05
                 ? `Projected +${res.gain.toFixed(1)} using Sleeper's own weekly projections (${key})`
-                : "No real point change — this only moves Thursday/Monday players into the right slot before their games lock",
-              ...res.changes.map((c) => `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}${c.out && isUnavailable(c.out) ? " (unavailable)" : ""}`),
-              "Players whose games have started are left in place; injured and bye-week players are never started",
+                : "No real point change — this only reslots early/late-week players before their games lock",
+              ...res.changes.map((c) => {
+                const base = `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}${c.out && env.signals.neverStart?.has(c.out) ? " (never start)" : c.out && isUnavailable(c.out) ? " (unavailable)" : ""}`;
+                const note = c.in ? env.signals.noteFor?.(c.in) : undefined;
+                return note ? `${base} — note: ${note}` : base;
+              }),
+              "Players whose games have started are left in place; injured, bye-week and Never Start players are never started",
             ],
             origin: "chat",
             command: text,

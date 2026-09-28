@@ -161,6 +161,7 @@ export default function BulkOptimize({
 
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
   const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
+  const neverStartSet = useMemo(() => new Set(prefs.neverStart), [prefs.neverStart]);
 
   const { rows, lockedCount, unavailableCount } = useMemo(() => {
     const out: Row[] = [];
@@ -204,6 +205,7 @@ export default function BulkOptimize({
           locked: isLocked,
           priorityRank: (id) => priorityIndex.get(id),
           avoid: (id) => avoidSet.has(id),
+          neverStart: (id) => neverStartSet.has(id),
           rankOrder: mode === "rankings" ? (id) => ranks?.get(id)?.order : undefined,
           gameDay: lockEarlyFlex ? gameDay : undefined,
         });
@@ -220,7 +222,7 @@ export default function BulkOptimize({
     }
     out.sort((a, b) => a.week - b.week || b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
+  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
@@ -230,7 +232,7 @@ export default function BulkOptimize({
     if (!id) return "";
     const inj = pmap?.[id]?.inj;
     const health = inj === "Questionable" ? " (Q)" : inj === "Doubtful" ? " (D)" : "";
-    return `${priorityIndex.has(id) ? " ★" : avoidSet.has(id) ? " ⊘" : ""}${health}`;
+    return `${priorityIndex.has(id) ? " ★" : neverStartSet.has(id) ? " ⛔" : avoidSet.has(id) ? " ⊘" : ""}${health}`;
   };
   // Show both sides of every swap with the numbers behind it (your ranking
   // and Sleeper's projection), so it's clear why each move is proposed.
@@ -242,6 +244,7 @@ export default function BulkOptimize({
     id ? `${name(id)}${flag(id)} (${rankLabel(id)} · ${(weekData[r.week]?.proj[id]?.[r.scoring] ?? 0).toFixed(1)})` : "empty";
   const reason = (r: Row, c: { out: string | null; in: string | null }) => {
     if (c.in && priorityIndex.has(c.in)) return "your priority";
+    if (c.out && neverStartSet.has(c.out)) return "never start";
     if (c.out && avoidSet.has(c.out)) return "avoid list";
     const outInj = c.out ? pmap?.[c.out]?.inj : null;
     const outTeam = c.out ? pmap?.[c.out]?.t : null;
@@ -388,10 +391,10 @@ export default function BulkOptimize({
             </button>
           </div>
           <p className="hint" style={{ margin: "0 0 12px" }}>
-            {prefs.priority.length + prefs.avoid.length > 0 ? (
+            {prefs.priority.length + prefs.avoid.length + prefs.neverStart.length > 0 ? (
               <>
                 Following your player preferences ({prefs.priority.length} priority, {prefs.avoid.length}{" "}
-                avoid): ★ = priority, ⊘ = avoid.{" "}
+                avoid, {prefs.neverStart.length} never start): ★ = priority, ⊘ = avoid, ⛔ = never start.{" "}
                 {prefsDirty && <span style={{ color: "var(--amber)" }}>Unsaved edits are included. </span>}
               </>
             ) : (

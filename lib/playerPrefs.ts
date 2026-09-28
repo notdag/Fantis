@@ -9,15 +9,20 @@ export interface PlayerPrefs {
   // scan will ever suggest releasing, in this order. Empty = no restriction
   // (falls back to ranking every real IR occupant by value, as before).
   irRelease: string[];
+  // Hard exclude — never started, in any league, full stop. Stronger than
+  // "avoid" (which still starts him if nobody else can fill the slot):
+  // this is a real standing rule ("move X away from my lineup"), enforced
+  // directly by the optimizer, not just a preference it weighs.
+  neverStart: string[];
 }
 
-export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [], irRelease: [] };
+export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [], irRelease: [], neverStart: [] };
 
 export async function loadPrefs(): Promise<PlayerPrefs> {
   const res = await fetch("/api/manager/preferences");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "Couldn't load your player preferences.");
-  return { priority: body.priority ?? [], avoid: body.avoid ?? [], irRelease: body.irRelease ?? [] };
+  return { priority: body.priority ?? [], avoid: body.avoid ?? [], irRelease: body.irRelease ?? [], neverStart: body.neverStart ?? [] };
 }
 
 export async function savePrefs(prefs: PlayerPrefs): Promise<void> {
