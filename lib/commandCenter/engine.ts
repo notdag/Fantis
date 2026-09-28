@@ -1529,17 +1529,22 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       // themselves leave tied.
       const curatedOrder = env.curatedIds ? new Map(env.curatedIds.map((id, i) => [id, i])) : null;
       // Real kickoff day, from the same kickoff times used for lock checks —
-      // not a guess. Thursday locks first (no reason to leave him in flex);
-      // Monday locks last (keep him in the flexible slot till the latest
-      // possible decision).
-      const gameDay = (id: string): "THU" | "MON" | undefined => {
+      // not a guess. Thu/Fri/Sat lock earliest (no reason to leave one of
+      // those RB/WRs floating in FLEX — lib/lineupOptimizer.ts hard-forbids
+      // it); Monday locks last (keep him in the flexible slot till the
+      // latest possible decision).
+      const gameDay = (id: string): "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined => {
         const team = env.pmap[id]?.t;
         const ko = team ? kickoffs[team] : undefined;
         if (!ko) return undefined;
-        const d = new Date(ko).getDay();
-        if (d === 4) return "THU";
-        if (d === 1) return "MON";
-        return undefined;
+        switch (new Date(ko).getDay()) {
+          case 0: return "SUN";
+          case 1: return "MON";
+          case 4: return "THU";
+          case 5: return "FRI";
+          case 6: return "SAT";
+          default: return undefined;
+        }
       };
       const found: { draft: ProposalDraft; league: string; gain: number; reslotOnly: boolean }[] = [];
       for (const snap of snaps) {

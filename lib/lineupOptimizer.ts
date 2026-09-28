@@ -35,10 +35,11 @@ export interface OptimizeInput {
   // flip. Optional — omit it to leave true ties to solve order.
   rankTiebreak?: (id: string) => number | undefined;
   // Real kickoff day for a player's team this week, from actual schedule
-  // data — not a guess. "THU"/"MON" nudge slot choice (see the bonuses
-  // below); any other day (including undefined, e.g. bye or unknown) gets no
-  // nudge. Optional — omit it to leave slot choice entirely to points/rank.
-  gameDay?: (id: string) => "THU" | "MON" | undefined;
+  // data — not a guess. Undefined (bye, unknown, or a day this app doesn't
+  // track) gets no nudge and no restriction. Passing this also turns on the
+  // RB/WR-in-FLEX rule below — omit it entirely to leave slot choice purely
+  // to points/rank, with no day awareness at all.
+  gameDay?: (id: string) => "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined;
 }
 
 export interface LineupChange {
@@ -97,15 +98,26 @@ const RANK_TIEBREAK_CAP = 50;
 // solve order. This nudges a priority player toward his own true slot when
 // eligible for both, so "start him" doesn't accidentally mean "in flex."
 const PRIORITY_TRUE_SLOT_BONUS = 0.001;
-// Same idea, for real kickoff timing: a Thursday player's decision locks
-// first, so there's no benefit to leaving him "floating" in flex — put him
-// in his true slot. A Monday player locks last, so keeping him in flex (the
-// slot you'd naturally swap) leaves the week's latest, most-informed
-// decision in the most flexible spot. Bigger than STAY_PUT_BONUS so it
-// actually moves an already-correct-looking lineup when the swap is a real
-// day-of-week fix, but still far smaller than any real point difference.
-const THU_TRUE_SLOT_BONUS = 0.002;
-const MON_FLEX_SLOT_BONUS = 0.002;
+// Same idea, generalized across the whole week: the earlier a player's game
+// locks, the less reason there is to leave him "floating" in flex — his
+// decision is already made, so put him in his own true slot and save the
+// flexible slot for someone whose decision isn't locked in yet. Strictly
+// decreasing Thu > Fri > Sat > Sun > Mon (Monday actually prefers FLEX, the
+// mirror image of Thursday) — bigger than STAY_PUT_BONUS so it actually
+// moves an already-set lineup when the swap is a real day-of-week fix, but
+// still far smaller than any real point difference; this only ever settles
+// a choice the projections themselves leave close.
+const DAY_TRUE_SLOT_BIAS: Record<string, number> = { THU: 0.0025, FRI: 0.002, SAT: 0.0015, SUN: 0, MON: -0.002 };
+// Real hard rule, not a nudge: once a game has a real Thu/Fri/Sat kickoff,
+// an RB/WR playing it can never be assigned to a FLEX-type slot (FLEX,
+// WR/RB flex, WR/TE flex, superflex) — only Sunday/Monday RB/WR ever occupy
+// FLEX. The point is roster-lock strategy, not scoring: those early games
+// lock before Sunday's, so a FLEX slot filled by one of them is committed
+// days before it needs to be, for no scoring benefit (the same points would
+// score in his own true slot). Scoped to RB/WR only, matching what was
+// asked for — a Thursday TE or QB in a flex-eligible slot is unaffected.
+// Only takes effect when the caller supplies real `gameDay` data.
+const EARLY_DAYS = new Set(["THU", "FRI", "SAT"]);
 const BIG = 1e9;
 
 // Hungarian algorithm (min cost), rows <= cols. Returns, for each row, the
@@ -211,12 +223,14 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
       for (let c = 0; c < pool.length; c++) {
         const id = pool[c];
         const pos = posOf(id)!;
-        if (!eligible.has(pos)) {
+        const day = input.gameDay?.(id);
+        const earlyFlexBlocked = isFlexSlot && (pos === "RB" || pos === "WR") && !!day && EARLY_DAYS.has(day);
+        if (!eligible.has(pos) || earlyFlexBlocked) {
           row[c] = BIG * 10; // not allowed in this slot
         } else {
           const trueSlot = input.priorityRank?.(id) !== undefined && pos === slotCodes[slotIdx] ? PRIORITY_TRUE_SLOT_BONUS : 0;
-          const day = input.gameDay?.(id);
-          const dayBonus = day === "THU" && !isFlexSlot ? THU_TRUE_SLOT_BONUS : day === "MON" && isFlexSlot ? MON_FLEX_SLOT_BONUS : 0;
+          const bias = day ? (DAY_TRUE_SLOT_BIAS[day] ?? 0) : 0;
+          const dayBonus = isFlexSlot ? -bias : bias;
           row[c] = BIG - (weight(id) + trueSlot + dayBonus + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
         }
       }

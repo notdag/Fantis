@@ -1194,3 +1194,74 @@ filtered `LineupLeague[]`.
   already-proven-working `BulkAdd` usage. `tsc`/`eslint`/`next build` all
   clean. Worth a quick real check in a normal (focused) browser tab before
   relying on it for a live add.
+
+### Optimize: RB/WR never in FLEX on Thu/Fri/Sat + choose the week (2026-09; requested explicitly by the owner)
+
+The owner wants to auto-set lineups by highest projection, but with a real
+roster-lock strategy layered on top: a Thu/Fri/Sat game locks days before
+Sunday's, so an RB/WR playing one should never sit in FLEX — that slot
+should stay open as long as possible for a Sunday/Monday decision. Explicit
+priority order requested: Thu > Fri > Sat > Sun > Mon.
+
+- **`lib/lineupOptimizer.ts`** — `gameDay` extended from THU/MON-only to all
+  five real days. Two effects, both only when a caller supplies `gameDay`:
+  (1) a genuine **hard rule** — an RB/WR with a Thu/Fri/Sat kickoff can never
+  be assigned to a FLEX-type slot (`FLEX`, WR/RB flex, WR/TE flex,
+  superflex), full stop, scored the same way "not eligible for this slot"
+  already was (previously TE/QB were never restricted at all; this stays
+  scoped to RB/WR only, matching what was asked). (2) `DAY_TRUE_SLOT_BIAS`
+  generalizes the old `THU_TRUE_SLOT_BONUS`/`MON_FLEX_SLOT_BONUS` pair into a
+  graded, strictly-decreasing tie-break across all five days (Thu biggest
+  push toward the true slot, Mon the mirror push toward FLEX) — still tiny
+  (≤0.0025) and only ever settles a choice real points leave genuinely tied;
+  a real point edge always wins who starts and, per a live-verified case,
+  even a 0.1-point edge survives a bias pulling the other way. Both wired
+  into `lib/commandCenter/engine.ts`'s `lineup_improvements` (chat "Fix my
+  lineups") the same way.
+- **`components/manager/BulkOptimize.tsx`** (`/manager/lineups` → Optimize)
+  — previously never passed `gameDay` to the optimizer at all (a real gap,
+  not by design). Now does, behind a new toggle ("Locking Thu–Sat starters
+  out of FLEX", **on by default**) so the owner can compare with it off — a
+  deliberate lever for the "I want to double-check this" ask, not a
+  permanent option meant to stay off.
+- **Week picker, same component** — was hardcoded to `currentWeek`; now a
+  dropdown for any single week (`currentWeek`..18) or **"All weeks"**
+  (computes every remaining week at once, one table, a "Week N ·" prefix
+  per row so leagues aren't ambiguous across weeks — still sends one league
+  at a time via the existing `BulkConfirm`/`runBulk` flow, `setStarters`'s
+  real `week` param per row, never a mega-batch). Real, load-bearing caveat
+  surfaced in the UI for any non-current week: Sleeper's injury designation
+  is *today's* real status, not a forecast for that future week — a big
+  swing on a future week can just mean this week's Out/Doubtful list
+  doesn't apply yet, not a real opportunity. Matches the owner's own stated
+  plan (previewing a week early, re-checking with their own rankings closer
+  to kickoff).
+- Tests: new `scripts/testLineupOptimizer.ts` (17 assertions, direct unit
+  tests against `optimizeLineup` — no synthetic test tries to look like a
+  real Sleeper roster, just isolates one rule at a time): the hard block
+  actually benches a Thursday RB rather than ever placing him in FLEX, even
+  when he outscores the only legal FLEX alternative by a wide margin (true
+  slot locked via the same `locked` mechanism a real kicked-off game uses,
+  so there's no reshuffle escape hatch to accidentally free room for him);
+  Friday and Saturday get the identical treatment; Sunday/Monday stay fully
+  unrestricted; TE and QB are confirmed NOT hard-blocked (own true slot
+  locked, so a flex-eligible slot is their only path in — proving allowed,
+  not just occasionally preferred); the Thu>Fri>Sat>Sun>Mon tie-break
+  ordering on genuine point ties; a real (if tiny) point edge beating an
+  opposing-direction day bias; the original day-unaware behavior exactly
+  reproduced when `gameDay` is omitted (regression guard for the two other
+  callers before this change); and the "never propose a worse lineup"
+  safety net holding even when the hard rule makes a bench player the only
+  honest answer. No existing suite regressed (391 engine + 103 exec still
+  pass). Also caught and fixed two flawed first-draft test scenarios that
+  didn't account for the Hungarian solver's own valid reshuffling (e.g.
+  swapping a Sunday RB into FLEX to free his true slot for a Thursday one
+  scores MORE points, not less — a real, correct optimization the naive
+  test didn't expect) — worth knowing if this file gets extended.
+- Verified live against the real account (219 leagues, best ball excluded
+  by the page's existing default): toggling the new lock on/off for week 4
+  changed 200 vs. 182 leagues needing a lineup change — an 18-league real,
+  measurable difference, confirming the wiring reaches all the way through
+  at full scale, not just in the unit tests. "All weeks" computed across
+  all 219 leagues × 16 remaining weeks (2,882 total changes) with no
+  errors. Confirmed zero Sleeper writes throughout (no token connected).
