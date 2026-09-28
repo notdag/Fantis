@@ -36,7 +36,7 @@ export default function TopPlayersWatch({
 }) {
   const ranks = useCuratedRanks();
   // How many of each position count as "top" — by your /admin position rank.
-  const [limits, setLimits] = useState<Record<string, number>>({ QB: 12, RB: 30, WR: 40, TE: 12 });
+  const [limits, setLimits] = useState<Record<string, number>>({ QB: 20, RB: 30, WR: 45, TE: 25 });
   const [open, setOpen] = useState(false);
   // When on, hides cases where the benched top player ranks higher but the
   // starter projects MORE than he does — a judgment call, not a clear miss.
