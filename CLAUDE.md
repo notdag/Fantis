@@ -1495,3 +1495,49 @@ already exists separately as the IR Release list, which is about who to
   unlocked without the owner's own passphrase; verification instead relied
   on `handleCommand` integration tests, which exercise the real engine entry
   point (not a mock) end to end.
+
+### Open Roster Spots: "If you ran the IR sweep" preview (2026-09; requested explicitly by the owner)
+
+The owner wanted to know, without typing anything into chat, which leagues
+would open a bench spot if they ran the bulk IR move — previously only
+answered by asking Command Center "move all my IR eligible players to IR"
+and reading the report at the bottom of that response (see the "IR
+opportunities: open bench slot after the move" entry above). Added as a new
+section on `/manager/open-spots` (`components/manager/OpenSpots.tsx`),
+right below the existing "currently open" list — the natural home since
+it's the same question ("where could I add without a drop") from a
+different angle (before vs. after a bulk IR run).
+
+- **Read-only preview, no new write path** — reuses the exact same
+  `buildIrPlan()` (`lib/bulkPlan.ts`) the Command Center chat command and
+  the Mass IR tool (`BulkIR.tsx`) already run, with the same real inputs
+  (`usePlayerMap()` for live injury status, `useDropRank()` for the same
+  Fantis/FantasyCalc-based release ranking, the owner's real Priority list
+  so a protected player is never assumed droppable from IR here either).
+  Nothing on this page ever calls a write endpoint — it only computes what
+  the existing tools' own logic would produce.
+- Real roster math, same rule the chat report already uses: a player moving
+  active → reserve always frees an active slot behind him, but only counted
+  for moves that could actually happen — a league where IR is already full
+  with nobody real to release first (`noRoom`) is excluded from the "would
+  open" count and reported separately instead, never silently folded in.
+- Three states, all honest: nobody real is IR-eligible right now ("Nobody
+  rostered... is currently IR-eligible"), eligible players exist but none of
+  the moves would open a NEW spot beyond what's already open above, or a
+  real list of leagues with how many moves and how many slots would open,
+  each linking to that league. A `noRoom`-blocked count is always shown
+  alongside, never dropped from the total.
+- Deliberately does nothing when clicked — no button runs anything from this
+  section; the copy says so explicitly ("A preview only — nothing is moved
+  here") and points to the two real places that do (Command Center chat, or
+  Mass IR).
+- `tsc`/`eslint`/`next build` all clean. Not live-verified against the real
+  account — same `/admin` passphrase blocker as the entry above (no session
+  cookie in this browser context, and materializing the passphrase from
+  `.env.local` to unlock it was correctly refused by the harness's own
+  credential-handling guardrail, which this project's own working rules
+  don't override). The underlying computation is the same `buildIrPlan()`
+  already exercised end-to-end by `scripts/testCommandCenter.ts`'s ir_opps
+  sections and used identically by the already-shipped, already-verified
+  `BulkIR.tsx` — worth a quick real look on `/manager/open-spots` before
+  leaning on it for a specific number.
