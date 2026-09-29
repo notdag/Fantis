@@ -1695,3 +1695,58 @@ than a fifth standing `PlayerPreference` list.
   — same `/admin` passphrase blocker as the last several entries (no
   session cookie in this browser context) — worth a real check on
   `/manager/lineups` → Mass IR before relying on it for a live run.
+
+### Chat: activate_ir swaps with another real IR-eligible player instead of dropping, when applicable (2026-09; requested explicitly by the owner)
+
+"need a logic to swap nico with another IR if it's applicable i need him on
+the bench in all leagues" — activating a player off IR onto a full active
+roster previously only ever offered one option: drop a bench player
+entirely to make room. The owner wanted a real alternative that doesn't
+lose a player — if another player on the same roster is genuinely
+IR-eligible right now, move HIM onto IR instead, freeing the same active
+slot without a drop. Their own "if it's applicable" framing anticipated the
+real constraint this turned out to have.
+
+- **`lib/bulkPlan.ts`'s `buildActivateIrPlan`** gained an optional
+  `injuryOf` parameter (default `() => null`, so any other caller keeps the
+  original drop-only behavior) and two new `ActivateIrRow` fields:
+  `swapId`/`swapInjury`. When a league needs a drop to activate him, it now
+  also checks whether ANY other rostered player (not already on IR) has a
+  real injury status this league's own IR rules allow.
+- **The real constraint that makes "applicable" a genuine question, not
+  just a nicety**: a swap only works when the league has an open IR slot
+  *beyond* the one the player being activated currently occupies
+  (`irSlots(settings) - reserve.length > 0`, computed while he's still
+  counted in reserve). If his league has only 1 IR slot and he's the sole
+  occupant, the other player literally cannot get an IR slot until he
+  leaves it — and he can't leave it until the active roster has room, which
+  is exactly the problem a swap would solve. A real deadlock, not a bug;
+  the existing drop fallback still covers that case exactly as before.
+- **Engine wiring** (`lib/commandCenter/engine.ts`'s `activate_ir` case):
+  when a swap is available, it drafts an `IR_MOVE` (the other player → IR)
+  immediately followed by a drop-free `ACTIVATE_IR`, in that order — same
+  ordering-is-the-safety-property pattern already established for
+  `ir_opps`'s release-then-move pairing: the bulk executor runs proposals
+  one at a time and stops on the first unverified result, so the activation
+  is only ever attempted after the IR move that frees its room is
+  confirmed. A `claimedSwapByLeague` map (mirroring the existing
+  `claimedByLeague` for drops) means two named players activated together
+  in the same league never get proposed to swap with the same other
+  player — the second honestly falls back to a real bench drop instead.
+- Tests: 4 new sub-sections (~15 assertions) in `scripts/testCommandCenter.ts`
+  (section 36, now 422) — the applicable case (IR_MOVE then drop-free
+  ACTIVATE_IR, in order), the genuinely-inapplicable case (single IR slot,
+  falls back to the original drop behavior unchanged), a Questionable
+  player correctly never treated as swap-eligible (falls back to being a
+  normal drop candidate instead), and distinct swap assignment across two
+  players sharing one real swap candidate. Caught a real test-setup bug
+  while writing these, not an implementation bug: this test harness's
+  `env.rank` is hardcoded to `[0,0]` (always tied), so drop-candidate
+  ordering falls back to array order under a stable sort — a `values`
+  override that worked in spirit but did nothing here; fixed by ordering
+  the fixture's player list instead, same convention section 29 above
+  already relies on. `scripts/testCommandCenterExec.ts` unaffected (84,
+  unchanged) — no executor or write-path code touched, this is entirely
+  new read-only planning logic. `tsc`/`eslint`/`next build` all clean. Not
+  live-verified against the real account — same `/admin` passphrase
+  blocker as the last several entries.

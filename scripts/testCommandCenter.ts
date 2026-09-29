@@ -1891,6 +1891,135 @@ async function main() {
     }
   }
 
+  // ---------- 36. activate_ir: swap with another real IR-eligible player
+  // instead of dropping someone, when a real open IR slot makes it possible.
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const decisionsTextOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
+    const rp = ["QB", "WR", "WR", "WR", "WR", "BN"];
+
+    // (a) applicable: an open IR slot beyond Nico's own occupied one, plus a
+    // real other IR-eligible player on the same roster → the swap is
+    // proposed as an IR_MOVE immediately followed by a drop-free ACTIVATE_IR,
+    // preferred over any bench drop.
+    {
+      const settings2Slot = { roster_positions: rp, settings: { reserve_slots: 2, reserve_allow_out: 1 } };
+      const pm: PlayerMap = {
+        q: { n: "Swap QB", p: "QB", t: "DAL" },
+        w1: { n: "Swap W1", p: "WR", t: "DAL" },
+        w2: { n: "Swap W2", p: "WR", t: "DAL" },
+        w3: { n: "Swap W3", p: "WR", t: "DAL" },
+        w4: { n: "Swap W4", p: "WR", t: "DAL" },
+        other: { n: "Other Injured Guy", p: "WR", t: "SEA", inj: "Out" },
+        nico: { n: "Nico Collins", p: "WR", t: "HOU" },
+      };
+      const league = { ...lg("1", "Swap League", rp), settings: settings2Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "w1", "w2", "w3", "w4", "other", "nico"], starters: ["q", "w1", "w2", "w3", "w4"], reserve: ["nico"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("Move Nico Collins off IR to my bench in all leagues", newSession(), env);
+      ok(out.audit.intent === "activate_ir", "recognised as activate_ir", out.audit.intent);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 2 && drafts[0].kind === "IR_MOVE" && drafts[1].kind === "ACTIVATE_IR", "produces an IR_MOVE followed by an ACTIVATE_IR, in that order", JSON.stringify(drafts.map((d) => d.kind)));
+      ok((drafts[0].params as { playerName: string }).playerName === "Other Injured Guy", "the IR_MOVE targets the real other injured player", JSON.stringify(drafts[0].params));
+      ok((drafts[1].params as { dropName: string | null }).dropName === null, "the ACTIVATE_IR has no drop — the swap made room instead", JSON.stringify(drafts[1].params));
+      ok(/swapping IR with Other Injured Guy \(Out\) to make room/.test(decisionsTextOf(out.blocks)), "the decision line states the swap plainly", decisionsTextOf(out.blocks));
+    }
+
+    // (b) not applicable: this league's only IR slot is occupied by Nico
+    // himself, so there's no room for anyone else to join IR until he
+    // leaves it — a real deadlock, not a bug — falls back to the original
+    // drop-based behavior exactly as before this feature existed.
+    {
+      const settings1Slot = { roster_positions: rp, settings: { reserve_slots: 1 } };
+      const pm: PlayerMap = {
+        q: { n: "NoSwap QB", p: "QB", t: "DAL" },
+        w1: { n: "NoSwap W1", p: "WR", t: "DAL" },
+        w2: { n: "NoSwap W2", p: "WR", t: "DAL" },
+        w3: { n: "NoSwap W3", p: "WR", t: "DAL" },
+        w4: { n: "NoSwap W4", p: "WR", t: "DAL" },
+        bench1: { n: "Bench One", p: "WR", t: "SEA" },
+        nico: { n: "Nico Collins", p: "WR", t: "HOU" },
+      };
+      const league = { ...lg("1", "No Swap Room League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "w1", "w2", "w3", "w4", "bench1", "nico"], starters: ["q", "w1", "w2", "w3", "w4"], reserve: ["nico"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("Move Nico Collins off IR to my bench", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 1 && drafts[0].kind === "ACTIVATE_IR", "no open IR slot for a swap → falls back to the plain ACTIVATE_IR", JSON.stringify(drafts.map((d) => d.kind)));
+      ok((drafts[0].params as { dropName: string | null }).dropName === "Bench One", "falls back to the normal bench-drop candidate", JSON.stringify(drafts[0].params));
+      ok(/would drop Bench One to make room/.test(decisionsTextOf(out.blocks)), "decision line states the drop, not a swap", decisionsTextOf(out.blocks));
+    }
+
+    // (c) a bench player who ISN'T really IR-eligible (Questionable never
+    // qualifies, regardless of league settings) is never picked as a swap
+    // candidate — falls back to dropping him instead, same as before.
+    {
+      const settings2Slot = { roster_positions: rp, settings: { reserve_slots: 2, reserve_allow_out: 1 } };
+      const pm: PlayerMap = {
+        q: { n: "Fake QB", p: "QB", t: "DAL" },
+        w1: { n: "Fake W1", p: "WR", t: "DAL" },
+        w2: { n: "Fake W2", p: "WR", t: "DAL" },
+        w3: { n: "Fake W3", p: "WR", t: "DAL" },
+        w4: { n: "Fake W4", p: "WR", t: "DAL" },
+        other: { n: "Not Really Hurt", p: "WR", t: "SEA", inj: "Questionable" },
+        nico: { n: "Nico Collins", p: "WR", t: "HOU" },
+      };
+      const league = { ...lg("1", "Fake Injury League", rp), settings: settings2Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "w1", "w2", "w3", "w4", "other", "nico"], starters: ["q", "w1", "w2", "w3", "w4"], reserve: ["nico"], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("Move Nico Collins off IR to my bench", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 1 && drafts[0].kind === "ACTIVATE_IR" && (drafts[0].params as { dropName: string | null }).dropName === "Not Really Hurt", "Questionable is never IR-eligible, so he's a drop candidate, never a swap target", JSON.stringify(drafts[0].params));
+    }
+
+    // (d) two named players both needing room in the SAME league, but only
+    // ONE real other IR-eligible player available: the first claims the
+    // swap, the second gets an honest distinct fallback — never the same
+    // swap target used twice, and never silently dropped from the count.
+    {
+      const settings3Slot = { roster_positions: rp, settings: { reserve_slots: 3, reserve_allow_out: 1 } };
+      const pm: PlayerMap = {
+        q: { n: "Distinct Swap QB", p: "QB", t: "DAL" },
+        w1: { n: "Distinct Swap W1", p: "WR", t: "DAL" },
+        w2: { n: "Distinct Swap W2", p: "WR", t: "DAL" },
+        w3: { n: "Distinct Swap W3", p: "WR", t: "DAL" },
+        w4: { n: "Distinct Swap W4", p: "WR", t: "DAL" },
+        onlyOther: { n: "Only Other Injured", p: "WR", t: "SEA", inj: "Out" },
+        bench1: { n: "Fallback Bench", p: "WR", t: "SEA" },
+        nico: { n: "Nico Collins", p: "WR", t: "HOU" },
+        nico2: { n: "Puka Nacua", p: "WR", t: "LAR" },
+      };
+      const league = { ...lg("1", "Distinct Swap League", rp), settings: settings3Slot };
+      const roster: RawRoster = {
+        roster_id: 1,
+        owner_id: ME,
+        // bench1 listed before onlyOther: with tied rank (this harness's
+        // env.rank is always [0,0]), byRankAsc's sort is stable and falls
+        // back to array order — same convention section 29 above relies on
+        // — so bench1 is the deterministic, non-flaky fallback drop pick.
+        players: ["q", "w1", "w2", "w3", "w4", "bench1", "onlyOther", "nico", "nico2"],
+        starters: ["q", "w1", "w2", "w3", "w4"],
+        reserve: ["nico", "nico2"],
+        taxi: [],
+      };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("Move Nico Collins and Puka Nacua off IR to my bench", newSession(), env);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.filter((d) => d.kind === "IR_MOVE").length === 1, "the one real swap candidate is used exactly once across both players, never twice", JSON.stringify(drafts.map((d) => d.kind)));
+      ok(drafts.filter((d) => d.kind === "ACTIVATE_IR").length === 2, "both named players still get a real proposal — the second one is never silently dropped", JSON.stringify(drafts.map((d) => d.kind)));
+      const activates = drafts.filter((d) => d.kind === "ACTIVATE_IR").map((d) => d.params as { playerName: string; dropName: string | null });
+      const byName = Object.fromEntries(activates.map((a) => [a.playerName, a.dropName]));
+      const swapUser = Object.entries(byName).find(([, drop]) => drop === null)?.[0];
+      const dropUser = Object.entries(byName).find(([, drop]) => drop !== null);
+      ok(!!swapUser, "exactly one of the two players got the swap (no drop)", JSON.stringify(byName));
+      ok(!!dropUser && dropUser[1] === "Fallback Bench", "the other honestly falls back to a real bench drop, not the claimed swap target", JSON.stringify(byName));
+    }
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

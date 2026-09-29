@@ -173,6 +173,15 @@ export interface ActivateIrRow {
   needsDrop: boolean; // moving him off IR onto the active roster would put it over the limit
   dropId: string | null;
   dropCandidates: string[]; // bench players only, cheapest first — never a starter, never someone else on IR
+  // A real alternative to dropping someone: another player on the SAME
+  // roster who is genuinely IR-eligible right now (this league's own rules)
+  // and isn't already on IR. Moving him to IR frees the same active-roster
+  // slot a drop would, without losing a player — a real swap, not a guess.
+  // Only set when the league actually has an open IR slot for him; see the
+  // note below for why that specific condition is what makes a swap
+  // "applicable" at all.
+  swapId: string | null;
+  swapInjury: string | null;
 }
 
 // For one named player: every league where he's currently on MY reserve
@@ -180,7 +189,16 @@ export interface ActivateIrRow {
 // doesn't count against the active-roster limit, so freeing his reserve slot
 // can push the active roster over the limit). Only reserve → bench; setting
 // him as a starter afterward is a separate, later step (see force-start).
-export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], rank: DropRank, isPriority: (playerId: string) => boolean = () => false): ActivateIrRow[] {
+// `injuryOf` is optional (defaults to "nobody's hurt") so a caller that
+// doesn't care about the swap path — none exist yet, but this keeps the
+// signature backward compatible — gets the original drop-only behavior.
+export function buildActivateIrPlan(
+  playerId: string,
+  leagues: PlanLeague[],
+  rank: DropRank,
+  isPriority: (playerId: string) => boolean = () => false,
+  injuryOf: (playerId: string) => string | null = () => null
+): ActivateIrRow[] {
   const asc = byRankAsc(rank);
   const rows: ActivateIrRow[] = [];
   for (const lg of leagues) {
@@ -191,6 +209,32 @@ export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], ran
     })();
     const activeNow = lg.players.length - lg.reserve.length;
     const needsDrop = rosterSize > 0 && activeNow + 1 > rosterSize;
+
+    let swapId: string | null = null;
+    let swapInjury: string | null = null;
+    if (needsDrop) {
+      // lg.reserve still includes playerId himself here (he hasn't moved
+      // yet), so this is "IR slots open beyond the one he's about to
+      // vacate". If that's 0 — his league's only IR slot, occupied by him
+      // — a swap is genuinely impossible: the other player can't get an IR
+      // slot until he leaves it, and he can't leave it until the active
+      // roster has room, which is exactly the problem a swap would solve.
+      // Real deadlock, not a bug; the drop fallback below still covers it,
+      // same as it always has.
+      const irOpen = irSlots(lg.settings) - lg.reserve.length;
+      if (irOpen > 0) {
+        const candidate = lg.players
+          .filter((id) => id !== playerId && !lg.reserve.includes(id))
+          .map((id) => ({ id, inj: injuryOf(id) }))
+          .filter((p): p is { id: string; inj: string } => !!p.inj && irAllowed(lg.settings, p.inj))
+          .sort((a, b) => (SEVERITY[a.inj] ?? 9) - (SEVERITY[b.inj] ?? 9))[0];
+        if (candidate) {
+          swapId = candidate.id;
+          swapInjury = candidate.inj;
+        }
+      }
+    }
+
     // Same rule the regular bench-drop suggestions already use: never
     // propose dropping a Priority-listed player, even to make room here.
     const bench = lg.players
@@ -204,6 +248,8 @@ export function buildActivateIrPlan(playerId: string, leagues: PlanLeague[], ran
       needsDrop,
       dropId: needsDrop ? bench[0] ?? null : null,
       dropCandidates: bench,
+      swapId,
+      swapInjury,
     });
   }
   return rows;

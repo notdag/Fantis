@@ -1206,50 +1206,102 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const rowsByPlayer = new Map(players.map((p) => [p.id, buildActivateIrPlan(p.id, plan, env.rank, (id) => env.signals.priority.has(id))]));
+      const rowsByPlayer = new Map(
+        players.map((p) => [p.id, buildActivateIrPlan(p.id, plan, env.rank, (id) => env.signals.priority.has(id), (id) => env.pmap[id]?.inj ?? null)])
+      );
       const totalRows = [...rowsByPlayer.values()].reduce((n, r) => n + r.length, 0);
       if (totalRows === 0) {
         blocks.push({ t: "text", tone: "info", text: `${players.length === 1 ? `${players[0].name} isn't` : `None of ${label} are`} on IR in any of your ${plan.length} readable leagues.` });
         break;
       }
       const drafts: ProposalDraft[] = [];
-      // Each drop candidate is claimed by at most one named player per
+      // Each drop/swap candidate is claimed by at most one named player per
       // league — same rule as a multi-target add's distinct drops — so two
       // IR players activated together in the same league never get proposed
-      // to drop the same bench player.
+      // to drop (or swap with) the same other player.
       const claimedByLeague = new Map<string, Set<string>>();
+      const claimedSwapByLeague = new Map<string, Set<string>>();
       const skippedByPlayer = new Map(players.map((p) => [p.id, 0]));
       const decisionsByLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
       for (const p of players) {
         for (const r of rowsByPlayer.get(p.id)!) {
-          let dropId = r.dropId;
-          let unclaimed = true;
-          if (r.needsDrop) {
-            const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
-            const cand = r.dropCandidates.find((id) => !claimed.has(id));
-            if (!cand) {
-              unclaimed = false;
-              skippedByPlayer.set(p.id, (skippedByPlayer.get(p.id) ?? 0) + 1);
-            } else {
-              claimed.add(cand);
-              claimedByLeague.set(r.leagueId, claimed);
-              dropId = cand;
-            }
-          }
           const entry = decisionsByLeague.get(r.leagueId) ?? { leagueId: r.leagueId, leagueName: r.leagueName, items: [] };
-          entry.items.push(
-            `${p.name}: ${r.needsDrop ? (unclaimed && dropId ? `would drop ${posName(env, dropId)} to make room` : r.dropId ? "no unclaimed bench candidate left after the others" : "roster full, nobody clear to drop") : "open roster spot — no drop needed"}`
-          );
+          if (!r.needsDrop) {
+            entry.items.push(`${p.name}: open roster spot — no drop needed`);
+            decisionsByLeague.set(r.leagueId, entry);
+            drafts.push(
+              activateIrDraft({
+                league: env.tools.get_league_details(r.leagueId),
+                playerId: p.id,
+                playerName: p.name,
+                drop: null,
+                rationale: [`${p.name} is on IR in this league`, "Open roster spot — no drop needed"],
+                command: text,
+              })
+            );
+            continue;
+          }
+
+          // Prefer a real swap (another genuinely IR-eligible player moves
+          // to IR instead) over dropping someone outright — it keeps the
+          // roster the same size. Only "applicable" when buildActivateIrPlan
+          // found a real open IR slot for him; see its own note for why.
+          const claimedSwap = claimedSwapByLeague.get(r.leagueId) ?? new Set<string>();
+          const swapAvailable = r.swapId && !claimedSwap.has(r.swapId);
+          if (swapAvailable) {
+            claimedSwap.add(r.swapId as string);
+            claimedSwapByLeague.set(r.leagueId, claimedSwap);
+            const swapName = posName(env, r.swapId as string);
+            entry.items.push(`${p.name}: swapping IR with ${swapName} (${r.swapInjury}) to make room`);
+            decisionsByLeague.set(r.leagueId, entry);
+            // The IR_MOVE frees the active slot; only after it's confirmed
+            // does activating him make sense — same ordering the bulk
+            // executor's "one at a time, stop on the first unverified
+            // result" already makes safe for the release-then-move pairing
+            // in ir_opps.
+            drafts.push(
+              irDraft({
+                league: env.tools.get_league_details(r.leagueId),
+                playerId: r.swapId as string,
+                playerName: swapName,
+                injury: r.swapInjury as string,
+                rationale: [`Sleeper lists ${swapName} as ${r.swapInjury}`, `Frees the active roster slot ${p.name} needs to come off IR`],
+                command: text,
+              })
+            );
+            drafts.push(
+              activateIrDraft({
+                league: env.tools.get_league_details(r.leagueId),
+                playerId: p.id,
+                playerName: p.name,
+                drop: null,
+                rationale: [`${p.name} is on IR in this league`, `Roster is full — swapping with ${swapName} (${r.swapInjury}) instead of dropping anyone`, `Only proposable after moving ${swapName} to IR above`],
+                command: text,
+              })
+            );
+            continue;
+          }
+
+          const claimed = claimedByLeague.get(r.leagueId) ?? new Set<string>();
+          const cand = r.dropCandidates.find((id) => !claimed.has(id));
+          if (!cand) {
+            skippedByPlayer.set(p.id, (skippedByPlayer.get(p.id) ?? 0) + 1);
+            entry.items.push(`${p.name}: ${r.dropId ? "no unclaimed bench candidate left after the others" : "roster full, nobody clear to drop"}`);
+            decisionsByLeague.set(r.leagueId, entry);
+            continue;
+          }
+          claimed.add(cand);
+          claimedByLeague.set(r.leagueId, claimed);
+          const dropName = posName(env, cand);
+          entry.items.push(`${p.name}: would drop ${dropName} to make room`);
           decisionsByLeague.set(r.leagueId, entry);
-          if (!unclaimed) continue;
-          const drop = r.needsDrop && dropId ? { id: dropId, name: posName(env, dropId) } : null;
           drafts.push(
             activateIrDraft({
               league: env.tools.get_league_details(r.leagueId),
               playerId: p.id,
               playerName: p.name,
-              drop,
-              rationale: [`${p.name} is on IR in this league`, r.needsDrop ? `Roster is full — suggested drop: ${drop?.name}` : "Open roster spot — no drop needed"],
+              drop: { id: cand, name: dropName },
+              rationale: [`${p.name} is on IR in this league`, `Roster is full — suggested drop: ${dropName}`],
               command: text,
             })
           );
