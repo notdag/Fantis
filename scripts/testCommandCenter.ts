@@ -1772,6 +1772,125 @@ async function main() {
     }
   }
 
+  // ---------- 35. ir_opps keep-on-bench exception — "...keep X on my
+  // bench" / a standalone "I want X on my bench" follow-up: X is excluded
+  // from the IR move entirely this command, real judgment call (e.g. "I
+  // think he'll play week 4"), never proposed.
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const decisionsTextOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions").flatMap((b) => b.rows.flatMap((r) => r.items)).join(" | ");
+    const rp = ["QB", "WR", "BN"];
+    const settings1Slot = { roster_positions: rp, settings: { reserve_slots: 1, reserve_allow_out: 1 } };
+
+    // (a) basic exclusion, inline on the same command: the named player is
+    // genuinely IR-eligible (real "IR" status, would otherwise be drafted)
+    // but is never drafted, and the summary discloses him by name.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Keep QB", p: "QB", t: "DAL" },
+        s1: { n: "Keep Starter", p: "WR", t: "DAL" },
+        keep: { n: "Nico Collins", p: "WR", t: "HOU", inj: "IR" },
+      };
+      const league = { ...lg("1", "Keep League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "keep"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("move all my IR eligible players to IR, keep Nico Collins on my bench", newSession(), env);
+      ok(out.audit.intent === "ir_opps", "the keep-on-bench phrasing still recognises as ir_opps, not execute_request", out.audit.intent);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 0, "the kept player is never drafted for IR, even though he's really IR-eligible", String(drafts.length));
+      ok(!/Nico Collins/.test(decisionsTextOf(out.blocks)), "he never appears in the per-league decisions list at all");
+      const txt = textOf(out.blocks);
+      ok(/Kept on your bench by request, not moved: Nico Collins \(real IR-eligible in 1 league\)/.test(txt), "the summary honestly reports he was really IR-eligible", txt.slice(0, 600));
+    }
+
+    // (b) the real correctness case: excluding him FREES the open IR slot
+    // for the next real eligible player in the same league, rather than
+    // just hiding his row after the slot math already "spent" it on him.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Slot QB", p: "QB", t: "DAL" },
+        s1: { n: "Slot Starter", p: "WR", t: "DAL" },
+        keep: { n: "Nico Collins", p: "WR", t: "HOU", inj: "IR" }, // sorts first (SEVERITY IR=0)
+        other: { n: "Other Eligible Guy", p: "WR", t: "SEA", inj: "Out" }, // sorts second (SEVERITY Out=1)
+      };
+      const league = { ...lg("1", "Slot League", rp), settings: settings1Slot }; // 1 open IR slot, nobody on reserve yet
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "keep", "other"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+
+      const without = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      without.permission = "LIVE";
+      const baseline = await handleCommand("move all my IR eligible players to IR", newSession(), without);
+      ok(/Other Eligible Guy \(Out\): IR is full and nobody on it can be released/.test(decisionsTextOf(baseline.blocks)), "baseline (no exception): the one open slot goes to Nico Collins (sorts first), Other Eligible Guy needs a drop but IR has no current occupant to release", decisionsTextOf(baseline.blocks));
+
+      const withKeep = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      withKeep.permission = "LIVE";
+      const out = await handleCommand("move all my IR eligible players to IR, keep Nico Collins on my bench", newSession(), withKeep);
+      const decisionsText = decisionsTextOf(out.blocks);
+      ok(decisionsText.includes("Other Eligible Guy (Out): an open IR slot is available"), "excluding Nico Collins really frees the open slot for the next real eligible player, not just a hidden row", decisionsText);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 1 && (drafts[0].params as { playerId: string }).playerId === "other", "exactly one real draft, targeting the freed-slot player, never the kept one", JSON.stringify(drafts.map((d) => d.params)));
+      const txt = textOf(out.blocks);
+      ok(/Kept on your bench by request, not moved: Nico Collins \(real IR-eligible in 1 league\)/.test(txt), "the summary honestly reports he was really IR-eligible in 1 league before the exception", txt.slice(0, 600));
+    }
+
+    // (c) a standalone follow-up with none of the IR/league wording at all —
+    // "I want Nico Collins on my bench, I think he'll play week 4" — still
+    // recognized and re-runs the full scan with the exception applied.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Standalone QB", p: "QB", t: "DAL" },
+        s1: { n: "Standalone Starter", p: "WR", t: "DAL" },
+        keep: { n: "Nico Collins", p: "WR", t: "HOU", inj: "IR" },
+      };
+      const league = { ...lg("1", "Standalone League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "keep"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      env.permission = "LIVE";
+      const out = await handleCommand("I want Nico Collins on my bench, I think he'll play week 4", newSession(), env);
+      ok(out.audit.intent === "ir_opps", "standalone bench-keeping statement is recognized as ir_opps with no IR/league wording of its own", out.audit.intent);
+      const drafts = draftsOf(out.blocks);
+      ok(drafts.length === 0, "the only real eligible player in scope is the one being kept, so nothing is drafted", String(drafts.length));
+    }
+
+    // (d) a real per-player "put X on IR" / "move X to IR" (the opposite
+    // direction) is never swallowed by the keep-on-bench matcher, since
+    // neither mentions "bench" nor a keep/except/leave keyword.
+    {
+      const pm: PlayerMap = { keep: { n: "Nico Collins", p: "WR", t: "HOU" } };
+      const league = { ...lg("1", "Direction League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["keep"], starters: [], reserve: [], taxi: [] };
+      const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+      const put = await handleCommand("put Nico Collins on IR", newSession(), env);
+      ok(put.audit.intent === "send_to_ir", "'put X on IR' still routes to send_to_ir, not ir_opps", put.audit.intent);
+      const move = await handleCommand("move Nico Collins to IR", newSession(), env);
+      ok(move.audit.intent === "send_to_ir", "'move X to IR' still routes to send_to_ir, not ir_opps", move.audit.intent);
+    }
+
+    // (e) phrasing variants for the inline clause: "except", "excluding",
+    // "leave X on the bench" — each still recognized as ir_opps and each
+    // still excludes the named player from the real draft output.
+    {
+      const pm: PlayerMap = {
+        fq: { n: "Variant QB", p: "QB", t: "DAL" },
+        s1: { n: "Variant Starter", p: "WR", t: "DAL" },
+        keep: { n: "Nico Collins", p: "WR", t: "HOU", inj: "IR" },
+      };
+      const league = { ...lg("1", "Variant League", rp), settings: settings1Slot };
+      const roster: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "s1", "keep"], starters: ["fq", "s1"], reserve: [], taxi: [] };
+      for (const phrase of [
+        "move all my IR eligible players to IR, except Nico Collins",
+        "move all my IR eligible players to IR, excluding Nico Collins",
+        "move all my IR eligible players to IR, leave Nico Collins on the bench",
+      ]) {
+        const env = makeEnv([{ league, rosters: [roster, otherRoster([])], txns: [] }], pm);
+        env.permission = "LIVE";
+        const out = await handleCommand(phrase, newSession(), env);
+        ok(out.audit.intent === "ir_opps", `"${phrase}" parses as ir_opps`, out.audit.intent);
+        ok(draftsOf(out.blocks).length === 0 && !/Nico Collins/.test(decisionsTextOf(out.blocks)), `"${phrase}" excludes him from the real output`, decisionsTextOf(out.blocks));
+      }
+    }
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

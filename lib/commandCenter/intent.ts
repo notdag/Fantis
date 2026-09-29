@@ -36,7 +36,10 @@ export type Intent =
   // command, which overrides the owner's standing IR Release list. Absent,
   // the engine falls back to that standing list automatically — one single
   // "move all my IR eligible players to IR" phrasing covers everything.
-  | { kind: "ir_opps"; releaseOrder?: Mention[] }
+  // keepOnBench: an inline "...keep X on my bench" / "except X" exception —
+  // named players are excluded from the IR move entirely this command (a
+  // real judgment call, e.g. "I think he'll play week 4"), never proposed.
+  | { kind: "ir_opps"; releaseOrder?: Mention[]; keepOnBench?: Mention[] }
   | { kind: "roster_decisions" }
   | { kind: "execute_request"; verb: string; mentions: Mention[]; filter: ViewFilter; dropOrder?: Mention[] }
   | { kind: "reset" }
@@ -134,20 +137,40 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     if (/\bthis week\b/.test(t)) return { kind: "week_record", week: null, relative: "this" };
   }
 
-  // "move all my IR eligible players to IR, release A, B, C if needed" — the
-  // bulk scan plus the owner's own preferred release order for whichever
-  // leagues turn out to have a full IR. Checked before activate_ir/send_to_ir
-  // just below: both of those also match on move/send + "to IR" and only
-  // require mentions.length > 0 — and the release order itself introduces
-  // mentions, so without this hoist it would be swallowed by send_to_ir
+  // "move all my IR eligible players to IR, release A, B if needed" and/or
+  // "...keep Nico Collins on my bench" ("except X" / "excluding X" / "leave
+  // X on the bench" also work) — the bulk scan plus either or both optional
+  // per-command overrides: an inline release order (who to drop from IR to
+  // make room, overriding the owner's standing IR Release list) and/or an
+  // inline keep-on-bench exception (a player who's otherwise IR-eligible
+  // but shouldn't be moved THIS command — e.g. "I think he'll play week
+  // 4" — excluded entirely, never proposed). Checked before activate_ir/
+  // send_to_ir just below: both of those also match on move/send + "to IR"
+  // and only require mentions.length > 0 — and these clauses introduce
+  // mentions, so without this hoist they'd be swallowed by send_to_ir
   // before ever reaching the ir_opps block further down. The bulk-scan half
-  // must still have no mentions of its own (split.before.length === 0) so a
-  // real per-player "move X to IR" is never mistaken for this.
+  // must still have no mentions of its own outside these two clauses (every
+  // mention is accounted for by one of them) so a real per-player "move X
+  // to IR" is never mistaken for this.
   if (mentions.length > 0 && /\bir\b|injur/.test(t) && /\b(league|leagues|player|players|roster)\b/.test(t)) {
-    const split = splitAtDropKeyword(text, mentions);
-    if (split && split.before.length === 0 && split.after.length > 0) {
-      return { kind: "ir_opps", releaseOrder: split.after };
-    }
+    const dropSplit = splitAtDropKeyword(text, mentions);
+    const releaseOrder = dropSplit && dropSplit.before.length === 0 && dropSplit.after.length > 0 ? dropSplit.after : undefined;
+    const released = new Set(releaseOrder?.map((m) => m.text) ?? []);
+    const remaining = mentions.filter((m) => !released.has(m.text));
+    const keepSignal = /\b(keep|except|excluding|leave)\b/.test(t) || /\bon (?:my |the )?bench\b/.test(t);
+    const keepOnBench = keepSignal && remaining.length > 0 ? remaining : undefined;
+    if (releaseOrder || keepOnBench) return { kind: "ir_opps", releaseOrder, keepOnBench };
+  }
+
+  // A standalone bench-keeping exception with none of the IR/league wording
+  // above ("I want Nico Collins on my bench, I think he'll play week 4") —
+  // most naturally said right after a "move all my IR eligible players to
+  // IR" command. ir_opps has no persisted "a scan just ran" flag the way
+  // add/waiver scans do (it always re-scans fresh), so this is recognized
+  // directly by its own bench language rather than a session flag; the
+  // engine re-runs the full IR scan with the exception applied either way.
+  if (mentions.length > 0 && (/\b(keep|leave)\b.*\bon (?:my |the )?bench\b/.test(t) || /\bwant\b.*\bon (?:my |the )?bench\b/.test(t) || /\bkeep\b.*\boff (?:of )?(?:the )?ir\b/.test(t))) {
+    return { kind: "ir_opps", keepOnBench: mentions };
   }
 
   // "Move <player> off IR to the bench" — checked before the generic execute_request

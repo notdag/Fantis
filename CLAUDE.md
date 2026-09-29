@@ -1431,3 +1431,67 @@ timer-driven sends while the page is merely open.
   rejected rows from an earlier smoke test. Cleaned up all 47 verification
   proposals afterward (rejected via the same PATCH endpoint the UI uses) so
   nothing was left cluttering the owner's real Proposals tab.
+
+### Chat: "move all to IR, keep &lt;player&gt; on my bench" exception (2026-09; requested explicitly by the owner)
+
+"I want Nico Collins on my bench, I think he'll play week 4" — the owner
+wanted a way to name a real judgment call (a player who's technically
+IR-eligible but they expect back soon) and have the bulk IR move skip him
+entirely, without having to remember it every time as a standing list (that
+already exists separately as the IR Release list, which is about who to
+*release*, not who to keep active — a different question).
+
+- `ir_opps`'s `Intent` gained an optional `keepOnBench?: Mention[]`
+  (`lib/commandCenter/intent.ts`), recognized two ways:
+  1. **Inline on the same command**: "move all my IR eligible players to
+     IR, keep Nico Collins on my bench" (also "except X" / "excluding X" /
+     "leave X on the bench"), composable with the existing inline release
+     order in the same sentence — every mention in the sentence has to be
+     accounted for by one clause or the other, or this doesn't fire, so a
+     real per-player "move X to IR" is never mistaken for it.
+  2. **A standalone follow-up with none of the IR/league wording at all**:
+     "I want Nico Collins on my bench, I think he'll play week 4" — matched
+     by its own bench language rather than a session flag, since `ir_opps`
+     has no persisted "a scan just ran" marker the way add/waiver scans do
+     (it always re-scans fresh regardless).
+  Checked for both never colliding with `send_to_ir`/`activate_ir`: neither
+  mentions "bench" nor a keep/except/leave word, so "put X on IR" and "move
+  X to IR" (the opposite direction) still route correctly — verified
+  directly, not just assumed.
+- **The real fix was doing the exclusion BEFORE building the plan, not
+  after.** `lib/commandCenter/engine.ts`'s `ir_opps` case resolves the named
+  player(s) first, then wraps `injuryOf` so a kept player reports as healthy
+  (`null`) to `buildIrPlan` — he's dropped out of the eligible pool entirely,
+  the same as if he really weren't hurt. Filtering the OUTPUT afterward
+  instead would have been a real, silent bug: `buildIrPlan` assigns open IR
+  slots to the most-severe-first sorted eligible list, so if the kept player
+  would have sorted first, the open slot is "spent" on him internally before
+  any output exists to filter — the next real eligible player in that same
+  league would have been wrongly reported as needing a drop instead of
+  getting the now-free slot. Caught and tested directly (section 35(b) in
+  `scripts/testCommandCenter.ts`): a synthetic league with one open slot and
+  two eligible players proves excluding the kept one really reassigns the
+  slot, not just hides a row.
+- The summary line discloses him honestly: "Kept on your bench by request,
+  not moved: Nico Collins (real IR-eligible in N leagues)" — N computed the
+  same way `buildIrPlan` itself determines eligibility (rostered, active,
+  not already on IR, `irAllowed()` true for his real status), never a guess
+  or a raw "rostered in N leagues" count.
+- Deliberately NOT a persisted preference list (unlike IR Release) — this is
+  a one-off, often week-specific call ("I think he'll play week 4"), and the
+  owner didn't ask for a standing list. If that changes, add a fourth
+  `PlayerPreference` kind the same way `ir_release`/`never_start` were added.
+- Tests: 35 new assertions in `scripts/testCommandCenter.ts` (section 35,
+  now 409) — inline exclusion with a genuinely real "IR" status (not a
+  vacuous case where he'd never have been eligible anyway), the slot-math
+  correctness case, the standalone bench-only phrasing, both IR directions
+  confirmed un-swallowed, and three inline phrasing variants (except/
+  excluding/leave-on-bench). `scripts/testCommandCenterExec.ts` unaffected
+  (84, unchanged) since this is entirely in the read-only engine/intent
+  layer — no executor or write-path code touched. `tsc`/`eslint`/`next
+  build` all clean. Not live-verified against the real account this time —
+  the local dev server came up behind the `/admin` passphrase gate with no
+  session cookie available in this browser context, so it couldn't be
+  unlocked without the owner's own passphrase; verification instead relied
+  on `handleCommand` integration tests, which exercise the real engine entry
+  point (not a mock) end to end.

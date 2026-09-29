@@ -851,7 +851,30 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const mine = s.rosters.find((r) => r.rosterId === s.league.rosterId)!;
         plan.push({ leagueId: s.league.id, leagueName: s.league.name, rosterId: mine.rosterId, settings: s.league.settings, starters: mine.starters, players: mine.players, reserve: mine.reserve, faabUsed: null });
       }
-      const rows = buildIrPlan(plan, (id) => env.pmap[id]?.inj ?? null, env.rank, (id) => env.signals.priority.has(id));
+
+      // An inline "...keep X on my bench" exception (or a standalone
+      // follow-up carrying only this) — resolved BEFORE building the plan,
+      // because it has to change who's even considered IR-eligible, not just
+      // filter the output: excluding him afterward would leave the open-slot
+      // math wrong (buildIrPlan would have already "spent" a real open slot
+      // proposing him instead of the next real eligible player in line).
+      let keepOnBench: PlayerCard[] | null = null;
+      if (intent.keepOnBench && intent.keepOnBench.length > 0) {
+        const resolved = await resolveMentions(intent.keepOnBench.map((m) => m.text), [], { filter: {}, wantDrops: false });
+        if (!resolved) break; // ambiguous or not found — resolveMentions already asked/explained
+        keepOnBench = resolved;
+      }
+      const keepIds = new Set(keepOnBench?.map((p) => p.id) ?? []);
+      const baseInjuryOf = (id: string) => env.pmap[id]?.inj ?? null;
+      const injuryOf = keepIds.size > 0 ? (id: string) => (keepIds.has(id) ? null : baseInjuryOf(id)) : baseInjuryOf;
+      // Real count of leagues where he'd actually have been eligible (not
+      // just rostered) — the same rule buildIrPlan itself applies, so the
+      // disclosure below never overstates what the exception changed.
+      const keptLeagueCount = keepIds.size
+        ? plan.filter((p) => [...keepIds].some((id) => p.players.includes(id) && !p.reserve.includes(id) && irAllowed(p.settings, baseInjuryOf(id)))).length
+        : 0;
+
+      const rows = buildIrPlan(plan, injuryOf, env.rank, (id) => env.signals.priority.has(id));
       blocks.push({ t: "scanStatus", meta });
 
       // Who's allowed to be released to make room on a full IR — ONE single
@@ -961,6 +984,10 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         tone: list.length ? "good" : "info",
         text: `${rows.length} player${rows.length === 1 ? "" : "s"} across ${list.length} league${list.length === 1 ? "" : "s"} could be moved to IR under each league's own IR rules (Doubtful is never suggested).${
           releaseOrder ? ` ${releasedPairs} of those used your release order (${releaseOrder.map((p) => p.name).join(" → ")}).` : ""
+        }${
+          keepOnBench && keepOnBench.length > 0
+            ? ` Kept on your bench by request, not moved: ${keepOnBench.map((p) => p.name).join(", ")} (real IR-eligible in ${keptLeagueCount} league${keptLeagueCount === 1 ? "" : "s"}).`
+            : ""
         } Nothing has been moved.`,
       });
       blocks.push({ t: "decisions", title: "IR opportunities", rows: list.slice(0, ROW_CAP), truncated: Math.max(0, list.length - ROW_CAP) });
