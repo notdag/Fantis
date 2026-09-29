@@ -19,6 +19,7 @@ export const LEAGUE_SUB_ROUTES = [
 // (league-scoped), since both are a single path segment after /manager.
 const PORTFOLIO_SLUGS = new Set([
   "teams",
+  "record",
   "matchups",
   "byes",
   "injuries",

@@ -1541,3 +1541,58 @@ different angle (before vs. after a bulk IR run).
   sections and used identically by the already-shipped, already-verified
   `BulkIR.tsx` — worth a quick real look on `/manager/open-spots` before
   leaning on it for a specific number.
+
+### Weekly Record page — real per-week win/loss across every league (2026-09; requested explicitly by the owner)
+
+"I want to analyze how many leagues are winning/losing" — a new
+`/manager/record` page (My Leagues nav group, right under My Leagues) shows
+the owner's real per-week result in every in-season league, not just the
+current-season W-L-T total the Portfolio page's Record Snapshot already
+shows.
+
+- **Source of truth: `WeeklyResult`**, the same table the `week_record` chat
+  intent reads (`app/api/manager/week-record/route.ts`) — real per-roster,
+  per-week outcomes the regular sync already resolves from Sleeper's own
+  `getMatchups()` response, "never guessed" per its own schema comment.
+  `won: null` covers BOTH a genuine tie AND a bye/unresolved pairing —
+  Sleeper's data doesn't distinguish them, so this page doesn't invent a
+  distinction either; it's labelled "Tied / bye" throughout, honestly
+  ambiguous rather than silently wrong. `Matchup` supplies the opponent name
+  + score for each week's tooltip, same join the week-record route already
+  does.
+- **Pure DB read** (`app/manager/record/page.tsx`) — no Sleeper call, reads
+  `Roster` (to know which rosterId is mine per league), `WeeklyResult`, and
+  `Matchup`, all already synced. Scoped to `status: "in_season"` leagues the
+  owner actually has a roster in.
+- **Three views, one page** (`components/manager/WeeklyRecord.tsx`):
+  1. Stat cards — Winning / .500 / Losing league counts (the exact same
+     `wins > losses` / `===` / `<` rule the Portfolio Record Snapshot card
+     already uses, so the two numbers agree) plus weeks tracked.
+  2. **By week** — for every week with real data, most recent first: how
+     many leagues won/lost/tied-or-byed that week, and a real win% — the
+     direct trend-over-time answer to "how many am I winning/losing."
+  3. **By league** — filterable (All/Winning/.500/Losing, each chip labelled
+     with its real count) and sorted worst-record-first by default, so
+     struggling leagues surface without hunting. Each row shows the season
+     record, the real current streak (reused `computeStreak()` from
+     `lib/leagueRank.ts` — the same function that powers Standings' Streak
+     column, not a second implementation), and a compact per-week strip of
+     small colored squares (mint = won, red = lost, dim = tied/bye, blank =
+     not yet played) — a full season at a glance without an 18-column table.
+     Hovering a square shows that week's real opponent and score; clicking a
+     row goes to that league.
+  Best-ball leagues are hidden by default with the same "Best ball hidden
+  (N)" toggle chip `/manager/lineups` already uses (`LineupManager.tsx`),
+  reused verbatim for consistency rather than a new invented label.
+- Registered like every other top-level portfolio page: `managerNav.ts` (nav
+  entry) and `leagueSubRoutes.ts`'s `PORTFOLIO_SLUGS` (skipping this is the
+  exact bug the `open-spots`/`inbox` entries above already flag — a
+  top-level `/manager/<slug>` left out gets misread as a league page with
+  `leagueId="record"`).
+- `tsc`/`eslint`/`next build` all clean. Not live-verified against the real
+  account — same `/admin` passphrase blocker as the two entries above (no
+  session cookie in this browser context). The underlying data path
+  (`WeeklyResult`/`Matchup` joined by league+week) is the same one already
+  exercised by the real, working `week-record` API route and the `Streak`
+  column already shown on Standings — worth a quick real look on
+  `/manager/record` before leaning on a specific number.
