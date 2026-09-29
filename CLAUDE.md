@@ -1657,3 +1657,41 @@ was self-diagnosing once checked directly.
   confirm or refute the theory (Sleeper's own live data) — the owner's
   immediate real-usage pushback caught what a satisfied-looking test result
   didn't.
+
+### Mass IR: "keep on bench" search box (2026-09; requested explicitly by the owner, scoped via AskUserQuestion)
+
+The chat command's `keepOnBench` exception (see the entry above) had no
+equivalent on `/manager/lineups`' Mass IR tool — the only way to keep one
+player out of a bulk IR run there was unchecking every one of his rows by
+hand, league by league. Asked directly how this should work (one-off
+per-run vs. a standing list vs. both); the owner chose **one-off per run**,
+matching the chat version's own "I think he'll play week 4" spirit rather
+than a fifth standing `PlayerPreference` list.
+
+- `components/manager/BulkIR.tsx` — a search box ("Keep someone on the
+  bench instead — search a player…") scoped to players genuinely eligible
+  in the CURRENT run (`rawRows`, `buildIrPlan` computed unfiltered), not the
+  whole player universe — searching for someone not actually IR-eligible
+  right now would be noise. Picking one adds him as a removable chip
+  ("Kept on bench this run: ×") and excludes him from the run.
+- **Same exclude-before-the-plan lesson as the chat fix, applied here too**:
+  `injuryOf` is wrapped to report a kept player as healthy (`null`) BEFORE
+  `buildIrPlan` runs, not filtered out of the rows afterward — otherwise a
+  kept player who'd have sorted first for an open IR slot would still
+  "spend" that slot internally, wrongly leaving the next real eligible
+  player marked as needing a drop instead of getting the freed slot.
+- Deliberately session-only, no persistence: reloading the page or leaving
+  the tab clears the keep list, matching the "re-pick him next time if
+  still needed" behavior the owner chose. If a standing list is wanted
+  later, it's a straightforward addition — the same `injuryOf`-wrapping
+  mechanism already generalizes to it.
+- `tsc`/`eslint`/`next build` all clean. The underlying exclusion mechanism
+  (`buildIrPlan` fed a wrapped `injuryOf`) is the exact same one already
+  proven correct by `scripts/testCommandCenter.ts` section 35(b) for the
+  chat version — this addition is UI plumbing around already-tested logic,
+  not new pure-function behavior, so no new test file was added (matches
+  this codebase's convention: `lib/**` pure logic gets `tsx` test scripts,
+  component-level UI does not). Not live-verified against the real account
+  — same `/admin` passphrase blocker as the last several entries (no
+  session cookie in this browser context) — worth a real check on
+  `/manager/lineups` → Mass IR before relying on it for a live run.

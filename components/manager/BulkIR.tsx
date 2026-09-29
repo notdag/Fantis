@@ -60,10 +60,47 @@ export default function BulkIR({
     [leagues]
   );
 
-  const rows = useMemo(
-    () => buildIrPlan(planLeagues, (id) => pmap?.[id]?.inj ?? null, rank, isPriority),
-    [planLeagues, pmap, rank, isPriority]
-  );
+  const baseInjuryOf = useCallback((id: string) => pmap?.[id]?.inj ?? null, [pmap]);
+
+  // Real, real-week judgment calls ("I think he'll play this week") to keep
+  // OUT of this run entirely — a one-off, THIS-run-only exclude (re-pick him
+  // next time if he's still hurt then), not a standing preference like
+  // Priority/Avoid/Never Start/IR Release. Computed unfiltered here so the
+  // search box can offer anyone genuinely eligible right now, independent of
+  // who's currently excluded.
+  const [keepQuery, setKeepQuery] = useState("");
+  const [keepIds, setKeepIds] = useState<Set<string>>(new Set());
+  const rawRows = useMemo(() => buildIrPlan(planLeagues, baseInjuryOf, rank, isPriority), [planLeagues, baseInjuryOf, rank, isPriority]);
+  const keepCandidates = useMemo(() => {
+    const seen = new Map<string, string>(); // playerId -> name, de-duped across leagues
+    for (const r of rawRows) if (!seen.has(r.playerId)) seen.set(r.playerId, nameOf(pmap, r.playerId));
+    return seen;
+  }, [rawRows, pmap]);
+  const keepResults = useMemo(() => {
+    const q = keepQuery.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out: { id: string; name: string }[] = [];
+    for (const [id, name] of keepCandidates) {
+      if (keepIds.has(id)) continue;
+      if (name.toLowerCase().includes(q)) out.push({ id, name });
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [keepCandidates, keepQuery, keepIds]);
+  const addKeep = (id: string) => {
+    setKeepIds((prev) => new Set(prev).add(id));
+    setKeepQuery("");
+  };
+  const removeKeep = (id: string) => setKeepIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+
+  // Excluding BEFORE the plan is built (not filtering rows after) is what
+  // makes this correct: buildIrPlan assigns each league's open IR slots to
+  // its eligible players in severity order, so if a kept player would have
+  // sorted first, the slot has to go to the next real eligible player
+  // instead — filtering the OUTPUT afterward would leave that slot wrongly
+  // reported as taken. Same lesson as the chat "keep X on my bench" fix.
+  const injuryOf = useCallback((id: string) => (keepIds.has(id) ? null : baseInjuryOf(id)), [keepIds, baseInjuryOf]);
+  const rows = useMemo(() => buildIrPlan(planLeagues, injuryOf, rank, isPriority), [planLeagues, injuryOf, rank, isPriority]);
 
   // Everything is selected by default; the user un-checks. (Stored as the
   // deselected set so the default needs no effect/initialisation once the
@@ -185,6 +222,44 @@ export default function BulkIR({
         IR is full, Fantis proposes dropping the lowest-value player currently on IR (dropping a
         bench player wouldn&rsquo;t free an IR slot) — change any pick, or uncheck the row.
       </p>
+
+      <div className="field" style={{ marginBottom: 8, alignItems: "center" }}>
+        <input
+          className="input"
+          placeholder="Keep someone on the bench instead — search a player…"
+          value={keepQuery}
+          onChange={(e) => setKeepQuery(e.target.value)}
+          style={{ maxWidth: 320 }}
+        />
+      </div>
+      {keepResults.length > 0 && (
+        <DataTable>
+          {keepResults.map((r) => (
+            <TableRow as="button" key={r.id} onClick={() => addKeep(r.id)}>
+              <PlayerAvatar playerId={r.id} pos={pmap[r.id]?.p} size={24} />
+              <span className="tname" style={{ flex: 1 }}>{r.name}</span>
+              <span className="portmeta">keep on bench, not IR — this run only</span>
+            </TableRow>
+          ))}
+        </DataTable>
+      )}
+      {keepIds.size > 0 && (
+        <div className="field" style={{ margin: "10px 0", flexWrap: "wrap", gap: 8 }}>
+          <span className="portmeta">Kept on bench this run:</span>
+          {[...keepIds].map((id) => (
+            <span key={id} className="chip-filter on" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {nameOf(pmap, id)}
+              <button
+                aria-label={`Stop keeping ${nameOf(pmap, id)} on the bench`}
+                onClick={() => removeKeep(id)}
+                style={{ appearance: "none", border: 0, background: "transparent", color: "inherit", cursor: "pointer", fontWeight: 700, padding: 0, lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <p className="hint">No injured players eligible for IR in any league right now.</p>
