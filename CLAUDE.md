@@ -1596,3 +1596,41 @@ shows.
   exercised by the real, working `week-record` API route and the `Streak`
   column already shown on Standings — worth a quick real look on
   `/manager/record` before leaning on a specific number.
+
+### Weekly Record: week 1 showed 109 fake "ties" (2026-09; real bug reported by the owner)
+
+The owner caught it immediately from real usage: Week 1 read 63 won / 38
+lost / **109 tied**, which isn't a real outcome in fantasy scoring at any
+real scale. Investigated directly against the live database (a one-off
+`tsx` script reading the same `WeeklyResult`/`Matchup` tables this page
+reads, then deleted — not a new script kept in the repo) rather than
+guessing: all 109 had `myPoints: 0` and `opponentPoints: 0`, always against
+a real, named opponent (never a bye — a genuine bye has no opponent at
+all). Confirmed the pattern was isolated to week 1 only (0 such rows in
+week 2 or later) by checking every week directly.
+
+**Root cause**: a league whose real Sleeper draft happened after a given
+week's games had already started (a late/slow real-world draft) leaves that
+week's matchup as a 0-0 placeholder against a real opponent — Sleeper's own
+data, not a sync bug. `won` is computed as `points > opp ? true : points <
+opp ? false : null` (`lib/managerSync.ts`), and 0 is neither greater than
+nor less than 0, so it lands in the same `null` bucket as a genuine tie or a
+real bye — indistinguishable by the numbers alone, and the page's "Tied /
+bye" label (deliberately honest about that existing ambiguity per the entry
+above) was quietly wrong for this specific case: a real 0-0 tie is not
+possible in fantasy scoring, so any exactly-0-0 `null` row is provably a
+"this week never really happened for this league" artifact, not a tie or a
+bye.
+
+**Fix**: `app/manager/record/page.tsx` drops any `WeeklyResult` row where
+`won === null && points === 0 && opponentPoints === 0` before it ever
+reaches the component — the same treatment as a week the league hasn't
+reached yet (blank in the per-week strip), which is what it honestly is.
+Genuine byes (`opponentPoints: null`, no opponent at all) and genuine ties
+(anything not exactly 0-0) are untouched, still shown as "Tied / bye".
+Verified the fix directly against the real data before shipping (not just
+by inspection): re-simulated the page's exact computation with the filter
+applied — week 1 now reads 63/38/**0** (down from 109), weeks 2 and 3 were
+already 0 affected rows and stayed that way, confirming the fix is scoped
+to exactly the leagues that needed it and touches nothing else. `tsc`/
+`eslint`/`next build` all clean.
