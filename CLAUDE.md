@@ -1597,40 +1597,63 @@ shows.
   column already shown on Standings — worth a quick real look on
   `/manager/record` before leaning on a specific number.
 
-### Weekly Record: week 1 showed 109 fake "ties" (2026-09; real bug reported by the owner)
+### Weekly Record: week 1 showed 109 fake "ties" — two passes to the real fix (2026-09; real bug reported by the owner)
 
 The owner caught it immediately from real usage: Week 1 read 63 won / 38
 lost / **109 tied**, which isn't a real outcome in fantasy scoring at any
-real scale. Investigated directly against the live database (a one-off
-`tsx` script reading the same `WeeklyResult`/`Matchup` tables this page
-reads, then deleted — not a new script kept in the repo) rather than
-guessing: all 109 had `myPoints: 0` and `opponentPoints: 0`, always against
-a real, named opponent (never a bye — a genuine bye has no opponent at
-all). Confirmed the pattern was isolated to week 1 only (0 such rows in
-week 2 or later) by checking every week directly.
+real scale.
 
-**Root cause**: a league whose real Sleeper draft happened after a given
-week's games had already started (a late/slow real-world draft) leaves that
-week's matchup as a 0-0 placeholder against a real opponent — Sleeper's own
-data, not a sync bug. `won` is computed as `points > opp ? true : points <
-opp ? false : null` (`lib/managerSync.ts`), and 0 is neither greater than
-nor less than 0, so it lands in the same `null` bucket as a genuine tie or a
-real bye — indistinguishable by the numbers alone, and the page's "Tied /
-bye" label (deliberately honest about that existing ambiguity per the entry
-above) was quietly wrong for this specific case: a real 0-0 tie is not
-possible in fantasy scoring, so any exactly-0-0 `null` row is provably a
-"this week never really happened for this league" artifact, not a tie or a
-bye.
+**First pass (wrong theory).** Investigated against the live database
+directly (one-off `tsx` scripts, deleted after use — never kept in the
+repo) rather than guessing: all 109 had `myPoints: 0` and `opponentPoints:
+0` against a real, named opponent (never a bye — a genuine bye has no
+opponent). Theorized this meant those leagues' real Sleeper drafts happened
+after week 1's games had already started, so the 0-0 was Sleeper's own
+"nothing happened yet" data. Shipped a display-side fix on that theory —
+dropping any `WeeklyResult` row with `won === null && points === 0 &&
+opponentPoints === 0` — and reported week 1 as 63/38/**0**.
 
-**Fix**: `app/manager/record/page.tsx` drops any `WeeklyResult` row where
-`won === null && points === 0 && opponentPoints === 0` before it ever
-reaches the component — the same treatment as a week the league hasn't
-reached yet (blank in the per-week strip), which is what it honestly is.
-Genuine byes (`opponentPoints: null`, no opponent at all) and genuine ties
-(anything not exactly 0-0) are untouched, still shown as "Tied / bye".
-Verified the fix directly against the real data before shipping (not just
-by inspection): re-simulated the page's exact computation with the filter
-applied — week 1 now reads 63/38/**0** (down from 109), weeks 2 and 3 were
-already 0 affected rows and stayed that way, confirming the fix is scoped
-to exactly the leagues that needed it and touches nothing else. `tsc`/
-`eslint`/`next build` all clean.
+**The owner immediately caught that this was ALSO wrong**: "i had more than
+63+38 leagues in week 1" — the fix had gone from over-counting fake ties to
+silently dropping 109 real, decided games. That was the signal the theory
+itself was wrong, not just the display math. Checked it properly this time:
+called Sleeper's real live API directly for a sample of the "ghost" league
+IDs (`GET /league/{id}/matchups/1`) instead of reasoning from the DB alone —
+**every one had real, non-zero week-1 scores with a normal 2-team
+pairing**. The 0-0 in Fantis's own database was stale, not reality.
+
+**Real root cause**: `lib/managerSync.ts`'s backfill only fetches a past
+week from Sleeper if `WeeklyResult` has **no row at all** for it
+(`!existing.has(w)`). If an account's very first sync for a league happened
+to run before that week's real scores existed yet, it wrote a 0-0
+placeholder — and because a row (any row) now existed, that week was
+permanently treated as "already synced" and never revisited, even once the
+real scores existed on Sleeper's side. A genuinely completed past week
+where every roster shows exactly 0 points is never a real result, so this
+was self-diagnosing once checked directly.
+
+**Real fix, two parts**:
+1. `lib/managerSync.ts` — the backfill "is this week missing" check now
+   also treats a past week as needing a refetch when every existing row for
+   it is exactly 0 points, not just when there's no row. Self-healing: the
+   next regular sync (scheduled or "Sync now") repairs any account that
+   ever hits this, including any future recurrence for a different league.
+2. Ran the real, existing `syncAccount()` — the exact same code the "Sync
+   now" button calls, not a bespoke repair script — once immediately
+   (via a deleted one-off `tsx` script) so the OWNER'S CURRENT data was
+   corrected right away rather than waiting on their next manual sync.
+   Verified directly against the DB before and after: week 1 went from
+   63/38/109(fake) to the real **133 won / 77 lost / 0 undecided**.
+3. The display-side 0-0 filter in `app/manager/record/page.tsx` from the
+   first pass was kept, but its comment corrected — it's no longer the fix
+   itself, just a harmless defensive backstop (and it's exactly right for
+   the CURRENT in-progress week too, which legitimately shows 0-0 for
+   everyone until real games are played — confirmed live: week 4, the
+   account's actual current week, showed all 210 leagues at 0-0 undecided,
+   correctly excluded from the trend rather than counted as 210 ties).
+- `tsc`/`eslint`/`next build` all clean. The lesson worth keeping: the first
+  fix "worked" in the narrow sense that it made the specific reported number
+  go away, but was never checked against the one source that could actually
+  confirm or refute the theory (Sleeper's own live data) — the owner's
+  immediate real-usage pushback caught what a satisfied-looking test result
+  didn't.

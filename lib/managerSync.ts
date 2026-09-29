@@ -396,20 +396,33 @@ export async function syncAccount(
           }
 
           // Incremental backfill of past weeks' real results (Streak needs
-          // more than just this week) — only weeks not already in
-          // WeeklyResult, capped per sync call. A Postgres read, not a
-          // Sleeper call, so cheap to check every league every sync; the
-          // real Sleeper fetch only happens for genuinely missing weeks.
+          // more than just this week) — weeks not already in WeeklyResult,
+          // capped per sync call. A Postgres read, not a Sleeper call, so
+          // cheap to check every league every sync; the real Sleeper fetch
+          // only happens for genuinely missing (or stale, see below) weeks.
           if (week > 1) {
             const existingWeeks = await db.weeklyResult.findMany({
               where: { leagueId: lg.league_id },
-              select: { week: true },
-              distinct: ["week"],
+              select: { week: true, points: true },
             });
-            const existing = new Set(existingWeeks.map((w) => w.week));
+            const pointsByWeek = new Map<number, number[]>();
+            for (const w of existingWeeks) {
+              const arr = pointsByWeek.get(w.week);
+              if (arr) arr.push(w.points);
+              else pointsByWeek.set(w.week, [w.points]);
+            }
             const missing: number[] = [];
             for (let w = 1; w < week; w++) {
-              if (!existing.has(w)) missing.push(w);
+              const pts = pointsByWeek.get(w);
+              // A COMPLETED past week where every roster shows exactly 0
+              // points is never a real result (confirmed directly against
+              // Sleeper's live API: leagues whose account-level sync
+              // happened to run before that week's real scores existed got
+              // stuck with a permanent 0-0 placeholder, since it counted as
+              // "already synced" and was never revisited) — treated the
+              // same as genuinely missing so it self-heals on the next sync
+              // instead of staying wrong forever.
+              if (!pts || pts.length === 0 || pts.every((p) => p === 0)) missing.push(w);
             }
             // Independent weeks — fetch/persist concurrently rather than
             // one round trip at a time.

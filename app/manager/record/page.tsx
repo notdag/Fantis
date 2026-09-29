@@ -47,16 +47,15 @@ export default async function RecordPage() {
           const m = matchupByKey.get(`${lg.id}:${w.week}`);
           return { week: w.week, points: w.points, won: w.won, opponentTeamName: m?.opponentTeamName ?? null, opponentPoints: m?.opponentPoints ?? null };
         })
-        // A league whose real Sleeper draft happened AFTER a given week's
-        // games had already started leaves that week's matchup as a 0-0
-        // placeholder against a real, named opponent — Sleeper's data, not
-        // a bug in the sync (confirmed directly: 109 leagues showed this
-        // for week 1 only, and it fully disappears from week 2 on). Scored
-        // 0-0, it isn't distinguishable from a genuine tie by the numbers
-        // alone, but a real tie needs someone to have actually played —
-        // this wasn't a real week for that league at all, so it's dropped
-        // here rather than counted as "tied" (or even a bye, which has no
-        // opponent). A real 0-0 tie is not possible in fantasy scoring.
+        // A completed past week where BOTH sides show exactly 0 points is
+        // never a real result — confirmed directly against Sleeper's own
+        // live API (real, non-zero scores existed there the whole time).
+        // The real cause was a sync bug, now fixed at the source
+        // (lib/managerSync.ts's backfill self-heals a stale all-zero week
+        // on the next sync) — this filter is just a defensive backstop so a
+        // display page never shows a fake "tie" even for the brief window
+        // before that fix has re-synced this account, or if the exact same
+        // failure mode ever recurs for a different reason.
         .filter((w) => !(w.won === null && w.points === 0 && w.opponentPoints === 0))
         .sort((a, b) => a.week - b.week);
       return { leagueId: lg.id, leagueName: lg.name, bestBall: isBestBall(lg.settings), weeks };
