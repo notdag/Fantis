@@ -26,7 +26,7 @@ export default async function WaiverPage() {
   // Scoped to leagues you're actually managing right now — in-season and
   // not best ball (best-ball leagues set their own lineups and don't run
   // real waivers the same way). Same filter Lineups/Open Spots already use.
-  const [leagueRows, rosterRows, leagueRosterRows, pingRow, waiverHistoryRows] = await Promise.all([
+  const [leagueRows, rosterRows, leagueRosterRows, waiverHistoryRows] = await Promise.all([
     db.league.findMany({
       where: { status: "in_season" },
       select: {
@@ -45,7 +45,6 @@ export default async function WaiverPage() {
     }),
     db.roster.findMany(),
     db.leagueRoster.findMany({ select: { leagueId: true, players: true } }),
-    db.automationPing.findUnique({ where: { id: "singleton" } }),
     db.waiverHistory.findMany({ orderBy: [{ season: "desc" }, { leagueName: "asc" }] }),
   ]);
 
@@ -86,6 +85,7 @@ export default async function WaiverPage() {
     return {
       leagueId: lg.id,
       leagueName: lg.name,
+      rosterId: roster.rosterId,
       players: roster.players,
       starters: roster.starters,
       allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
@@ -152,7 +152,6 @@ export default async function WaiverPage() {
       leagues={leagues}
       multiAddLeagues={multiAddLeagues}
       faabLeagues={faabLeagues}
-      automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       waiverHistoryBySeason={waiverHistoryBySeason}
     />
   );

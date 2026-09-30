@@ -1885,3 +1885,60 @@ the app rather than inventing anything new.
   as the entry above, unrelated to this change). Not live-verified against
   the real account — same `/admin` passphrase blocker as the last several
   entries.
+
+### Waiver Assistant: single-player lookup now executes directly (2026-09; requested explicitly by the owner)
+
+"i cant execute waivers from the page, it opens the league, can u code a way
+to execute from fantis, i dont want to manually do this" — the single-player
+lookup tool at the bottom of `/manager/waiver` was the one piece of Waiver
+Assistant still using the old browser-automation queue (`POST
+/api/manager/automation/actions` with `type: "open_waiver"`), which only
+ever opened Sleeper's own page for the owner to finish by hand — a
+leftover from before `BulkAdd.tsx`'s real direct-write pattern existed.
+Converted to match every other add/claim tool in the app:
+
+- **Real execution, same proven pattern as `BulkAdd.tsx`**: `runAdd`
+  (`components/manager/WaiverAssistant.tsx`) calls `addDropFreeAgent` first
+  for each checked, actually-available league; if Sleeper's own error
+  message matches `/waiver/i` (the same real signal `BulkAdd` already keys
+  off), it falls back to `claimWaiver` with a bid — never a pre-guess about
+  whether a league is instant-add or waiver-gated, Sleeper's own response
+  decides. Runs through the shared `runBulk` (concurrency 3), `StatusCell`
+  per row for live feedback, and `useRefreshLeagues()` afterward so Fantis's
+  own data reflects the change without a manual sync.
+- **Real FAAB bid per row, not a guess**: `candidateLeagues` now reads each
+  league's own `waiver_type`/`waiver_bid_min` (from the same slim settings
+  `multiAddLeagues` already carries) and computes a suggested bid via
+  `suggestBid()` — the same real-history-based helper (`lib/faabHistory.ts`)
+  the multi-add board and Command Center already use, fetched once via the
+  same `/api/manager/faab-suggest` endpoint. A non-FAAB league shows no bid
+  field at all rather than a meaningless $0 one; a FAAB league's bid is
+  editable per row and capped at that league's own real remaining budget
+  (from the FAAB-remaining data this page already computes).
+- **No more automation-queue dependency for this tool**: removed the
+  `db.automationPing` lookup and the `automationLastPingAt` prop from
+  `app/manager/waiver/page.tsx` (queued-and-opened is gone from this page
+  entirely — `LeagueIdentityBar.tsx`'s unrelated use of the same
+  `/api/manager/automation/actions` route was left untouched, confirmed by
+  `grep` before removing anything), and deleted the `mounted`/
+  `automationConnected` hydration-safety block that existed only to gate
+  that now-removed "browser automation connected?" hint.
+- `WaiverLeague` gained a real `rosterId` field (from `Roster.rosterId`,
+  already synced) since a direct write needs it — the old queue-based flow
+  never did.
+- Incidentally fixed 2 of the file's 3 pre-existing lint findings as a side
+  effect of deleting the code that caused them (confirmed by linting the
+  prior committed version directly): the `mounted`-block's
+  `react-hooks/set-state-in-effect` finding (removed along with the block)
+  and the bare `<a href="/manager">Install the userscript</a>` link
+  (`@next/next/no-html-link-for-pages`, removed along with the automation
+  hint that contained it). The one remaining finding (a pre-existing
+  `react-hooks/set-state-in-effect` on the "reset selection when the target
+  player changes" effect) is untouched — confirmed identical before and
+  after this change, out of scope for this fix.
+- `tsc`/`eslint`/`next build` all clean. Not live-verified against the real
+  account — same `/admin` passphrase blocker as the last several entries;
+  the underlying write calls (`addDropFreeAgent`/`claimWaiver`) and bid
+  logic (`suggestBid`) are the exact same, already-live-verified code paths
+  `BulkAdd.tsx` uses, not new logic — worth a quick real add/claim on
+  `/manager/waiver` before leaning on it for a live waiver run tonight.

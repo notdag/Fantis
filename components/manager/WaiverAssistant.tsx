@@ -3,14 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
-import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { getTrendingAdds, getTrendingDrops, type TrendingPlayer } from "@/lib/sleeper";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { classifyTransactions, type Claim } from "@/lib/inbox";
-import { cancelWaiverClaim, fetchLeagueTransactions } from "@/lib/sleeperWrite";
+import { addDropFreeAgent, cancelWaiverClaim, claimWaiver, fetchLeagueTransactions } from "@/lib/sleeperWrite";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
@@ -26,6 +26,7 @@ import type { PlayerMapEntry } from "@/lib/types";
 export interface WaiverLeague {
   leagueId: string;
   leagueName: string;
+  rosterId: number;
   players: string[];
   starters: string[];
   // Every real player rostered by ANY team in this league — a true
@@ -68,13 +69,11 @@ export default function WaiverAssistant({
   leagues,
   multiAddLeagues,
   faabLeagues,
-  automationLastPingAt,
   waiverHistoryBySeason,
 }: {
   leagues: WaiverLeague[];
   multiAddLeagues: LineupLeague[];
   faabLeagues: FaabLeague[];
-  automationLastPingAt: string | null;
   waiverHistoryBySeason?: Record<string, WaiverHistoryEntry[]>;
 }) {
   const router = useRouter();
@@ -102,15 +101,6 @@ export default function WaiverAssistant({
       setSyncingHistory(false);
     }
   };
-  // Same hydration-safety pattern as ManagerDashboard.tsx — automationConnected()
-  // depends on Date.now(), so it's gated behind `mounted` to keep the server
-  // render and the client's first hydration pass identical.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  const connected = mounted && automationConnected(automationLastPingAt);
-
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
 
   // Sleeper's own real "who's moving right now" — platform-wide, not scoped
@@ -134,6 +124,17 @@ export default function WaiverAssistant({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Real past winning bids for this account's leagues — same source the
+  // multi-add board uses, so the single-player lookup's suggested bid is
+  // never a blind guess either.
+  const [faabStats, setFaabStats] = useState<FaabStats | null>(null);
+  useEffect(() => {
+    fetch("/api/manager/faab-suggest")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((body: { stats?: FaabStats } | null) => setFaabStats(body?.stats ?? null))
+      .catch(() => setFaabStats(null));
   }, []);
 
   // Real pending waiver claims across every league — same underlying
@@ -259,8 +260,12 @@ export default function WaiverAssistant({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
-  const [queueing, setQueueing] = useState(false);
-  const [queueResult, setQueueResult] = useState("");
+  const [bidOverride, setBidOverride] = useState<Record<string, number>>({});
+  const [execStatus, setExecStatus] = useState<Record<string, TaskStatus>>({});
+  const [executing, setExecuting] = useState(false);
+  const [execSummary, setExecSummary] = useState("");
+  const execAbort = useRef({ aborted: false });
+  const multiAddSettingsByLeague = useMemo(() => new Map(multiAddLeagues.map((l) => [l.league.id, l.league.settings])), [multiAddLeagues]);
 
   const searchResults = useMemo(() => {
     if (!pmap) return [];
@@ -275,22 +280,37 @@ export default function WaiverAssistant({
   }, [pmap, query]);
 
   const selectedSeasonPts = selectedId ? seasonTotals?.[selectedId]?.pts ?? null : null;
+  const remainingByLeague = useMemo(() => new Map(faabLeagues.map((l) => [l.leagueId, l.remaining])), [faabLeagues]);
 
   const candidateLeagues = useMemo(() => {
     if (!selectedId) return [];
     return leagues
       .filter((lg) => !lg.players.includes(selectedId))
-      .map((lg) => ({
-        leagueId: lg.leagueId,
-        leagueName: lg.leagueName,
-        drop: pickDropCandidate(lg.players, lg.starters, seasonTotals),
-        // Real league-wide check, not just "not on my roster" — every
-        // other team's roster in this league is real data now too (see
-        // LeagueRoster in prisma/schema.prisma), so this is honest about
-        // whether a claim could actually go through.
-        takenByOther: lg.allRosteredPlayers.includes(selectedId),
-      }));
-  }, [leagues, selectedId, seasonTotals]);
+      .map((lg) => {
+        const settings = multiAddSettingsByLeague.get(lg.leagueId);
+        const inner = settings && typeof settings === "object" ? (settings as Record<string, unknown>).settings : undefined;
+        const s = inner && typeof inner === "object" ? (inner as Record<string, unknown>) : {};
+        const faab = s.waiver_type === 2;
+        const bidMin = typeof s.waiver_bid_min === "number" ? s.waiver_bid_min : 0;
+        const pos = pmap?.[selectedId]?.p ?? "";
+        const bid = Math.max(bidMin, suggestBid(faabStats, lg.leagueId, pos, bidMin, bidMin).bid);
+        return {
+          leagueId: lg.leagueId,
+          leagueName: lg.leagueName,
+          rosterId: lg.rosterId,
+          drop: pickDropCandidate(lg.players, lg.starters, seasonTotals),
+          // Real league-wide check, not just "not on my roster" — every
+          // other team's roster in this league is real data now too (see
+          // LeagueRoster in prisma/schema.prisma), so this is honest about
+          // whether a claim could actually go through.
+          takenByOther: lg.allRosteredPlayers.includes(selectedId),
+          faab,
+          bidMin,
+          budgetLeft: faab ? remainingByLeague.get(lg.leagueId) ?? null : null,
+          bid,
+        };
+      });
+  }, [leagues, selectedId, seasonTotals, multiAddSettingsByLeague, faabStats, pmap, remainingByLeague]);
 
   // Reset selection to "every league where he's a true free agent" whenever
   // the target player changes — leagues where another team already has him
@@ -305,7 +325,8 @@ export default function WaiverAssistant({
       .filter((lg) => !lg.players.includes(selectedId) && !lg.allRosteredPlayers.includes(selectedId))
       .map((lg) => lg.leagueId);
     setCheckedIds(new Set(ids));
-    setQueueResult("");
+    setExecStatus({});
+    setExecSummary("");
   }, [selectedId, leagues]);
 
   const toggle = (leagueId: string) => {
@@ -317,31 +338,52 @@ export default function WaiverAssistant({
     });
   };
 
-  const queueSelected = async () => {
-    if (queueing || checkedIds.size === 0) return;
-    setQueueing(true);
-    setQueueResult("");
-    const ids = Array.from(checkedIds);
-    const results = await Promise.allSettled(
-      ids.map((leagueId) =>
-        fetch("/api/manager/automation/actions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ leagueId, type: "open_waiver" }),
-        }).then((res) => {
-          if (!res.ok) throw new Error("queue failed");
-        })
-      )
+  const bidFor = (c: (typeof candidateLeagues)[number]) => {
+    const raw = c.leagueId in bidOverride ? bidOverride[c.leagueId] : c.bid;
+    const capped = c.budgetLeft != null ? Math.min(raw, c.budgetLeft) : raw;
+    return Math.max(c.bidMin, Math.trunc(capped));
+  };
+
+  const runAdd = async () => {
+    if (!multiAddToken || executing || checkedIds.size === 0 || !selectedId) return;
+    setExecuting(true);
+    setExecSummary("");
+    execAbort.current = { aborted: false };
+    const targets = candidateLeagues.filter((c) => checkedIds.has(c.leagueId) && !c.takenByOther);
+    const doneLeagues: string[] = [];
+    const tasks: BulkTask[] = targets.map((c) => ({
+      key: c.leagueId,
+      run: async () => {
+        const drop = c.drop?.playerId;
+        try {
+          await addDropFreeAgent(multiAddToken, { leagueId: c.leagueId, rosterId: c.rosterId, addPlayerId: selectedId, dropPlayerId: drop });
+          doneLeagues.push(c.leagueId);
+          return drop ? `added, dropped ${pmap?.[drop]?.n ?? drop}` : "added";
+        } catch (e) {
+          // A player still on waivers can't be a straight add — Sleeper says
+          // so in its error text; fall back to a real waiver claim instead.
+          if (e instanceof Error && /waiver/i.test(e.message)) {
+            const bid = bidFor(c);
+            await claimWaiver(multiAddToken, { leagueId: c.leagueId, rosterId: c.rosterId, addPlayerId: selectedId, dropPlayerId: drop, bid });
+            doneLeagues.push(c.leagueId);
+            return `waiver claim${c.faab ? ` $${bid}` : ""}`;
+          }
+          throw e;
+        }
+      },
+    }));
+    const result = await runBulk(tasks, {
+      concurrency: 3,
+      signal: execAbort.current,
+      onStatus: (key, s) => setExecStatus((prev) => ({ ...prev, [key]: s })),
+    });
+    setExecuting(false);
+    const refreshed = result.done > 0 ? await refreshLeagues(doneLeagues) : null;
+    setExecSummary(
+      `${result.done} sent${result.failed ? `, ${result.failed} failed` : ""}.${
+        result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""
+      }${refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : ""}`
     );
-    const ok = results.filter((r) => r.status === "fulfilled").length;
-    const failed = results.length - ok;
-    setQueueResult(
-      `Queued ${ok} league${ok === 1 ? "" : "s"}${failed > 0 ? `, ${failed} failed to queue` : ""}. ` +
-        (connected
-          ? "Tabs should open within a few seconds."
-          : "Browser automation isn't connected — install the userscript from /manager, or open each league yourself.")
-    );
-    setQueueing(false);
   };
 
   return (
@@ -560,7 +602,7 @@ export default function WaiverAssistant({
       </section>
 
       <section className="sec" style={{ paddingBottom: 0 }}>
-        <SectionHead title="Single-player lookup" right="opens Sleeper for you to review and submit" />
+        <SectionHead title="Single-player lookup" right="adds or claims him directly, no trip to Sleeper" />
         <div className="field" style={{ maxWidth: 360, marginTop: 4 }}>
           <input
             className="input"
@@ -645,10 +687,9 @@ export default function WaiverAssistant({
             right={`${candidateLeagues.filter((c) => !c.takenByOther).length} of ${candidateLeagues.length} league${candidateLeagues.length === 1 ? "" : "s"} without him actually available`}
           />
 
-          {mounted && !connected && (
+          {!multiAddToken && (
             <p className="hint" style={{ color: "var(--dim)" }}>
-              ○ Browser automation isn&rsquo;t connected — leagues will still queue, but you&rsquo;ll
-              need to open them yourself. <a className="link" href="/manager">Install the userscript</a>.
+              ○ Connect Sleeper write access above to add or claim directly.
             </p>
           )}
 
@@ -657,20 +698,23 @@ export default function WaiverAssistant({
           ) : (
             <>
               <DataTable>
-                {candidateLeagues.map(({ leagueId, leagueName, drop, takenByOther }) => {
+                {candidateLeagues.map((c) => {
+                  const { leagueId, leagueName, drop, takenByOther, faab, budgetLeft } = c;
                   const label = drop ? pmap?.[drop.playerId] : null;
                   const diff =
                     selectedSeasonPts != null && drop ? selectedSeasonPts - drop.value : null;
+                  const status = execStatus[leagueId];
+                  const done = status?.kind === "done";
                   return (
                     <TableRow
                       as="label"
                       key={leagueId}
-                      style={{ cursor: takenByOther ? "default" : "pointer", opacity: takenByOther ? 0.55 : 1 }}
+                      style={{ cursor: takenByOther || done ? "default" : "pointer", opacity: takenByOther ? 0.55 : 1 }}
                     >
                       <input
                         type="checkbox"
                         checked={checkedIds.has(leagueId)}
-                        disabled={takenByOther}
+                        disabled={takenByOther || done}
                         onChange={() => toggle(leagueId)}
                       />
                       <span className="tname" style={{ flex: 1 }}>
@@ -701,6 +745,22 @@ export default function WaiverAssistant({
                         <span className="portmeta">suggest drop: —</span>
                       )}
                       {!takenByOther && <Diff value={diff} />}
+                      {!takenByOther && faab && (
+                        <input
+                          className="input"
+                          type="number"
+                          min={c.bidMin}
+                          max={budgetLeft ?? undefined}
+                          value={bidFor(c)}
+                          onClick={(e) => e.preventDefault()}
+                          onChange={(e) =>
+                            setBidOverride((prev) => ({ ...prev, [leagueId]: Number(e.target.value) }))
+                          }
+                          style={{ width: 64, flex: "none", textAlign: "center" }}
+                          title={budgetLeft != null ? `$${budgetLeft} left of budget` : "suggested FAAB bid"}
+                        />
+                      )}
+                      {!takenByOther && <StatusCell status={status} />}
                     </TableRow>
                   );
                 })}
@@ -708,22 +768,25 @@ export default function WaiverAssistant({
 
               <p className="hint" style={{ marginTop: 10 }}>
                 Leagues where another team already has him are shown greyed out and can&rsquo;t be
-                queued — a real check against every roster in that league, not just yours. The drop
+                selected — a real check against every roster in that league, not just yours. The drop
                 suggestion and the Diff column (both real season-projected points, the same numbers
                 Rankings and Trade Calculator use) rank purely on projected points, with no
-                position-scarcity or roster-rule awareness. Confirm both on Sleeper&rsquo;s real page
-                before submitting.
+                position-scarcity or roster-rule awareness — review the drop and bid before sending.
+                If a league needs a waiver claim instead of an instant add (Sleeper decides that, not
+                Fantis), the suggested bid comes from this account&rsquo;s own real past winning bids
+                when there&rsquo;s history, or the league&rsquo;s own minimum otherwise — editable per
+                row.
               </p>
 
               <button
                 className="btn"
                 style={{ marginTop: 10 }}
-                onClick={queueSelected}
-                disabled={queueing || checkedIds.size === 0}
+                onClick={runAdd}
+                disabled={!multiAddToken || executing || checkedIds.size === 0}
               >
-                {queueing ? "Queuing…" : `Open ${checkedIds.size} selected league${checkedIds.size === 1 ? "" : "s"}`}
+                {executing ? "Sending…" : `Add/claim in ${checkedIds.size} selected league${checkedIds.size === 1 ? "" : "s"}`}
               </button>
-              {queueResult && <p className="hint" style={{ marginTop: 8 }}>{queueResult}</p>}
+              {execSummary && <p className="hint" style={{ marginTop: 8 }}>{execSummary}</p>}
             </>
           )}
         </section>
