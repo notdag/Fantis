@@ -5,7 +5,7 @@ import { getRosters, getState, getTransactions } from "@/lib/sleeper";
 import { getWeekGameStates } from "@/lib/espnGames";
 import { activateFromIR, addDropFreeAgent, claimWaiver, fetchLeagueTransactions, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
 import { getStoredToken } from "@/lib/sleeperToken";
-import { isAuthError, runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { isAuthError, runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { fetchSnapshot, type RawRoster, type RawTxn } from "@/lib/commandCenter/classify";
 import { KIND_LABEL, canSend, describeProposal, type Proposal, type ProposalStatus } from "@/lib/commandCenter/proposals";
@@ -202,6 +202,7 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<Record<string, TaskStatus>>({});
   const [bulkSummary, setBulkSummary] = useState("");
+  const [bulkSummaryColor, setBulkSummaryColor] = useState("var(--bone)");
   const bulkAbort = useRef({ aborted: false });
 
   const startBulk = async (list: Proposal[]) => {
@@ -230,7 +231,9 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
     });
     setBulkRunning(false);
     setSelected(new Set());
-    setBulkSummary(`${result.done} succeeded${result.failed ? `, ${result.failed} failed` : ""}${result.skipped ? `, ${result.skipped} not run` : ""}.${result.stoppedForAuth ? " Stopped: Sleeper rejected the login token." : ""}`);
+    const tone = bulkResultTone(result);
+    setBulkSummaryColor(tone.color);
+    setBulkSummary(`${tone.prefix}${result.done} succeeded${result.failed ? `, ${result.failed} failed` : ""}${result.skipped ? `, ${result.skipped} not run` : ""}.${result.stoppedForAuth ? " Stopped: Sleeper rejected the login token." : ""}`);
     await load();
   };
 
@@ -305,7 +308,7 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
           {bulkEnabled && selectedList.length > 0 && !bulkRunning && (
             <p className="hint" style={{ margin: "6px 0 0" }}>{selectedSummary}</p>
           )}
-          {bulkSummary && <p className="cctext">{bulkSummary}</p>}
+          {bulkSummary && <p className="cctext" style={{ color: bulkSummaryColor, fontWeight: 600 }}>{bulkSummary}</p>}
         </div>
       )}
 

@@ -2062,6 +2062,48 @@ to add here partly based on what else is already in flight in that league.
   confirmed unrelated). Not live-verified against the real account — same
   `/admin` passphrase blocker as the last several entries.
 
+### Every bulk-send tool: a real success message after submitting (2026-09; requested explicitly by the owner)
+
+"need a success or successfully message after submitting" — every bulk-write
+tool in the app (Waiver Assistant's single-player lookup, Mass Add/Claim,
+Mass IR, and Command Center's bulk proposal send) already computed a real
+completion summary (`${result.done} sent, ${result.failed} failed...`), but
+rendered it as the exact same muted grey `hint`/`cctext` line used for
+ordinary body copy everywhere else on the page — nothing about it visually
+said "this worked" versus just another line of text to skim past.
+
+- **New shared helper `bulkResultTone()`** (`lib/bulkRun.ts`) — takes the
+  same `{ done, failed }` shape `runBulk()` already returns and picks one of
+  three honest outcomes: a genuine full success (`done > 0`, `failed === 0`)
+  gets a `✓ Successfully sent — ` prefix in mint (the same color `StatusCell`
+  already uses for a single done row, so this isn't a new success color
+  introduced just for this); a partial result (`failed > 0`) gets
+  `⚠ Partially sent — ` in amber; nothing sent (`done === 0`) stays neutral,
+  since there's nothing to call a success. Never claims success when
+  anything actually failed.
+- **Wired into all four tools that already had this exact pattern**:
+  `WaiverAssistant.tsx`'s single-player lookup (`execSummary`), `BulkAdd.tsx`
+  (Mass Add/Claim), `BulkIR.tsx` (Mass IR), and `ProposalsPanel.tsx`
+  (Command Center's bulk send). Each already called `runBulk` and built a
+  plain-text summary from its result — this only changes what colors and
+  prefixes that existing string, via a small parallel `summaryColor`/
+  `execSummaryColor`/`bulkSummaryColor` state per component (the message
+  itself is still built the same way, just now colored and bolded to
+  actually read as a completion state instead of ambient text).
+- Deliberately did NOT touch the per-row `StatusCell` (✓ done / ✕ failed per
+  league already existed and was already colored) or the single-proposal
+  send note in `ProposalsPanel.tsx` (already visually distinguishes success
+  from a warning via its own `ccnote-warn` class) — this was specifically
+  about the one *overall* completion line each tool shows after a batch
+  finishes, which was the genuinely flat one.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing
+  `WaiverAssistant.tsx` lint finding, confirmed unrelated and untouched).
+  `npx tsx scripts/testCommandCenter.ts` (422) and
+  `scripts/testCommandCenterExec.ts` (84) both still pass — this is a
+  pure display change to already-computed values, no planning/executor
+  logic touched. Not live-verified against the real account — same `/admin`
+  passphrase blocker as the last several entries.
+
 ### Waiver Assistant lookup: expand pending claims and rosters inline (2026-09; real feedback from the owner)
 
 Two more real gaps in the same table. "i like the little yellow text...

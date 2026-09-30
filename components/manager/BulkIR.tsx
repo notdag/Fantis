@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { buildIrPlan, type IrRow, type PlanLeague } from "@/lib/bulkPlan";
-import { runBulk, errorMessage, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { runBulk, errorMessage, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
@@ -111,6 +111,7 @@ export default function BulkIR({
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState("");
+  const [summaryColor, setSummaryColor] = useState("var(--bone)");
   const abortRef = useRef({ aborted: false });
   const refresh = useRefreshLeagues();
 
@@ -195,8 +196,10 @@ export default function BulkIR({
     // Re-sync just the leagues that changed so the Action Queue, banners and
     // rosters reflect it right away (keys are "leagueId" or "leagueId:playerId").
     const refreshed = result.done > 0 ? await refresh(doneKeys.map((k) => k.split(":")[0])) : null;
+    const tone = bulkResultTone(result);
+    setSummaryColor(tone.color);
     setSummary(
-      `${result.done} moved${result.failed ? `, ${result.failed} failed` : ""}${
+      `${tone.prefix}${result.done} moved${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
         (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
@@ -323,7 +326,7 @@ export default function BulkIR({
               </p>
             </div>
           )}
-          {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
+          {summary && <p className="hint" style={{ color: summaryColor, fontWeight: 600 }}>{summary}</p>}
 
           <div style={{ maxHeight: 640, overflowY: "auto" }}>
             <DataTable>

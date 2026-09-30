@@ -33,6 +33,18 @@ export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// A completion summary reads as just more muted text unless something
+// visibly marks "this actually worked" — shared by every bulk tool
+// (Waiver Assistant's single-player lookup, Mass Add/Claim, Mass IR) so a
+// real, unambiguous success (no failures, at least one real send) always
+// gets the same checkmark + mint treatment, not another line of grey hint
+// text easy to miss right after clicking Send.
+export function bulkResultTone(result: { done: number; failed: number }): { prefix: string; color: string } {
+  if (result.done === 0) return { prefix: "", color: "var(--bone)" };
+  if (result.failed === 0) return { prefix: "✓ Successfully sent — ", color: "var(--mint)" };
+  return { prefix: "⚠ Partially sent — ", color: "var(--amber)" };
+}
+
 export async function runBulk(
   tasks: BulkTask[],
   opts: {

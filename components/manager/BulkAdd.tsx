@@ -5,7 +5,7 @@ import type { PlanLeague } from "@/lib/bulkPlan";
 import { buildMultiAddPlan, type LeagueBudgetWarning, type MultiAddRow } from "@/lib/multiAddPlan";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { getTrendingAdds } from "@/lib/sleeper";
-import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
@@ -95,6 +95,7 @@ export default function BulkAdd({
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState("");
+  const [summaryColor, setSummaryColor] = useState("var(--bone)");
   const abortRef = useRef({ aborted: false });
   const refresh = useRefreshLeagues();
 
@@ -281,8 +282,10 @@ export default function BulkAdd({
     // Re-sync just the leagues that changed so the Action Queue, banners and
     // rosters reflect it right away (keys are "leagueId:playerId").
     const refreshed = result.done > 0 ? await refresh(doneKeys.map((k) => k.split(":")[0])) : null;
+    const tone = bulkResultTone(result);
+    setSummaryColor(tone.color);
     setSummary(
-      `${result.done} succeeded${result.failed ? `, ${result.failed} failed` : ""}${
+      `${tone.prefix}${result.done} succeeded${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
         (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
@@ -458,7 +461,7 @@ export default function BulkAdd({
                   onCancel={() => setConfirming(false)}
                 />
               )}
-              {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
+              {summary && <p className="hint" style={{ color: summaryColor, fontWeight: 600 }}>{summary}</p>}
 
               <div style={{ maxHeight: 640, overflowY: "auto" }}>
                 <DataTable>

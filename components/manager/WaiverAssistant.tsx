@@ -9,7 +9,7 @@ import { getTrendingAdds, getTrendingDrops, type TrendingPlayer } from "@/lib/sl
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { classifyTransactions, type Claim } from "@/lib/inbox";
 import { addDropFreeAgent, cancelWaiverClaim, claimWaiver, fetchLeagueTransactions } from "@/lib/sleeperWrite";
-import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconStar, IconUsers } from "./MgrIcons";
@@ -301,6 +301,7 @@ export default function WaiverAssistant({
   const [execStatus, setExecStatus] = useState<Record<string, TaskStatus>>({});
   const [executing, setExecuting] = useState(false);
   const [execSummary, setExecSummary] = useState("");
+  const [execSummaryColor, setExecSummaryColor] = useState("var(--bone)");
   const execAbort = useRef({ aborted: false });
   const multiAddSettingsByLeague = useMemo(() => new Map(multiAddLeagues.map((l) => [l.league.id, l.league.settings])), [multiAddLeagues]);
 
@@ -455,8 +456,10 @@ export default function WaiverAssistant({
     });
     setExecuting(false);
     const refreshed = result.done > 0 ? await refreshLeagues(doneLeagues) : null;
+    const tone = bulkResultTone(result);
+    setExecSummaryColor(tone.color);
     setExecSummary(
-      `${result.done} sent${result.failed ? `, ${result.failed} failed` : ""}.${
+      `${tone.prefix}${result.done} sent${result.failed ? `, ${result.failed} failed` : ""}.${
         result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""
       }${refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : ""}`
     );
@@ -942,7 +945,11 @@ export default function WaiverAssistant({
               >
                 {executing ? "Sending…" : `Add/claim in ${selectedCount} selected league${selectedCount === 1 ? "" : "s"}`}
               </button>
-              {execSummary && <p className="hint" style={{ marginTop: 8 }}>{execSummary}</p>}
+              {execSummary && (
+                <p className="hint" style={{ marginTop: 8, color: execSummaryColor, fontWeight: 600 }}>
+                  {execSummary}
+                </p>
+              )}
             </>
           )}
         </section>
