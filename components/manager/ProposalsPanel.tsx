@@ -11,7 +11,6 @@ import { fetchSnapshot, type RawRoster, type RawTxn } from "@/lib/commandCenter/
 import { KIND_LABEL, canSend, describeProposal, type Proposal, type ProposalStatus } from "@/lib/commandCenter/proposals";
 import type { CcLeague } from "@/lib/commandCenter/types";
 import { executeProposal, type ExecDeps, type ExecMode, type ExecResult, type ExecWriters } from "@/lib/commandCenterExec";
-import { BulkConfirm } from "./BulkConfirm";
 import { useRefreshLeagues } from "./useRefreshLeagues";
 import { readPermission, useBulkEnabled, usePermission, writeBulkEnabled } from "./ccStore";
 
@@ -195,18 +194,17 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
     await load();
   };
 
-  // ---- bulk — its own switch, one confirmation, sequential, stops on the first problem
+  // ---- bulk — its own switch, sequential, stops on the first problem.
+  // Selecting the rows IS the review; clicking Send runs it immediately —
+  // no separate confirm screen on top of that, by explicit owner request
+  // (still always one deliberate click, never unattended).
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkConfirm, setBulkConfirm] = useState(false);
-  const [bulkAck, setBulkAck] = useState(false);
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkStatus, setBulkStatus] = useState<Record<string, TaskStatus>>({});
   const [bulkSummary, setBulkSummary] = useState("");
   const bulkAbort = useRef({ aborted: false });
 
   const startBulk = async (list: Proposal[]) => {
-    setBulkConfirm(false);
-    setBulkAck(false);
     setBulkRunning(true);
     setBulkSummary("");
     bulkAbort.current = { aborted: false };
@@ -298,32 +296,14 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
               {bulkRunning ? (
                 <button className="btn ghost sm" onClick={() => (bulkAbort.current.aborted = true)}>Abort</button>
               ) : (
-                <button className="btn sm" disabled={selectedList.length === 0 || !hasToken} onClick={() => { setBulkAck(false); setBulkConfirm(true); }}>
-                  Send {selectedList.length} selected…
+                <button className="btn sm" disabled={selectedList.length === 0 || !hasToken} onClick={() => void startBulk(selectedList)}>
+                  Send {selectedList.length} selected
                 </button>
               )}
             </div>
           )}
-          {bulkConfirm && (
-            <div style={{ marginTop: 8 }}>
-              <BulkConfirm
-                title={`Send ${selectedList.length} change${selectedList.length === 1 ? "" : "s"} to Sleeper`}
-                summary={selectedSummary}
-                lines={selectedList.map((p) => (
-                  <span key={p.id}>
-                    <strong>{p.leagueName}</strong> — {describeProposal(p)}
-                  </span>
-                ))}
-                confirmLabel={`Send ${selectedList.length} to Sleeper, one at a time`}
-                onConfirm={() => void startBulk(selectedList)}
-                onCancel={() => setBulkConfirm(false)}
-                disabled={!bulkAck}
-              />
-              <label className="hint" style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 0" }}>
-                <input type="checkbox" checked={bulkAck} onChange={(e) => setBulkAck(e.target.checked)} />
-                I understand this sends {selectedList.length} real change{selectedList.length === 1 ? "" : "s"} to Sleeper. (The button only works once this is ticked.)
-              </label>
-            </div>
+          {bulkEnabled && selectedList.length > 0 && !bulkRunning && (
+            <p className="hint" style={{ margin: "6px 0 0" }}>{selectedSummary}</p>
           )}
           {bulkSummary && <p className="cctext">{bulkSummary}</p>}
         </div>

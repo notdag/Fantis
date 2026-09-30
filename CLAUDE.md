@@ -1822,19 +1822,25 @@ click every time** — never bring back unattended execution.
   pass a real breakdown as their `title` (e.g. "Move 72 players to IR
   across 72 leagues — including 24 drops"), so the shared component change
   alone gives them the faster-review behavior for free.
-- **Command Center's bulk send** (`ProposalsPanel.tsx`) didn't have a real
-  breakdown to reuse, so it gained one: a `selectedSummary` computed from
-  the actual selected proposals' kinds (e.g. "72 IR moves · 24 releases
-  across 72 leagues"), passed as `summary`. The per-batch ack checkbox
-  wording changed from "I've reviewed every line above" (no longer honest
-  once the list can be collapsed) to "I understand this sends N real
-  changes to Sleeper" — still one explicit, required click, just not one
-  that claims a line-by-line read that may not have happened.
+- **Command Center's bulk send** (`ProposalsPanel.tsx`) gained a
+  `selectedSummary` computed from the actual selected proposals' kinds
+  (e.g. "72 IR moves · 24 releases across 72 leagues"). First version paired
+  it with a `BulkConfirm` modal + a separate ack checkbox below the "Send N
+  selected" button — the owner immediately said that was still too much
+  friction ("go back to auto execute, i just dont want to have to confirm
+  all, what i select should happen"). Asked directly whether that meant the
+  removed unattended Phase-5 rule again; it didn't — the owner's own
+  follow-up made clear selecting the rows IS the review, and clicking "Send
+  N selected" should run it immediately, no second screen. Removed the
+  `BulkConfirm` modal and ack checkbox from this one flow entirely: the
+  summary now shows inline as soon as something's selected, and the Send
+  button runs `startBulk` directly. Mass IR and Mass Add/Claim keep their
+  own `BulkConfirm` step untouched — this was a Command-Center-specific
+  request, not a blanket policy change.
 - Deliberately NOT done: no auto-approval, no unattended sending, no
   standing rule, nothing that runs without a click from the owner in that
-  moment. The mode-ladder collapse's own safety property — every write
-  still needs one explicit human confirmation, every time — is completely
-  unchanged.
+  moment. Selecting rows + clicking Send is still one deliberate action
+  every time — only the extra confirmation screen on top of that is gone.
 - `tsc`/`eslint`/`next build` all clean; `testCommandCenterExec.ts` (84)
   unaffected, as expected for a pure UI change with no executor logic
   touched. Not live-verified against the real account — same `/admin`
