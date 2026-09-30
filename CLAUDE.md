@@ -1942,3 +1942,40 @@ Converted to match every other add/claim tool in the app:
   logic (`suggestBid`) are the exact same, already-live-verified code paths
   `BulkAdd.tsx` uses, not new logic — worth a quick real add/claim on
   `/manager/waiver` before leaning on it for a live waiver run tonight.
+
+### Waiver Assistant: dropped the standalone FAAB-remaining list, budget now shown at the bid itself (2026-09; real bug reported by the owner)
+
+"the large faab remaining is useless i need to know when im actually
+claiming someone not just the home screen" — the "FAAB remaining" section
+(a full per-league list) and the "Total FAAB used" hero stat card on
+`/manager/waiver` were pure home-screen decoration: real numbers, but
+disconnected from the moment that actually matters, which is picking a bid
+while claiming someone.
+
+- **Removed both home-screen displays** from `components/manager/
+  WaiverAssistant.tsx` — the standalone "FAAB remaining" `DataTable` section
+  and the "Total FAAB used" `StatCard` (the hero grid now only shows when
+  there's real waiver-position data, since that's all that's left in it).
+  `waiverSummary`'s FAAB fields (`faabTotal`, `faabLeagues`) were dropped
+  from the memo entirely — dead weight once nothing renders them.
+- **The same real number now shows where a bid is actually being placed**,
+  in both places a FAAB bid gets set:
+  - **Single-player lookup** (`WaiverAssistant.tsx`) — `candidateLeagues`
+    already computed each league's real `budgetLeft` (added for the prior
+    direct-execution change); it was sitting behind a hover-only `title`
+    attribute. Now a visible `$X left` label sits under the bid input
+    itself, turning red if the remaining budget is under that league's own
+    bid minimum — a real, at-a-glance affordability check exactly when
+    you're setting the number.
+  - **Multi-add board** (`BulkAdd.tsx`, shared by Waiver Assistant, Lineups,
+    and Open Spots) — same visible `$X left` label added under its Bid
+    column input; previously the real `budgetLeft` value only surfaced
+    indirectly (capping the input's `max`, or in a warning banner if the
+    combined bids across targets exceeded it) with no plain per-row number
+    to look at. `faabLeagues` (used to compute `remainingByLeague` for the
+    single-player tool) is kept as a prop — it's still real per-league
+    data, just no longer rendered as its own section.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding in
+  `WaiverAssistant.tsx`, confirmed unrelated and untouched by this change).
+  Not live-verified against the real account — same `/admin` passphrase
+  blocker as the last several entries.

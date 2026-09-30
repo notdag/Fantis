@@ -12,7 +12,7 @@ import { addDropFreeAgent, cancelWaiverClaim, claimWaiver, fetchLeagueTransactio
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { PlayerAvatar } from "./Avatar";
-import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
+import { IconArrowUp, IconArrowDown, IconSearch, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
@@ -243,8 +243,6 @@ export default function WaiverAssistant({
   const seasonTotals = useSeasonTotals();
 
   const waiverSummary = useMemo(() => {
-    const withFaab = leagues.filter((lg) => lg.faabUsed != null);
-    const faabTotal = withFaab.reduce((sum, lg) => sum + (lg.faabUsed ?? 0), 0);
     const withPosition = leagues.filter((lg) => lg.waiverPosition != null);
     let best: WaiverLeague | null = null;
     for (const lg of withPosition) {
@@ -254,7 +252,7 @@ export default function WaiverAssistant({
       withPosition.length > 0
         ? withPosition.reduce((sum, lg) => sum + (lg.waiverPosition ?? 0), 0) / withPosition.length
         : null;
-    return { faabTotal, faabLeagues: withFaab.length, best, avgPosition, positionLeagues: withPosition.length };
+    return { best, avgPosition, positionLeagues: withPosition.length };
   }, [leagues]);
 
   const [query, setQuery] = useState("");
@@ -392,23 +390,15 @@ export default function WaiverAssistant({
         <PageHead
           description={
             <>
-              Every in-season league you&rsquo;re actually managing (best ball excluded) — real FAAB
-              remaining, every pending waiver claim, who&rsquo;s trending on Sleeper right now, adding
-              several players at once, or one target&rsquo;s real per-league drop math.
+              Every in-season league you&rsquo;re actually managing (best ball excluded) — every pending
+              waiver claim, who&rsquo;s trending on Sleeper right now, adding several players at once, or
+              one target&rsquo;s real per-league drop math and FAAB bid, right where you&rsquo;re claiming him.
             </>
           }
         />
 
-        {!selectedId && (waiverSummary.faabLeagues > 0 || waiverSummary.positionLeagues > 0) && (
+        {!selectedId && waiverSummary.positionLeagues > 0 && (
           <StatCardGrid variant="hero">
-            <StatCard
-              icon={IconDollar}
-              color="var(--amber)"
-              label="Total FAAB used"
-              value={`$${waiverSummary.faabTotal}`}
-              valueColor="var(--amber)"
-              sub={`across ${waiverSummary.faabLeagues} leagues tracking FAAB`}
-            />
             <StatCard
               icon={IconStar}
               color={waiverSummary.best?.waiverPosition === 1 ? "var(--mint)" : "var(--muted)"}
@@ -430,34 +420,6 @@ export default function WaiverAssistant({
       <section className="sec">
         <ConnectWriteAccess onTokenReady={setMultiAddToken} />
       </section>
-
-      {faabLeagues.length > 0 && (
-        <section className="sec">
-          <SectionHead
-            title="FAAB remaining"
-            right={`$${faabLeagues.reduce((sum, l) => sum + l.remaining, 0)} left across ${faabLeagues.length} league${faabLeagues.length === 1 ? "" : "s"}`}
-          />
-          <p className="hint" style={{ margin: "0 0 12px" }}>
-            Real budget minus what&rsquo;s already been spent, per league — leagues without FAAB
-            (reverse-standings/rolling waivers) aren&rsquo;t shown, since there&rsquo;s no budget to run
-            out of. Sorted lowest-remaining first.
-          </p>
-          <DataTable>
-            {faabLeagues.map((l) => (
-              <TableRow as="static" key={l.leagueId}>
-                <span className="tname" style={{ flex: 1 }}>{l.leagueName}</span>
-                <span className="portmeta">${l.used} used of ${l.budget}</span>
-                <span
-                  className="portmeta"
-                  style={{ fontWeight: 600, minWidth: 70, textAlign: "right", color: l.remaining === 0 ? "var(--red)" : l.remaining < l.budget * 0.2 ? "var(--amber)" : "var(--mint)" }}
-                >
-                  ${l.remaining} left
-                </span>
-              </TableRow>
-            ))}
-          </DataTable>
-        </section>
-      )}
 
       <section className="sec">
         <SectionHead
@@ -746,19 +708,28 @@ export default function WaiverAssistant({
                       )}
                       {!takenByOther && <Diff value={diff} />}
                       {!takenByOther && faab && (
-                        <input
-                          className="input"
-                          type="number"
-                          min={c.bidMin}
-                          max={budgetLeft ?? undefined}
-                          value={bidFor(c)}
-                          onClick={(e) => e.preventDefault()}
-                          onChange={(e) =>
-                            setBidOverride((prev) => ({ ...prev, [leagueId]: Number(e.target.value) }))
-                          }
-                          style={{ width: 64, flex: "none", textAlign: "center" }}
-                          title={budgetLeft != null ? `$${budgetLeft} left of budget` : "suggested FAAB bid"}
-                        />
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                          <input
+                            className="input"
+                            type="number"
+                            min={c.bidMin}
+                            max={budgetLeft ?? undefined}
+                            value={bidFor(c)}
+                            onClick={(e) => e.preventDefault()}
+                            onChange={(e) =>
+                              setBidOverride((prev) => ({ ...prev, [leagueId]: Number(e.target.value) }))
+                            }
+                            style={{ width: 64, flex: "none", textAlign: "center" }}
+                          />
+                          {budgetLeft != null && (
+                            <span
+                              className="portmeta"
+                              style={{ fontSize: 11, color: budgetLeft < c.bidMin ? "var(--red)" : undefined }}
+                            >
+                              ${budgetLeft} left
+                            </span>
+                          )}
+                        </div>
                       )}
                       {!takenByOther && <StatusCell status={status} />}
                     </TableRow>

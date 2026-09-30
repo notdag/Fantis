@@ -497,19 +497,29 @@ export default function BulkAdd({
                           <span className="portmeta">open spot</span>
                         )}
                       </span>
-                      <span style={{ minWidth: 70 }}>
+                      <span style={{ minWidth: 70, display: "flex", flexDirection: "column", gap: 2 }}>
                         {r.faab ? (
-                          <input
-                            className="input"
-                            type="number"
-                            min={r.bidMin}
-                            max={r.budgetLeft ?? undefined}
-                            value={bidFor(r)}
-                            disabled={running || finished(r)}
-                            onChange={(e) => setBidOverride((p) => ({ ...p, [r.key]: Number(e.target.value) || 0 }))}
-                            style={{ width: 64 }}
-                            title={r.bid === bidFor(r) ? "Suggested from this league's own past winning bids" : undefined}
-                          />
+                          <>
+                            <input
+                              className="input"
+                              type="number"
+                              min={r.bidMin}
+                              max={r.budgetLeft ?? undefined}
+                              value={bidFor(r)}
+                              disabled={running || finished(r)}
+                              onChange={(e) => setBidOverride((p) => ({ ...p, [r.key]: Number(e.target.value) || 0 }))}
+                              style={{ width: 64 }}
+                              title={r.bid === bidFor(r) ? "Suggested from this league's own past winning bids" : undefined}
+                            />
+                            {r.budgetLeft != null && (
+                              <span
+                                className="portmeta"
+                                style={{ fontSize: 11, color: r.budgetLeft < r.bidMin ? "var(--red)" : undefined }}
+                              >
+                                ${r.budgetLeft} left
+                              </span>
+                            )}
+                          </>
                         ) : (
                           <span className="portmeta">—</span>
                         )}
