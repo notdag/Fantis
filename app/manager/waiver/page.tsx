@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import WaiverAssistant from "@/components/manager/WaiverAssistant";
 import { db } from "@/lib/db";
-import { isBestBall, rosterPositionsFromSettings, slimLeagueSettings, type ManagedLeague } from "@/lib/manager";
-import type { WaiverLeague } from "@/components/manager/WaiverAssistant";
+import { isBestBall, rosterPositionsFromSettings, slimLeagueSettings, waiverBudget, type ManagedLeague } from "@/lib/manager";
+import type { WaiverLeague, FaabLeague } from "@/components/manager/WaiverAssistant";
 import type { LineupLeague } from "@/components/manager/LineupManager";
 
 export const metadata: Metadata = {
@@ -94,6 +94,20 @@ export default async function WaiverPage() {
     };
   });
 
+  // Real FAAB remaining, per league — budget (this league's own real
+  // waiver_budget, only when it's actually FAAB-type) minus faabUsed
+  // (already synced from Sleeper's real roster data). Leagues that aren't
+  // FAAB at all are left out entirely rather than shown as "$0 left".
+  const faabLeagues: FaabLeague[] = scoped
+    .map((lg) => {
+      const budget = waiverBudget(lg.settings);
+      if (budget == null) return null;
+      const used = rosterByLeague.get(lg.id)!.faabUsed ?? 0;
+      return { leagueId: lg.id, leagueName: lg.name, budget, used, remaining: Math.max(0, budget - used) };
+    })
+    .filter((l): l is FaabLeague => l !== null)
+    .sort((a, b) => a.remaining - b.remaining);
+
   // Same LineupLeague shape Open Spots/Lineups build, so this page can hand
   // the exact same, already-working multi-target add board (BulkAdd) its
   // data — no new write path, just another view onto the same real leagues.
@@ -137,6 +151,7 @@ export default async function WaiverPage() {
     <WaiverAssistant
       leagues={leagues}
       multiAddLeagues={multiAddLeagues}
+      faabLeagues={faabLeagues}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       waiverHistoryBySeason={waiverHistoryBySeason}
     />

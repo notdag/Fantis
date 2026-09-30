@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
@@ -8,13 +8,18 @@ import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { getTrendingAdds, getTrendingDrops, type TrendingPlayer } from "@/lib/sleeper";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
+import { classifyTransactions, type Claim } from "@/lib/inbox";
+import { cancelWaiverClaim, fetchLeagueTransactions } from "@/lib/sleeperWrite";
+import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
-import { DataTable, TableRow } from "./DataRow";
+import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
+import { StatusCell } from "./BulkConfirm";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkAdd from "./BulkAdd";
+import { useRefreshLeagues } from "./useRefreshLeagues";
 import type { LineupLeague } from "./LineupManager";
 import type { PlayerMapEntry } from "@/lib/types";
 
@@ -28,6 +33,14 @@ export interface WaiverLeague {
   allRosteredPlayers: string[];
   waiverPosition: number | null;
   faabUsed: number | null;
+}
+
+export interface FaabLeague {
+  leagueId: string;
+  leagueName: string;
+  budget: number;
+  used: number;
+  remaining: number;
 }
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -54,11 +67,13 @@ export interface WaiverHistoryEntry {
 export default function WaiverAssistant({
   leagues,
   multiAddLeagues,
+  faabLeagues,
   automationLastPingAt,
   waiverHistoryBySeason,
 }: {
   leagues: WaiverLeague[];
   multiAddLeagues: LineupLeague[];
+  faabLeagues: FaabLeague[];
   automationLastPingAt: string | null;
   waiverHistoryBySeason?: Record<string, WaiverHistoryEntry[]>;
 }) {
@@ -120,6 +135,109 @@ export default function WaiverAssistant({
       cancelled = true;
     };
   }, []);
+
+  // Real pending waiver claims across every league — same underlying
+  // parser as the Trades & Claims inbox (lib/inbox.ts's classifyTransactions,
+  // reads Sleeper's private per-league transaction feed), just claims only
+  // (no trades) and using the write-access token already connected above
+  // for the multi-add board, so there's no second "connect" step. Nothing
+  // is checked in the background — scan when you want a fresh look, same
+  // as the inbox.
+  const [claims, setClaims] = useState<Claim[]>([]);
+  const [claimsScanned, setClaimsScanned] = useState(false);
+  const [claimsScanning, setClaimsScanning] = useState(false);
+  const [claimsProgress, setClaimsProgress] = useState({ done: 0, failed: 0 });
+  const [claimsErrors, setClaimsErrors] = useState<string[]>([]);
+  const claimsAbort = useRef({ aborted: false });
+  const [claimSelected, setClaimSelected] = useState<Set<string>>(new Set());
+  const [claimStatus, setClaimStatus] = useState<Record<string, TaskStatus>>({});
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelSummary, setCancelSummary] = useState("");
+  const cancelAbort = useRef({ aborted: false });
+  const refreshLeagues = useRefreshLeagues();
+
+  const scanClaims = async () => {
+    if (!multiAddToken) return;
+    setClaimsScanning(true);
+    setClaimsScanned(false);
+    setClaims([]);
+    setClaimsErrors([]);
+    setClaimsProgress({ done: 0, failed: 0 });
+    setClaimSelected(new Set());
+    setClaimStatus({});
+    setCancelSummary("");
+    claimsAbort.current = { aborted: false };
+    const acc: Claim[] = [];
+    const tasks: BulkTask[] = multiAddLeagues
+      .filter((l) => l.roster)
+      .map((l) => ({
+        key: l.league.id,
+        run: async () => {
+          const raw = await fetchLeagueTransactions(multiAddToken, { leagueId: l.league.id, rosterId: l.roster!.rosterId });
+          const { claims: c } = classifyTransactions(l.league.id, l.roster!.rosterId, raw);
+          acc.push(...c);
+        },
+      }));
+    const result = await runBulk(tasks, {
+      concurrency: 5,
+      gapMs: 50,
+      signal: claimsAbort.current,
+      onStatus: (key, s) => {
+        if (s.kind === "done") {
+          setClaimsProgress((p) => ({ ...p, done: p.done + 1 }));
+          setClaims([...acc]);
+        } else if (s.kind === "failed") {
+          setClaimsProgress((p) => ({ done: p.done + 1, failed: p.failed + 1 }));
+          const name = multiAddLeagues.find((l) => l.league.id === key)?.league.name ?? key;
+          setClaimsErrors((prev) => (prev.length < 20 ? [...prev, `${name}: ${s.message}`] : prev));
+        }
+      },
+    });
+    setClaims([...acc]);
+    setClaimsScanning(false);
+    setClaimsScanned(true);
+    if (result.stoppedForAuth) setClaimsErrors((p) => ["Stopped early — Sleeper rejected the login token; reconnect above.", ...p]);
+  };
+
+  const openClaims = claims.filter((c) => claimStatus[c.key]?.kind !== "done");
+  const selectedClaims = openClaims.filter((c) => claimSelected.has(c.key));
+  const claimLeagueName = (id: string) => multiAddLeagues.find((l) => l.league.id === id)?.league.name ?? id;
+  const toggleClaim = (key: string) =>
+    setClaimSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const cancelSelectedClaims = async () => {
+    if (!multiAddToken || cancelling) return;
+    const list = selectedClaims;
+    if (list.length === 0) return;
+    setCancelling(true);
+    setCancelSummary("");
+    cancelAbort.current = { aborted: false };
+    const doneLeagues: string[] = [];
+    const tasks: BulkTask[] = list.map((c) => ({
+      key: c.key,
+      run: async () => {
+        await cancelWaiverClaim(multiAddToken, { leagueId: c.leagueId, transactionId: c.transactionId, leg: c.leg });
+        doneLeagues.push(c.leagueId);
+      },
+    }));
+    const result = await runBulk(tasks, {
+      concurrency: 3,
+      signal: cancelAbort.current,
+      onStatus: (key, s) => setClaimStatus((prev) => ({ ...prev, [key]: s })),
+    });
+    setCancelling(false);
+    setClaimSelected(new Set());
+    const refreshed = result.done > 0 ? await refreshLeagues(doneLeagues) : null;
+    setCancelSummary(
+      `Cancelled ${result.done}${result.failed ? `, ${result.failed} failed` : ""}.${
+        result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""
+      }${refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : ""}`
+    );
+  };
 
   const seasonTotals = useSeasonTotals();
 
@@ -232,9 +350,9 @@ export default function WaiverAssistant({
         <PageHead
           description={
             <>
-              Every in-season league you&rsquo;re actually managing (best ball excluded) — who&rsquo;s
-              trending on Sleeper right now, add several players at once across all your leagues, or
-              look up one target&rsquo;s real per-league drop math.
+              Every in-season league you&rsquo;re actually managing (best ball excluded) — real FAAB
+              remaining, every pending waiver claim, who&rsquo;s trending on Sleeper right now, adding
+              several players at once, or one target&rsquo;s real per-league drop math.
             </>
           }
         />
@@ -264,6 +382,108 @@ export default function WaiverAssistant({
               sub={`${waiverSummary.positionLeagues} leagues on waivers`}
             />
           </StatCardGrid>
+        )}
+      </section>
+
+      <section className="sec">
+        <ConnectWriteAccess onTokenReady={setMultiAddToken} />
+      </section>
+
+      {faabLeagues.length > 0 && (
+        <section className="sec">
+          <SectionHead
+            title="FAAB remaining"
+            right={`$${faabLeagues.reduce((sum, l) => sum + l.remaining, 0)} left across ${faabLeagues.length} league${faabLeagues.length === 1 ? "" : "s"}`}
+          />
+          <p className="hint" style={{ margin: "0 0 12px" }}>
+            Real budget minus what&rsquo;s already been spent, per league — leagues without FAAB
+            (reverse-standings/rolling waivers) aren&rsquo;t shown, since there&rsquo;s no budget to run
+            out of. Sorted lowest-remaining first.
+          </p>
+          <DataTable>
+            {faabLeagues.map((l) => (
+              <TableRow as="static" key={l.leagueId}>
+                <span className="tname" style={{ flex: 1 }}>{l.leagueName}</span>
+                <span className="portmeta">${l.used} used of ${l.budget}</span>
+                <span
+                  className="portmeta"
+                  style={{ fontWeight: 600, minWidth: 70, textAlign: "right", color: l.remaining === 0 ? "var(--red)" : l.remaining < l.budget * 0.2 ? "var(--amber)" : "var(--mint)" }}
+                >
+                  ${l.remaining} left
+                </span>
+              </TableRow>
+            ))}
+          </DataTable>
+        </section>
+      )}
+
+      <section className="sec">
+        <SectionHead
+          title="Pending waiver claims"
+          right={claimsScanned ? `${openClaims.length} pending` : undefined}
+        />
+        <p className="hint" style={{ margin: "0 0 12px" }}>
+          Every real waiver claim you&rsquo;ve submitted that Sleeper hasn&rsquo;t resolved yet, across
+          every league — same real data the Trades &amp; Claims inbox reads, just scoped to claims and
+          using the write access connected above. Nothing is checked in the background — scan for a
+          fresh look.
+        </p>
+        <div className="field" style={{ marginBottom: 8, alignItems: "center" }}>
+          {claimsScanning ? (
+            <button className="btn ghost" onClick={() => (claimsAbort.current.aborted = true)}>Abort scan</button>
+          ) : (
+            <button className="btn" disabled={!multiAddToken || multiAddLeagues.length === 0} onClick={scanClaims}>
+              {claimsScanned ? "Rescan" : `Scan ${multiAddLeagues.length} leagues`}
+            </button>
+          )}
+          {claimsScanned && (
+            <span className="portmeta">{claimsProgress.done}/{multiAddLeagues.length} leagues checked{claimsProgress.failed ? `, ${claimsProgress.failed} failed` : ""}</span>
+          )}
+        </div>
+        {!multiAddToken && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above first.</p>}
+        {claimsErrors.length > 0 && (
+          <div className="err">
+            {claimsErrors.slice(0, 5).map((e, i) => <div key={i}>{e}</div>)}
+            {claimsErrors.length > 5 && <div>…and {claimsErrors.length - 5} more league errors</div>}
+          </div>
+        )}
+        {cancelSummary && <p className="hint" style={{ color: "var(--bone)" }}>{cancelSummary}</p>}
+        {!claimsScanned && !claimsScanning && <p className="hint">Run a scan to load your pending claims.</p>}
+        {claimsScanned && openClaims.length === 0 && <p className="hint">No pending waiver claims right now.</p>}
+        {claimsScanned && openClaims.length > 0 && (
+          <>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <button
+                className="btn ghost sm"
+                disabled={!multiAddToken || cancelling || selectedClaims.length === 0}
+                onClick={() => void cancelSelectedClaims()}
+              >
+                {cancelling ? "Cancelling…" : `Cancel selected (${selectedClaims.length})`}
+              </button>
+            </div>
+            <DataTable>
+              <TableHeaderRow>
+                <span style={{ width: 22 }} />
+                <span style={{ flex: 1 }}>League · claim</span>
+                <span style={{ minWidth: 60 }}>Bid</span>
+                <span style={{ minWidth: 110 }}>Status</span>
+                <span style={{ minWidth: 90 }}>Result</span>
+              </TableHeaderRow>
+              {openClaims.map((c) => (
+                <TableRow key={c.key}>
+                  <input type="checkbox" checked={claimSelected.has(c.key)} disabled={cancelling} onChange={() => toggleClaim(c.key)} />
+                  <span className="tname" style={{ flex: 1 }}>
+                    {pmap?.[c.addId ?? ""]?.n ?? c.addId ?? "—"}
+                    {c.dropId && <span className="portmeta" style={{ fontWeight: 400 }}> · drop {pmap?.[c.dropId]?.n ?? c.dropId}</span>}
+                    <span className="portmeta" style={{ display: "block", fontWeight: 400 }}>{claimLeagueName(c.leagueId)}</span>
+                  </span>
+                  <span className="portmeta" style={{ minWidth: 60 }}>{c.bid != null ? `$${c.bid}` : "—"}</span>
+                  <span className="portmeta" style={{ minWidth: 110 }} title="Sleeper's raw status">{c.status}</span>
+                  <StatusCell status={claimStatus[c.key]} />
+                </TableRow>
+              ))}
+            </DataTable>
+          </>
         )}
       </section>
 
@@ -336,7 +556,6 @@ export default function WaiverAssistant({
           title="Add several players at once"
           right={`${multiAddLeagues.length} league${multiAddLeagues.length === 1 ? "" : "s"}`}
         />
-        <ConnectWriteAccess onTokenReady={setMultiAddToken} />
         <BulkAdd leagues={multiAddLeagues} pmap={pmap} token={multiAddToken} prefs={prefs} />
       </section>
 

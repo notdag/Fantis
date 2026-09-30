@@ -1845,3 +1845,43 @@ click every time** — never bring back unattended execution.
   unaffected, as expected for a pure UI change with no executor logic
   touched. Not live-verified against the real account — same `/admin`
   passphrase blocker as the last several entries.
+
+### Waiver Assistant: real FAAB remaining + pending waiver claims (2026-09; requested explicitly by the owner)
+
+"add a place to show me my faab and all my current waivers etc that are
+pending etc i need to make this easier for me to see" — two real gaps on
+`/manager/waiver`, both closed with data that already existed elsewhere in
+the app rather than inventing anything new.
+
+- **FAAB remaining, per league** — new `waiverBudget(settings)` helper
+  (`lib/manager.ts`) reads the league's own real `waiver_budget`, but only
+  when `waiver_type === 2` (Sleeper's real FAAB flag); reverse-standings and
+  rolling-waiver leagues have no budget to run out of and are correctly
+  left out of the list entirely rather than shown as "$0 left". Remaining =
+  budget − `Roster.faabUsed` (already synced), computed in
+  `app/manager/waiver/page.tsx`, sorted lowest-remaining-first so leagues
+  close to broke surface first. Pure DB read, no Sleeper call.
+- **Pending waiver claims** — `/manager/inbox` ("Trades & Claims") already
+  had a real "Pending claims" tab; rather than send the owner to a second
+  page for what they framed as one ask, the exact same underlying real data
+  path (`lib/inbox.ts`'s `classifyTransactions`, Sleeper's private
+  per-league transaction feed via `fetchLeagueTransactions`) is now also
+  embedded directly in Waiver Assistant, scoped to claims only (no trades —
+  those still belong on the inbox page). Reuses the SAME write-access token
+  already connected for the multi-add board below it (moved
+  `ConnectWriteAccess` up to the top of the page so both share one
+  connection, no second "connect" step) — shows player, league, bid,
+  Sleeper's raw status, and supports multi-select cancel via the same
+  `cancelWaiverClaim` mutation the inbox page already uses. A fresh,
+  on-demand scan (not backgrounded), same pattern as every other
+  live-Sleeper-read tool in this app.
+- Deliberately not merged into one shared component with `InboxManager.tsx`
+  despite the real logic overlap (same `classifyTransactions`/
+  `fetchLeagueTransactions` calls) — trades and claims together make sense
+  as one scan on the inbox page; a waivers page pulling in trade-review UI
+  it doesn't need would be scope creep in the other direction. The overlap
+  is in the reused pure functions, not duplicated business logic.
+- `tsc`/`eslint`/`next build` all clean (same 3 pre-existing lint findings
+  as the entry above, unrelated to this change). Not live-verified against
+  the real account — same `/admin` passphrase blocker as the last several
+  entries.

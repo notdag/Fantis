@@ -256,6 +256,19 @@ export function isBestBall(settings: unknown): boolean {
   return !!inner && typeof inner === "object" && (inner as Record<string, unknown>).best_ball === 1;
 }
 
+// Real FAAB budget for the league, or null when it isn't a FAAB league at
+// all (`waiver_type` 2 = FAAB on Sleeper; 0/1 are reverse-standings/rolling
+// waivers, which don't have a budget to run out of). `Roster.faabUsed`
+// (already synced) is how much of it is gone; budget - used is what's left.
+export function waiverBudget(settings: unknown): number | null {
+  if (!settings || typeof settings !== "object") return null;
+  const inner = (settings as Record<string, unknown>).settings;
+  if (!inner || typeof inner !== "object") return null;
+  const s = inner as Record<string, unknown>;
+  if (s.waiver_type !== 2) return null;
+  return typeof s.waiver_budget === "number" ? s.waiver_budget : null;
+}
+
 // A league's raw Sleeper settings JSON is several KB; the portfolio-wide
 // pages (Command Center, Lineups) hand it to the browser for every one of
 // 200+ leagues, which made each page ~1MB and slow to load on every click.
