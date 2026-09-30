@@ -79,6 +79,13 @@ export interface TrendingPlayer {
 export const getTrendingAdds = (lookbackHours = 24, limit = 25) =>
   jget<TrendingPlayer[]>(`${S}/players/nfl/trending/add?lookback_hours=${lookbackHours}&limit=${limit}`);
 
+// Same real, keyless endpoint, the "drop" variant — verified live directly
+// (curl) before wiring this up: returns real, populated data just like
+// trending/add does, not one of the Sleeper endpoints that looks documented
+// but comes back empty.
+export const getTrendingDrops = (lookbackHours = 24, limit = 25) =>
+  jget<TrendingPlayer[]>(`${S}/players/nfl/trending/drop?lookback_hours=${lookbackHours}&limit=${limit}`);
+
 const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
 
 // Sleeper's full player dump is several MB; cache it in localStorage for the day.

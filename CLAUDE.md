@@ -1750,3 +1750,51 @@ real constraint this turned out to have.
   new read-only planning logic. `tsc`/`eslint`/`next build` all clean. Not
   live-verified against the real account — same `/admin` passphrase
   blocker as the last several entries.
+
+### Waiver Assistant: trending list, non-best-ball scoping, easy multi-add (2026-09; requested explicitly by the owner, scoped via AskUserQuestion)
+
+The owner shared screenshots of a competitor's waiver tool as reference and
+asked for the top-5 trending list, filtering out best ball and anything
+that isn't "my leagues" (also floating "maybe even" removing the new Weekly
+Record page). Scoped both open questions directly rather than guessing on
+either a deletion or a full visual clone: **kept** Weekly Record as-is, and
+for the redesign chose **"borrow the concepts"** over a fuller tabbed
+rebuild — keep the page's existing structure, add trending + the existing
+multi-add board as new sections, apply consistent league filtering.
+
+- **`/manager/waiver` now scopes to leagues actually being managed** — same
+  filter Lineups/Open Spots/Weekly Record already use (`status: "in_season"`
+  + `!isBestBall(settings)`), applied in `app/manager/waiver/page.tsx` to
+  every league-derived prop on the page. Previously this page had **no
+  filtering at all** (every league, every status, best ball included) — a
+  real gap the other portfolio pages had already closed but this one never
+  got. Waiver history (past-season data) is untouched, since "in-season"
+  filtering doesn't apply to completed seasons.
+- **"Hottest adds & drops"** (`components/manager/WaiverAssistant.tsx`) —
+  Sleeper's own real top-5 most-added and most-dropped players in the last
+  24h, platform-wide (`lib/sleeper.ts`'s `getTrendingAdds`, already used
+  inside `BulkAdd`'s own trending panel, plus a new `getTrendingDrops` for
+  the drop side — verified live via a direct `curl` before wiring it up,
+  same rigor as every other "does this endpoint actually return real data"
+  check in this app). Explicitly labelled as platform-wide, not a per-league
+  availability check, since that's a different question the search box and
+  multi-add board below actually answer. Clicking a trending add plugs him
+  straight into the existing single-player lookup tool below.
+- **"Add several players at once"** — the exact same `BulkAdd` multi-target
+  board already proven on `/manager/lineups` and `/manager/open-spots`
+  (search up to 8 targets, a league × target availability grid, FAAB
+  suggestions, distinct drops when two targets need one in the same league,
+  one combined confirm-and-send) — no new write path, no new logic, just
+  another place the same already-tested tool is embedded, fed this page's
+  own filtered league list.
+- The original single-player search + real season-points drop-diff tool
+  (queues Sleeper's own waiver page via the browser-automation userscript,
+  rather than writing directly) is kept, relabelled "Single-player lookup"
+  further down the page — it does something the multi-add board doesn't
+  (a real points-based drop comparison per league) so it wasn't replaced,
+  per the "borrow the concepts" scoping answer.
+- `tsc`/`eslint`/`next build` all clean (three pre-existing lint findings in
+  this file — two `react-hooks/set-state-in-effect`, one bare `<a>` tag —
+  confirmed via the committed version before this change, not introduced by
+  it; left alone as out of scope). Not live-verified against the real
+  account — same `/admin` passphrase blocker as the last several entries.

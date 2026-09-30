@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import WaiverAssistant from "@/components/manager/WaiverAssistant";
 import { db } from "@/lib/db";
+import { isBestBall, rosterPositionsFromSettings, slimLeagueSettings, type ManagedLeague } from "@/lib/manager";
 import type { WaiverLeague } from "@/components/manager/WaiverAssistant";
+import type { LineupLeague } from "@/components/manager/LineupManager";
 
 export const metadata: Metadata = {
   title: "Fantis — Waiver Assistant",
@@ -21,8 +23,26 @@ export default async function WaiverPage() {
     );
   }
 
+  // Scoped to leagues you're actually managing right now — in-season and
+  // not best ball (best-ball leagues set their own lineups and don't run
+  // real waivers the same way). Same filter Lineups/Open Spots already use.
   const [leagueRows, rosterRows, leagueRosterRows, pingRow, waiverHistoryRows] = await Promise.all([
-    db.league.findMany({ orderBy: { name: "asc" } }),
+    db.league.findMany({
+      where: { status: "in_season" },
+      select: {
+        id: true,
+        accountId: true,
+        name: true,
+        season: true,
+        totalRosters: true,
+        status: true,
+        settings: true,
+        group: true,
+        lastSyncedAt: true,
+        account: { select: { username: true } },
+      },
+      orderBy: { name: "asc" },
+    }),
     db.roster.findMany(),
     db.leagueRoster.findMany({ select: { leagueId: true, players: true } }),
     db.automationPing.findUnique({ where: { id: "singleton" } }),
@@ -31,7 +51,8 @@ export default async function WaiverPage() {
 
   // Grouped by season for display — a real, on-demand sync (see the
   // Waivers page's own "Sync waiver history" action), not the main Refresh
-  // button; empty until that's run at least once.
+  // button; empty until that's run at least once. Past-season data, so it's
+  // untouched by the in-season/best-ball filtering above.
   const waiverHistoryBySeason: Record<string, { leagueName: string; waiverPosition: number | null; faabUsed: number | null }[]> = {};
   for (const w of waiverHistoryRows) {
     (waiverHistoryBySeason[w.season] ??= []).push({
@@ -55,27 +76,67 @@ export default async function WaiverPage() {
     rosteredByLeague.set(r.leagueId, set);
   }
 
+  const scoped = leagueRows.filter((lg) => !isBestBall(lg.settings) && rosterByLeague.has(lg.id));
+
   // Only leagues with a synced roster can suggest a drop candidate — a
   // league that hasn't rostered anything yet (e.g. still pre_draft) has
   // nothing to rank.
-  const leagues: WaiverLeague[] = leagueRows
-    .filter((lg) => rosterByLeague.has(lg.id))
-    .map((lg) => {
-      const roster = rosterByLeague.get(lg.id)!;
-      return {
-        leagueId: lg.id,
-        leagueName: lg.name,
-        players: roster.players,
-        starters: roster.starters,
-        allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
-        waiverPosition: roster.waiverPosition,
-        faabUsed: roster.faabUsed,
-      };
-    });
+  const leagues: WaiverLeague[] = scoped.map((lg) => {
+    const roster = rosterByLeague.get(lg.id)!;
+    return {
+      leagueId: lg.id,
+      leagueName: lg.name,
+      players: roster.players,
+      starters: roster.starters,
+      allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
+      waiverPosition: roster.waiverPosition,
+      faabUsed: roster.faabUsed,
+    };
+  });
+
+  // Same LineupLeague shape Open Spots/Lineups build, so this page can hand
+  // the exact same, already-working multi-target add board (BulkAdd) its
+  // data — no new write path, just another view onto the same real leagues.
+  const multiAddLeagues: LineupLeague[] = scoped.map((lg) => {
+    const r = rosterByLeague.get(lg.id)!;
+    const league: ManagedLeague = {
+      id: lg.id,
+      accountId: lg.accountId,
+      accountUsername: lg.account.username,
+      name: lg.name,
+      season: lg.season,
+      totalRosters: lg.totalRosters,
+      status: lg.status,
+      settings: slimLeagueSettings(lg.settings),
+      group: lg.group,
+      lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
+    };
+    return {
+      league,
+      roster: {
+        leagueId: r.leagueId,
+        rosterId: r.rosterId,
+        starters: r.starters,
+        players: r.players,
+        reserve: r.reserve,
+        waiverPosition: r.waiverPosition,
+        faabUsed: r.faabUsed,
+        wins: r.wins,
+        losses: r.losses,
+        ties: r.ties,
+        fpts: r.fpts,
+        fptsAgainst: r.fptsAgainst,
+        lastSyncedAt: r.lastSyncedAt?.toISOString() ?? null,
+      },
+      rosterPositions: rosterPositionsFromSettings(lg.settings),
+      alertCount: 0,
+    };
+  });
 
   return (
     <WaiverAssistant
       leagues={leagues}
+      multiAddLeagues={multiAddLeagues}
       automationLastPingAt={pingRow?.lastPingAt.toISOString() ?? null}
       waiverHistoryBySeason={waiverHistoryBySeason}
     />

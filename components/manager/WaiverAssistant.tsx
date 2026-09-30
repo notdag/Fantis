@@ -6,11 +6,16 @@ import { posChipStyle } from "@/lib/players";
 import { automationConnected } from "@/lib/manager";
 import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { getTrendingAdds, getTrendingDrops, type TrendingPlayer } from "@/lib/sleeper";
+import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconDollar, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
+import ConnectWriteAccess from "./ConnectWriteAccess";
+import BulkAdd from "./BulkAdd";
+import type { LineupLeague } from "./LineupManager";
 import type { PlayerMapEntry } from "@/lib/types";
 
 export interface WaiverLeague {
@@ -48,10 +53,12 @@ export interface WaiverHistoryEntry {
 
 export default function WaiverAssistant({
   leagues,
+  multiAddLeagues,
   automationLastPingAt,
   waiverHistoryBySeason,
 }: {
   leagues: WaiverLeague[];
+  multiAddLeagues: LineupLeague[];
   automationLastPingAt: string | null;
   waiverHistoryBySeason?: Record<string, WaiverHistoryEntry[]>;
 }) {
@@ -90,6 +97,29 @@ export default function WaiverAssistant({
   const connected = mounted && automationConnected(automationLastPingAt);
 
   const { pmap, loading: pmapLoading, error: pmapError, retry: retryPmap } = usePlayerMap();
+
+  // Sleeper's own real "who's moving right now" — platform-wide, not scoped
+  // to your leagues, so this is informational (who to look for), not a
+  // per-league availability check. That's what the search box + multi-add
+  // board below are for.
+  const [trendingAdds, setTrendingAdds] = useState<TrendingPlayer[] | null>(null);
+  const [trendingDrops, setTrendingDrops] = useState<TrendingPlayer[] | null>(null);
+  useEffect(() => {
+    getTrendingAdds(24, 5).then(setTrendingAdds).catch(() => setTrendingAdds([]));
+    getTrendingDrops(24, 5).then(setTrendingDrops).catch(() => setTrendingDrops([]));
+  }, []);
+
+  const [multiAddToken, setMultiAddToken] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
+  useEffect(() => {
+    let cancelled = false;
+    loadPrefs()
+      .then((p) => { if (!cancelled) setPrefs(p); })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const seasonTotals = useSeasonTotals();
 
@@ -202,9 +232,9 @@ export default function WaiverAssistant({
         <PageHead
           description={
             <>
-              Search a free-agent target, see which of your leagues don&rsquo;t already have him,
-              and get a real season-points drop suggestion per league. This only opens
-              Sleeper&rsquo;s real page for you to review — it never submits a claim on its own.
+              Every in-season league you&rsquo;re actually managing (best ball excluded) — who&rsquo;s
+              trending on Sleeper right now, add several players at once across all your leagues, or
+              look up one target&rsquo;s real per-league drop math.
             </>
           }
         />
@@ -235,8 +265,84 @@ export default function WaiverAssistant({
             />
           </StatCardGrid>
         )}
+      </section>
 
-        <div className="field" style={{ maxWidth: 360, marginTop: 16 }}>
+      <section className="sec">
+        <SectionHead title="Hottest adds &amp; drops" right="last 24h across Sleeper" />
+        <p className="hint" style={{ margin: "0 0 12px" }}>
+          Sleeper&rsquo;s own real trending list, platform-wide — not scoped to your leagues, so
+          it&rsquo;s who to look for, not a guarantee he&rsquo;s actually available in yours. Search him
+          below to check.
+        </p>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+            <p className="portmeta" style={{ color: "var(--mint)", fontWeight: 600, margin: "0 0 6px" }}>Most added</p>
+            {trendingAdds === null ? (
+              <p className="hint">Loading…</p>
+            ) : trendingAdds.length === 0 ? (
+              <p className="hint">Couldn&rsquo;t load trending adds.</p>
+            ) : (
+              <DataTable>
+                {trendingAdds.map((t, i) => {
+                  const p = pmap?.[t.player_id];
+                  return (
+                    <TableRow
+                      as="button"
+                      key={t.player_id}
+                      onClick={() => {
+                        setSelectedId(t.player_id);
+                        setQuery(p?.n ?? t.player_id);
+                      }}
+                    >
+                      <span className="portmeta" style={{ minWidth: 16 }}>{i + 1}</span>
+                      <PlayerAvatar playerId={t.player_id} pos={p?.p} size={26} />
+                      <span className="tname" style={{ flex: 1 }}>{p?.n ?? t.player_id}</span>
+                      {p?.p && <span className="pos" style={posChipStyle(p.p)}>{p.p}</span>}
+                      <span className="portmeta">{p?.t ?? ""}</span>
+                    </TableRow>
+                  );
+                })}
+              </DataTable>
+            )}
+          </div>
+          <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+            <p className="portmeta" style={{ color: "var(--red)", fontWeight: 600, margin: "0 0 6px" }}>Most dropped</p>
+            {trendingDrops === null ? (
+              <p className="hint">Loading…</p>
+            ) : trendingDrops.length === 0 ? (
+              <p className="hint">Couldn&rsquo;t load trending drops.</p>
+            ) : (
+              <DataTable>
+                {trendingDrops.map((t, i) => {
+                  const p = pmap?.[t.player_id];
+                  return (
+                    <TableRow as="static" key={t.player_id}>
+                      <span className="portmeta" style={{ minWidth: 16 }}>{i + 1}</span>
+                      <PlayerAvatar playerId={t.player_id} pos={p?.p} size={26} />
+                      <span className="tname" style={{ flex: 1 }}>{p?.n ?? t.player_id}</span>
+                      {p?.p && <span className="pos" style={posChipStyle(p.p)}>{p.p}</span>}
+                      <span className="portmeta">{p?.t ?? ""}</span>
+                    </TableRow>
+                  );
+                })}
+              </DataTable>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="sec">
+        <SectionHead
+          title="Add several players at once"
+          right={`${multiAddLeagues.length} league${multiAddLeagues.length === 1 ? "" : "s"}`}
+        />
+        <ConnectWriteAccess onTokenReady={setMultiAddToken} />
+        <BulkAdd leagues={multiAddLeagues} pmap={pmap} token={multiAddToken} prefs={prefs} />
+      </section>
+
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <SectionHead title="Single-player lookup" right="opens Sleeper for you to review and submit" />
+        <div className="field" style={{ maxWidth: 360, marginTop: 4 }}>
           <input
             className="input"
             placeholder="Search a player to add…"
