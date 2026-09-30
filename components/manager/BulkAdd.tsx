@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { PlanLeague } from "@/lib/bulkPlan";
+import type { Claim } from "@/lib/inbox";
 import { buildMultiAddPlan, type LeagueBudgetWarning, type MultiAddRow } from "@/lib/multiAddPlan";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { getTrendingAdds } from "@/lib/sleeper";
@@ -42,11 +43,18 @@ export default function BulkAdd({
   pmap,
   token,
   prefs,
+  claimsByLeague,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
   prefs: PlayerPrefs;
+  // Real pending waiver claims already sitting in each league, keyed by
+  // leagueId — optional so callers that haven't scanned for claims (Lineups,
+  // Open Spots) render exactly as before. Shown per-row here rather than
+  // only in a separate collective list, since a claim only matters when
+  // you can tell which specific row/league it belongs to.
+  claimsByLeague?: Map<string, Claim[]>;
 }) {
   const rank = useDropRank(pmap);
   const isPriority = useMemo(() => new Set(prefs.priority), [prefs.priority]);
@@ -482,7 +490,25 @@ export default function BulkAdd({
                         onChange={() => toggle(r.key)}
                       />
                       <span className="tname" style={{ minWidth: 130 }}>{nameOf(pmap, r.targetId)}</span>
-                      <span className="tname" style={{ flex: 1 }}>{r.leagueName}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <div className="tname">{r.leagueName}</div>
+                        {(() => {
+                          const cl = claimsByLeague?.get(r.leagueId);
+                          if (!cl || cl.length === 0) return null;
+                          return (
+                            <div className="portmeta" style={{ fontSize: 11, color: "var(--amber)", marginTop: 2 }}>
+                              {cl
+                                .map((c) => {
+                                  const add = c.addId ? nameOf(pmap, c.addId) : "?";
+                                  const drop = c.dropId ? nameOf(pmap, c.dropId) : null;
+                                  return `${add}${drop ? ` (drop ${drop})` : ""}${c.bid != null ? ` $${c.bid}` : ""}`;
+                                })
+                                .join(", ")}{" "}
+                              pending
+                            </div>
+                          );
+                        })()}
+                      </span>
                       <span style={{ minWidth: 200 }}>
                         {r.full ? (
                           <select

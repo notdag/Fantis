@@ -2244,3 +2244,41 @@ just behind a click).
 - `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
   confirmed unrelated). Not live-verified against the real account — same
   `/admin` passphrase blocker as the last several entries.
+
+### Mass Add/Claim board: pending claims shown per row, not just in a separate list (2026-09; real bug reported by the owner)
+
+Screenshot + "i dont see the pending claims / activity when im trying to
+gauge if i need to waiver my player" — the pending-claims work so far only
+touched the single-player lookup table; the "Add several players at once"
+board (`BulkAdd.tsx`, the multi-target tool the owner was actually using in
+the screenshot, adding Keenan Allen across dozens of leagues) had no claims
+visibility at all. Follow-up: "i want it here, not a collective one called
+pending waiver claims and i cant even differentiate it" — the existing
+separate "Pending waiver claims" section above it lists every claim
+together with no way to tell which one applies to which row in the table
+below it.
+
+- **`BulkAdd.tsx` gained an optional `claimsByLeague?: Map<string, Claim[]>`
+  prop** — when provided, each row's League cell now shows the real claim
+  detail (add player, drop player if any, bid if any) directly under the
+  league name, right in the row it applies to, instead of requiring a
+  cross-reference to a separate list. Optional and additive: `Lineups` and
+  `Open Spots` (the other two pages that embed this same shared board)
+  don't have a claims scan built at all, so they simply don't pass the
+  prop and render exactly as before — zero impact there.
+- **`WaiverAssistant.tsx` passes its own already-computed `claimsByLeague`**
+  (the same real scan data — `classifyTransactions`/`fetchLeagueTransactions`
+  — that already powers the "Pending waiver claims" section and the
+  single-player lookup's per-league badge) straight into its `<BulkAdd>`
+  call. No new fetch, no new Sleeper call — one real dataset now feeds all
+  three surfaces on this page. The "Pending waiver claims" scan section sits
+  above the add board on the page, so a real scan is already available by
+  the time someone reaches this table in the normal top-to-bottom flow;
+  until a scan runs, the per-row claims line is silently empty, matching
+  how every other optional per-row field in this table already behaves
+  (e.g. no bid shown for a non-FAAB league) rather than adding a second
+  "scan first" prompt inside an already-dense table.
+- `tsc`/`eslint`/`next build` all clean (`BulkAdd.tsx` fully clean; the same
+  1 pre-existing `WaiverAssistant.tsx` lint finding, confirmed unrelated,
+  untouched). Not live-verified against the real account — same `/admin`
+  passphrase blocker as the last several entries.

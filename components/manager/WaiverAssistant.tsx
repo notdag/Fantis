@@ -695,7 +695,7 @@ export default function WaiverAssistant({
           title="Add several players at once"
           right={`${multiAddLeagues.length} league${multiAddLeagues.length === 1 ? "" : "s"}`}
         />
-        <BulkAdd leagues={multiAddLeagues} pmap={pmap} token={multiAddToken} prefs={prefs} />
+        <BulkAdd leagues={multiAddLeagues} pmap={pmap} token={multiAddToken} prefs={prefs} claimsByLeague={claimsByLeague} />
       </section>
 
       <section className="sec" style={{ paddingBottom: 0 }}>
