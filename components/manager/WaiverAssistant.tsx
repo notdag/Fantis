@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
-import { useSeasonTotals, pickDropCandidate } from "@/lib/useDropCandidates";
+import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { getTrendingAdds, getTrendingDrops, type TrendingPlayer } from "@/lib/sleeper";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
@@ -29,6 +29,10 @@ export interface WaiverLeague {
   rosterId: number;
   players: string[];
   starters: string[];
+  reserve: string[];
+  // roster_positions.length — 0 means unknown (roster settings not synced),
+  // treated as "not full" rather than guessed.
+  rosterSize: number;
   // Every real player rostered by ANY team in this league — a true
   // "is he actually available" check, not just "not on my roster."
   allRosteredPlayers: string[];
@@ -259,6 +263,7 @@ export default function WaiverAssistant({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [bidOverride, setBidOverride] = useState<Record<string, number>>({});
+  const [dropOverride, setDropOverride] = useState<Record<string, string | null>>({});
   const [execStatus, setExecStatus] = useState<Record<string, TaskStatus>>({});
   const [executing, setExecuting] = useState(false);
   const [execSummary, setExecSummary] = useState("");
@@ -292,11 +297,27 @@ export default function WaiverAssistant({
         const bidMin = typeof s.waiver_bid_min === "number" ? s.waiver_bid_min : 0;
         const pos = pmap?.[selectedId]?.p ?? "";
         const bid = Math.max(bidMin, suggestBid(faabStats, lg.leagueId, pos, bidMin, bidMin).bid);
+
+        // Real roster math, same rule buildAddPlan uses elsewhere: only
+        // propose a drop when the active roster (reserve/IR excluded) is
+        // actually at its limit. rosterSize === 0 means roster settings
+        // weren't synced — treated as "not full" rather than guessed.
+        const active = lg.players.length - lg.reserve.length;
+        const full = lg.rosterSize > 0 && active >= lg.rosterSize;
+        // Bench only — never a starter or IR/reserve player — real season
+        // points ascending so the weakest bench player defaults first;
+        // players with no projection yet sort last, not excluded.
+        const dropCandidates = lg.players
+          .filter((id) => id !== selectedId && !lg.starters.includes(id) && !lg.reserve.includes(id))
+          .map((id) => ({ playerId: id, value: seasonTotals?.[id]?.pts ?? null }))
+          .sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
+
         return {
           leagueId: lg.leagueId,
           leagueName: lg.leagueName,
           rosterId: lg.rosterId,
-          drop: pickDropCandidate(lg.players, lg.starters, seasonTotals),
+          full,
+          dropCandidates,
           // Real league-wide check, not just "not on my roster" — every
           // other team's roster in this league is real data now too (see
           // LeagueRoster in prisma/schema.prisma), so this is honest about
@@ -312,17 +333,19 @@ export default function WaiverAssistant({
 
   // Reset selection to "every league where he's a true free agent" whenever
   // the target player changes — leagues where another team already has him
-  // start unchecked (and disabled below), since queuing those would open a
-  // waiver page for a claim that can't go through.
+  // start unchecked (and disabled below), since sending those would be a
+  // claim that can't go through.
   useEffect(() => {
     if (!selectedId) {
       setCheckedIds(new Set());
+      setDropOverride({});
       return;
     }
     const ids = leagues
       .filter((lg) => !lg.players.includes(selectedId) && !lg.allRosteredPlayers.includes(selectedId))
       .map((lg) => lg.leagueId);
     setCheckedIds(new Set(ids));
+    setDropOverride({});
     setExecStatus({});
     setExecSummary("");
   }, [selectedId, leagues]);
@@ -336,23 +359,31 @@ export default function WaiverAssistant({
     });
   };
 
+  const dropFor = (c: (typeof candidateLeagues)[number]): string | null =>
+    c.leagueId in dropOverride ? dropOverride[c.leagueId] : c.dropCandidates[0]?.playerId ?? null;
+  // A full roster with nobody eligible to drop can't be run; an open-slot
+  // league never needs a drop at all.
+  const runnable = (c: (typeof candidateLeagues)[number]) => !c.full || !!dropFor(c);
+
   const bidFor = (c: (typeof candidateLeagues)[number]) => {
     const raw = c.leagueId in bidOverride ? bidOverride[c.leagueId] : c.bid;
     const capped = c.budgetLeft != null ? Math.min(raw, c.budgetLeft) : raw;
     return Math.max(c.bidMin, Math.trunc(capped));
   };
 
+  const selectedCount = candidateLeagues.filter((c) => checkedIds.has(c.leagueId) && !c.takenByOther && runnable(c)).length;
+
   const runAdd = async () => {
-    if (!multiAddToken || executing || checkedIds.size === 0 || !selectedId) return;
+    if (!multiAddToken || executing || selectedCount === 0 || !selectedId) return;
     setExecuting(true);
     setExecSummary("");
     execAbort.current = { aborted: false };
-    const targets = candidateLeagues.filter((c) => checkedIds.has(c.leagueId) && !c.takenByOther);
+    const targets = candidateLeagues.filter((c) => checkedIds.has(c.leagueId) && !c.takenByOther && runnable(c));
     const doneLeagues: string[] = [];
     const tasks: BulkTask[] = targets.map((c) => ({
       key: c.leagueId,
       run: async () => {
-        const drop = c.drop?.playerId;
+        const drop = c.full ? dropFor(c) ?? undefined : undefined;
         try {
           await addDropFreeAgent(multiAddToken, { leagueId: c.leagueId, rosterId: c.rosterId, addPlayerId: selectedId, dropPlayerId: drop });
           doneLeagues.push(c.leagueId);
@@ -661,22 +692,24 @@ export default function WaiverAssistant({
             <>
               <DataTable>
                 {candidateLeagues.map((c) => {
-                  const { leagueId, leagueName, drop, takenByOther, faab, budgetLeft } = c;
-                  const label = drop ? pmap?.[drop.playerId] : null;
+                  const { leagueId, leagueName, full, dropCandidates, takenByOther, faab, budgetLeft } = c;
+                  const chosenDropId = full ? dropFor(c) : null;
+                  const dropVal = chosenDropId ? seasonTotals?.[chosenDropId]?.pts ?? null : null;
                   const diff =
-                    selectedSeasonPts != null && drop ? selectedSeasonPts - drop.value : null;
+                    selectedSeasonPts != null && dropVal != null ? selectedSeasonPts - dropVal : null;
                   const status = execStatus[leagueId];
                   const done = status?.kind === "done";
+                  const noBench = full && dropCandidates.length === 0;
                   return (
                     <TableRow
                       as="label"
                       key={leagueId}
-                      style={{ cursor: takenByOther || done ? "default" : "pointer", opacity: takenByOther ? 0.55 : 1 }}
+                      style={{ cursor: takenByOther || noBench || done ? "default" : "pointer", opacity: takenByOther || noBench ? 0.55 : 1 }}
                     >
                       <input
                         type="checkbox"
-                        checked={checkedIds.has(leagueId)}
-                        disabled={takenByOther || done}
+                        checked={checkedIds.has(leagueId) && runnable(c)}
+                        disabled={takenByOther || noBench || done}
                         onChange={() => toggle(leagueId)}
                       />
                       <span className="tname" style={{ flex: 1 }}>
@@ -686,27 +719,28 @@ export default function WaiverAssistant({
                         <span className="portmeta" style={{ color: "var(--red)" }}>
                           already rostered by another team in this league
                         </span>
-                      ) : drop ? (
-                        <div className="mgrplayer">
-                          <PlayerAvatar playerId={drop.playerId} pos={label?.p} size={26} />
-                          <div>
-                            <div className="mgrplayername">
-                              {label?.n ?? drop.playerId}
-                              {!drop.fromBench && (
-                                <span className="portmeta" style={{ marginLeft: 6 }}>no bench</span>
-                              )}
-                            </div>
-                            {label?.p && (
-                              <span className="pos" style={posChipStyle(label.p)}>
-                                {label.p}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                      ) : !full ? (
+                        <span className="portmeta" style={{ color: "var(--mint)" }}>open roster spot — no drop needed</span>
+                      ) : noBench ? (
+                        <span className="portmeta" style={{ color: "var(--red)" }}>
+                          roster full, nobody eligible to drop
+                        </span>
                       ) : (
-                        <span className="portmeta">suggest drop: —</span>
+                        <select
+                          className="select sm"
+                          value={chosenDropId ?? ""}
+                          onClick={(e) => e.preventDefault()}
+                          onChange={(e) => setDropOverride((prev) => ({ ...prev, [leagueId]: e.target.value || null }))}
+                        >
+                          {dropCandidates.map((d) => (
+                            <option key={d.playerId} value={d.playerId}>
+                              drop {pmap?.[d.playerId]?.n ?? d.playerId}
+                              {d.value != null ? ` (${Math.round(d.value)} pts)` : ""}
+                            </option>
+                          ))}
+                        </select>
                       )}
-                      {!takenByOther && <Diff value={diff} />}
+                      {!takenByOther && full && <Diff value={diff} />}
                       {!takenByOther && faab && (
                         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                           <input
@@ -738,24 +772,25 @@ export default function WaiverAssistant({
               </DataTable>
 
               <p className="hint" style={{ marginTop: 10 }}>
-                Leagues where another team already has him are shown greyed out and can&rsquo;t be
-                selected — a real check against every roster in that league, not just yours. The drop
-                suggestion and the Diff column (both real season-projected points, the same numbers
-                Rankings and Trade Calculator use) rank purely on projected points, with no
-                position-scarcity or roster-rule awareness — review the drop and bid before sending.
-                If a league needs a waiver claim instead of an instant add (Sleeper decides that, not
-                Fantis), the suggested bid comes from this account&rsquo;s own real past winning bids
-                when there&rsquo;s history, or the league&rsquo;s own minimum otherwise — editable per
-                row.
+                Leagues where another team already has him, or where the roster&rsquo;s full with nobody
+                eligible to drop, are shown greyed out and can&rsquo;t be selected — real checks against
+                that league&rsquo;s actual roster, not a guess. A league with an open active-roster spot
+                (reserve/IR excluded) never proposes a drop at all. Where a drop is genuinely needed, the
+                dropdown lists every real bench player (never a starter or IR/reserve player) ranked by
+                real season-projected points, weakest first — pick a different one any time, and the Diff
+                column updates to match. If a league needs a waiver claim instead of an instant add
+                (Sleeper decides that, not Fantis), the suggested bid comes from this account&rsquo;s own
+                real past winning bids when there&rsquo;s history, or the league&rsquo;s own minimum
+                otherwise — editable per row.
               </p>
 
               <button
                 className="btn"
                 style={{ marginTop: 10 }}
                 onClick={runAdd}
-                disabled={!multiAddToken || executing || checkedIds.size === 0}
+                disabled={!multiAddToken || executing || selectedCount === 0}
               >
-                {executing ? "Sending…" : `Add/claim in ${checkedIds.size} selected league${checkedIds.size === 1 ? "" : "s"}`}
+                {executing ? "Sending…" : `Add/claim in ${selectedCount} selected league${selectedCount === 1 ? "" : "s"}`}
               </button>
               {execSummary && <p className="hint" style={{ marginTop: 8 }}>{execSummary}</p>}
             </>

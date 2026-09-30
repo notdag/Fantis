@@ -88,6 +88,8 @@ export default async function WaiverPage() {
       rosterId: roster.rosterId,
       players: roster.players,
       starters: roster.starters,
+      reserve: roster.reserve,
+      rosterSize: rosterPositionsFromSettings(lg.settings).length,
       allRosteredPlayers: Array.from(rosteredByLeague.get(lg.id) ?? []),
       waiverPosition: roster.waiverPosition,
       faabUsed: roster.faabUsed,

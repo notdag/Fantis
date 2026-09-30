@@ -1979,3 +1979,51 @@ while claiming someone.
   `WaiverAssistant.tsx`, confirmed unrelated and untouched by this change).
   Not live-verified against the real account — same `/admin` passphrase
   blocker as the last several entries.
+
+### Waiver Assistant single-player lookup: real drop dropdown + no drop on an open slot (2026-09; real bug reported by the owner)
+
+"u need to give me the drop down to select who to drop, also no drop if
+open slot etc" — two real gaps in the single-player lookup tool from the
+direct-execution change above: it always suggested exactly one auto-picked
+drop with no way to override it, and — because `pickDropCandidate` (the
+season-points helper it was using) has no concept of roster capacity — it
+suggested a drop even in leagues where the active roster had a genuinely
+open slot and no drop was needed at all.
+
+- **Real roster-capacity check, same rule `buildAddPlan` already uses
+  elsewhere** (`lib/bulkPlan.ts`, previously unused dead code — this is its
+  first real caller): a league only needs a drop when its active roster
+  (real players minus real reserve/IR) is actually at `roster_positions`'s
+  length. `WaiverLeague` gained `reserve: string[]` and `rosterSize: number`
+  (`app/manager/waiver/page.tsx` now supplies both — `reserve` from the
+  already-synced `Roster.reserve`, `rosterSize` from the existing
+  `rosterPositionsFromSettings().length` helper). `rosterSize === 0` (roster
+  settings not synced) is treated as "not full," never guessed as full.
+  A league with a real open slot now shows "open roster spot — no drop
+  needed" and sends the add with no `dropPlayerId` at all — genuinely fewer
+  API calls, not just a cosmetic label change.
+- **Real dropdown when a drop IS needed**: `candidateLeagues` now computes
+  every eligible bench player (never a starter, never IR/reserve — same
+  exclusions `buildAddPlan`'s bench filter already uses) ranked by real
+  season-projected points, weakest first, instead of picking just one.
+  A `<select>` per league lets the owner override which bench player to
+  drop; the Diff column recalculates against whichever one is picked. A
+  full roster with genuinely nobody eligible to drop (all bench players
+  already claimed elsewhere, or an empty bench) is shown disabled with
+  "roster full, nobody eligible to drop" rather than silently picking a
+  starter or IR player.
+- `checkedIds` still defaults to "every league where he's a real free
+  agent," but the checkbox now also requires `runnable` (open slot, or a
+  real drop actually selected) to show as checked, and `runAdd` filters the
+  same way — a league stuck on "nobody eligible to drop" can never
+  accidentally get sent. The button's count and the executed batch now
+  agree (previously the raw `checkedIds.size` could overcount a
+  since-disabled row).
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing
+  `WaiverAssistant.tsx` lint finding, confirmed unrelated). Not
+  live-verified against the real account — same `/admin` passphrase blocker
+  as the last several entries; the underlying capacity/bench logic
+  (`buildAddPlan`'s `full`/bench-filter rules) is the same real math already
+  used by the Mass Add board's `buildMultiAddPlan`, just applied here for
+  the first time to the single-player tool — worth a quick real look at a
+  known-open-slot league and a known-full league before a live run.
