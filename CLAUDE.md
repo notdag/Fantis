@@ -1798,3 +1798,44 @@ multi-add board as new sections, apply consistent league filtering.
   confirmed via the committed version before this change, not introduced by
   it; left alone as out of scope). Not live-verified against the real
   account — same `/admin` passphrase blocker as the last several entries.
+
+### Bulk confirm: real summary line instead of forcing a scroll through every line (2026-09; requested explicitly by the owner, scoped via AskUserQuestion)
+
+"i cant manually review them all, please automate like move to ir and etc"
+— asked directly what "automate" meant here, since it's the exact
+unattended Phase-5 rule the owner had just had removed on purpose ("Drop
+it — everything needs the 1-click confirm now"). Given three real options
+(faster manual review / one-click-per-command / true unattended automation
+again), the owner chose the safest: **faster bulk review, still a real
+click every time** — never bring back unattended execution.
+
+- **`components/manager/BulkConfirm.tsx`** — the shared before-you-send
+  review step used by Command Center's bulk send, Mass IR, and Mass Add/
+  Claim. Past 8 lines, the full list now collapses behind a "Show all N
+  lines" toggle instead of forcing a scroll through a 70-200-league batch
+  before the send button works; a new optional `summary` prop shows a real,
+  computed one-line breakdown in its place. This is a genuine safety
+  trade-off, not a shortcut: the owner still clicks Send, still sees a real
+  summary and can expand the full list any time, but is no longer required
+  to scroll every line first.
+- **Mass IR and Mass Add/Claim needed no changes at all** — both already
+  pass a real breakdown as their `title` (e.g. "Move 72 players to IR
+  across 72 leagues — including 24 drops"), so the shared component change
+  alone gives them the faster-review behavior for free.
+- **Command Center's bulk send** (`ProposalsPanel.tsx`) didn't have a real
+  breakdown to reuse, so it gained one: a `selectedSummary` computed from
+  the actual selected proposals' kinds (e.g. "72 IR moves · 24 releases
+  across 72 leagues"), passed as `summary`. The per-batch ack checkbox
+  wording changed from "I've reviewed every line above" (no longer honest
+  once the list can be collapsed) to "I understand this sends N real
+  changes to Sleeper" — still one explicit, required click, just not one
+  that claims a line-by-line read that may not have happened.
+- Deliberately NOT done: no auto-approval, no unattended sending, no
+  standing rule, nothing that runs without a click from the owner in that
+  moment. The mode-ladder collapse's own safety property — every write
+  still needs one explicit human confirmation, every time — is completely
+  unchanged.
+- `tsc`/`eslint`/`next build` all clean; `testCommandCenterExec.ts` (84)
+  unaffected, as expected for a pure UI change with no executor logic
+  touched. Not live-verified against the real account — same `/admin`
+  passphrase blocker as the last several entries.

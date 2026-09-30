@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { TaskStatus } from "@/lib/bulkRun";
 
 // Live per-row result cell shared by the IR and Add/Claim tables.
@@ -24,11 +24,19 @@ export function StatusCell({ status }: { status: TaskStatus | undefined }) {
   );
 }
 
-// One review step before anything is sent: every change listed, then a
-// single explicit confirm. Deliberately not a browser confirm() so the list
-// (including each proposed drop) can be read properly.
+// Small enough to just read top to bottom; past this, forcing a scroll
+// through every line before sending is what makes reviewing a real 70-200
+// league batch impractical — so the list collapses behind a toggle instead,
+// with `summary` (a real, computed breakdown — never a guess) standing in
+// for it by default.
+const COLLAPSE_ABOVE = 8;
+
+// One review step before anything is sent: a real summary (and the full
+// list, on request), then a single explicit confirm. Deliberately not a
+// browser confirm() so the detail can be read properly when wanted.
 export function BulkConfirm({
   title,
+  summary,
   lines,
   confirmLabel,
   onConfirm,
@@ -36,6 +44,11 @@ export function BulkConfirm({
   disabled,
 }: {
   title: string;
+  // A short, real breakdown (e.g. "72 IR moves · 24 releases across 72
+  // leagues") shown above the list — computed by the caller from the same
+  // data as `lines`, never invented. Optional; omit for a small batch where
+  // the full list is already short enough to just read.
+  summary?: ReactNode;
   lines: ReactNode[];
   confirmLabel: string;
   onConfirm: () => void;
@@ -46,14 +59,23 @@ export function BulkConfirm({
   // click always gives visible feedback.
   disabled?: boolean;
 }) {
+  const [expanded, setExpanded] = useState(lines.length <= COLLAPSE_ABOVE);
   return (
     <div className="card sync" style={{ marginBottom: 12, borderColor: "var(--amber)" }}>
       <p className="hint" style={{ margin: 0, color: "var(--bone)", fontWeight: 600 }}>{title}</p>
-      <ul className="hint" style={{ margin: "8px 0", paddingLeft: 18, maxHeight: 220, overflowY: "auto" }}>
-        {lines.map((l, i) => (
-          <li key={i}>{l}</li>
-        ))}
-      </ul>
+      {summary && <p className="hint" style={{ margin: "6px 0 0" }}>{summary}</p>}
+      {lines.length > COLLAPSE_ABOVE && (
+        <button className="ccexample" style={{ margin: "8px 0" }} onClick={() => setExpanded((v) => !v)}>
+          {expanded ? "Hide the full list" : `Show all ${lines.length} lines`}
+        </button>
+      )}
+      {expanded && (
+        <ul className="hint" style={{ margin: "8px 0", paddingLeft: 18, maxHeight: 220, overflowY: "auto" }}>
+          {lines.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
+      )}
       <p className="hint" style={{ margin: "0 0 8px" }}>
         These are real changes on Sleeper and can&rsquo;t be undone from here.
       </p>

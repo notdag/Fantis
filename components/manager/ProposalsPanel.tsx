@@ -245,6 +245,21 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
   const hasToken = typeof window !== "undefined" && !!getStoredToken();
   const sendable = review.filter((p) => p.status === "proposed" || p.status === "approved");
   const selectedList = sendable.filter((p) => selected.has(p.id));
+  // A real, computed breakdown — never a guess — so a big batch (70-200
+  // leagues) can be reviewed as one line instead of forcing a scroll
+  // through every proposal before sending. `selectedList` is already
+  // recomputed fresh each render (a plain filter, not itself memoized), so
+  // this is too, rather than a useMemo that would just wrap an unstable
+  // dependency.
+  const selectedSummary = (() => {
+    if (selectedList.length === 0) return "";
+    const KIND_SUMMARY_LABEL: Record<string, string> = { ADD: "add/claim", IR_MOVE: "IR move", ACTIVATE_IR: "IR activation", SET_LINEUP: "lineup change", DROP: "release" };
+    const byKind = new Map<string, number>();
+    for (const p of selectedList) byKind.set(p.kind, (byKind.get(p.kind) ?? 0) + 1);
+    const leagueCount = new Set(selectedList.map((p) => p.leagueId)).size;
+    const parts = [...byKind.entries()].map(([kind, n]) => `${n} ${KIND_SUMMARY_LABEL[kind] ?? kind}${n === 1 ? "" : "s"}`);
+    return `${parts.join(" · ")} across ${leagueCount} league${leagueCount === 1 ? "" : "s"}.`;
+  })();
 
   return (
     <div className="ccprops">
@@ -293,6 +308,7 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
             <div style={{ marginTop: 8 }}>
               <BulkConfirm
                 title={`Send ${selectedList.length} change${selectedList.length === 1 ? "" : "s"} to Sleeper`}
+                summary={selectedSummary}
                 lines={selectedList.map((p) => (
                   <span key={p.id}>
                     <strong>{p.leagueName}</strong> — {describeProposal(p)}
@@ -305,7 +321,7 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
               />
               <label className="hint" style={{ display: "flex", gap: 8, alignItems: "center", margin: "6px 0 0" }}>
                 <input type="checkbox" checked={bulkAck} onChange={(e) => setBulkAck(e.target.checked)} />
-                I&rsquo;ve reviewed every line above. (The button only works once this is ticked.)
+                I understand this sends {selectedList.length} real change{selectedList.length === 1 ? "" : "s"} to Sleeper. (The button only works once this is ticked.)
               </label>
             </div>
           )}
