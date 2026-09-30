@@ -2220,3 +2220,27 @@ most exactly when there's no drop dropdown to glance at for context.
 - `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
   confirmed unrelated). Not live-verified against the real account — same
   `/admin` passphrase blocker as the last several entries.
+
+### Waiver Assistant lookup: real IR capacity shown inline (2026-09; requested explicitly by the owner)
+
+"add a thing that shows all 3 IR taken in that league" — scoped via
+`AskUserQuestion` to confirm it belonged on the single-player lookup table
+specifically, inline on the row rather than only inside the "roster ▼"
+toggle's expanded IR/Reserve group (which already listed occupants by name,
+just behind a click).
+
+- **`candidateLeagues` now computes real IR capacity per league** —
+  `irTotal` via `irSlots(settings)` (the exact same `reserve_slots` reader
+  `buildIrPlan`/`buildActivateIrPlan` already use, imported from
+  `lib/bulkPlan.ts` rather than re-derived), `irTaken` from the league's
+  already-loaded real `reserve` array. `irTotal === 0` (roster settings not
+  synced) hides the indicator entirely rather than showing a misleading
+  "0/0".
+- **Shown as a small "IR X/Y" label right next to the roster toggle** on
+  every row where the league actually has IR slots — turns red at capacity,
+  with a hover tooltip spelling out the real numbers. Clicking "roster ▼"
+  still shows who actually occupies those slots by name (unchanged); this
+  is the "is it even worth checking" signal at a glance, without a click.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
+  confirmed unrelated). Not live-verified against the real account — same
+  `/admin` passphrase blocker as the last several entries.

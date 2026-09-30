@@ -11,6 +11,7 @@ import { classifyTransactions, type Claim } from "@/lib/inbox";
 import { addDropFreeAgent, cancelWaiverClaim, claimWaiver, fetchLeagueTransactions } from "@/lib/sleeperWrite";
 import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
+import { irSlots } from "@/lib/bulkPlan";
 import { PlayerAvatar } from "./Avatar";
 import { IconArrowUp, IconArrowDown, IconSearch, IconStar, IconUsers } from "./MgrIcons";
 import { PageHead, SectionHead } from "./PageHead";
@@ -386,12 +387,22 @@ export default function WaiverAssistant({
           }))
           .sort((a, b) => Number(a.isStarter) - Number(b.isStarter) || (a.value ?? Infinity) - (b.value ?? Infinity));
 
+        // Real IR capacity, same reserve_slots read every IR planner
+        // (buildIrPlan/buildActivateIrPlan) already uses — shown inline so
+        // "is IR full in this league" doesn't require opening the roster
+        // toggle. 0 total means roster settings weren't synced, same
+        // "unknown, don't guess" treatment as rosterSize above.
+        const irTotal = irSlots(settings);
+        const irTaken = lg.reserve.length;
+
         return {
           leagueId: lg.leagueId,
           leagueName: lg.leagueName,
           rosterId: lg.rosterId,
           full,
           dropCandidates,
+          irTotal,
+          irTaken,
           // Real league-wide check, not just "not on my roster" — every
           // other team's roster in this league is real data now too (see
           // LeagueRoster in prisma/schema.prisma), so this is honest about
@@ -785,7 +796,7 @@ export default function WaiverAssistant({
             <>
               <DataTable>
                 {candidateLeagues.map((c) => {
-                  const { leagueId, leagueName, full, dropCandidates, takenByOther, faab, budgetLeft } = c;
+                  const { leagueId, leagueName, full, dropCandidates, takenByOther, faab, budgetLeft, irTotal, irTaken } = c;
                   const chosenDropId = full ? dropFor(c) : null;
                   const dropVal = chosenDropId ? seasonTotals?.[chosenDropId]?.pts ?? null : null;
                   const diff =
@@ -825,6 +836,15 @@ export default function WaiverAssistant({
                           >
                             roster {rosterOpen ? "▲" : "▼"}
                           </button>
+                        )}
+                        {irTotal > 0 && (
+                          <span
+                            className="portmeta"
+                            style={{ fontSize: 11, color: irTaken >= irTotal ? "var(--red)" : undefined }}
+                            title={`${irTaken} of ${irTotal} real IR slots taken in this league`}
+                          >
+                            IR {irTaken}/{irTotal}
+                          </span>
                         )}
                         {!claimsScanned ? (
                           <span className="portmeta" style={{ fontSize: 11 }}>scan claims above</span>
@@ -972,9 +992,11 @@ export default function WaiverAssistant({
                 free an active slot anyway) — bench players first, ranked weakest real season-projected
                 points first so the default stays the safe pick, with starters offered further down and
                 labelled &ldquo;starting&rdquo; so dropping one is always a deliberate choice. Pick any
-                option any time and the Diff column updates to match. The small line next to each league
-                name shows real pending waiver claims already sitting in that league (from the scan above)
-                so you can weigh this add against what&rsquo;s already in flight there. If a league needs a
+                option any time and the Diff column updates to match. &ldquo;IR X/Y&rdquo; next to the roster
+                toggle is that league&rsquo;s real IR capacity (turns red when full) — click roster to see who
+                actually occupies those slots. The small line next to each league name shows real pending
+                waiver claims already sitting in that league (from the scan above) so you can weigh this add
+                against what&rsquo;s already in flight there. If a league needs a
                 waiver claim instead of an instant add (Sleeper decides that, not Fantis), the suggested bid
                 comes from this account&rsquo;s own real past winning bids when there&rsquo;s history, or
                 the league&rsquo;s own minimum otherwise — editable per row.
