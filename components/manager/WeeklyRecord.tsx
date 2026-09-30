@@ -18,6 +18,7 @@ export interface WeeklyRecordWeek {
 export interface WeeklyRecordLeague {
   leagueId: string;
   leagueName: string;
+  group: string | null;
   bestBall: boolean;
   weeks: WeeklyRecordWeek[]; // sorted ascending by week; only weeks with a real synced result
 }
@@ -41,9 +42,18 @@ const WEEK_COLOR = {
 export default function WeeklyRecord({ leagues }: { leagues: WeeklyRecordLeague[] }) {
   const [hideBestBall, setHideBestBall] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
+
+  const groups = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of leagues) if (l.group && l.group.trim()) set.add(l.group.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [leagues]);
 
   const bestBallCount = leagues.filter((l) => l.bestBall).length;
-  const scoped = hideBestBall ? leagues.filter((l) => !l.bestBall) : leagues;
+  const scoped = leagues.filter(
+    (l) => (!hideBestBall || !l.bestBall) && (!groupFilter || l.group?.trim() === groupFilter)
+  );
 
   const withRecord = useMemo(
     () =>
@@ -141,6 +151,22 @@ export default function WeeklyRecord({ leagues }: { leagues: WeeklyRecordLeague[
 
       <section className="sec">
         <SectionHead title="By league" right={`${filtered.length} of ${withRecord.length}`} />
+        {groups.length > 0 && (
+          <div className="field" style={{ marginBottom: 8, gap: 8 }}>
+            <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
+              All leagues
+            </button>
+            {groups.map((g) => (
+              <button
+                key={g}
+                className={`chip-filter ${groupFilter === g ? "on" : ""}`}
+                onClick={() => setGroupFilter((cur) => (cur === g ? null : g))}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
           {FILTERS.map((f) => (
             <button key={f.key} className={`chip-filter ${filter === f.key ? "on" : ""}`} onClick={() => setFilter(f.key)}>

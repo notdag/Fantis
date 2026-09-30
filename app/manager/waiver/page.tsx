@@ -85,6 +85,7 @@ export default async function WaiverPage() {
     return {
       leagueId: lg.id,
       leagueName: lg.name,
+      group: lg.group,
       rosterId: roster.rosterId,
       players: roster.players,
       starters: roster.starters,

@@ -26,6 +26,7 @@ import type { PlayerMapEntry } from "@/lib/types";
 export interface WaiverLeague {
   leagueId: string;
   leagueName: string;
+  group: string | null;
   rosterId: number;
   players: string[];
   starters: string[];
@@ -70,9 +71,9 @@ export interface WaiverHistoryEntry {
 }
 
 export default function WaiverAssistant({
-  leagues,
-  multiAddLeagues,
-  faabLeagues,
+  leagues: allLeagues,
+  multiAddLeagues: allMultiAddLeagues,
+  faabLeagues: allFaabLeagues,
   waiverHistoryBySeason,
 }: {
   leagues: WaiverLeague[];
@@ -81,6 +82,31 @@ export default function WaiverAssistant({
   waiverHistoryBySeason?: Record<string, WaiverHistoryEntry[]>;
 }) {
   const router = useRouter();
+
+  // Real, owner-set league group labels (League Info tab) as a page-wide
+  // filter — narrows every section below (trending's multi-add, FAAB
+  // remaining, pending claims, single-player lookup) to one group at once,
+  // since a 200+ league account is otherwise one long undifferentiated
+  // list everywhere on this page.
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
+  const groups = useMemo(() => {
+    const set = new Set<string>();
+    for (const lg of allLeagues) if (lg.group && lg.group.trim()) set.add(lg.group.trim());
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allLeagues]);
+  const leagues = useMemo(
+    () => (groupFilter ? allLeagues.filter((lg) => lg.group?.trim() === groupFilter) : allLeagues),
+    [allLeagues, groupFilter]
+  );
+  const groupLeagueIds = useMemo(() => new Set(leagues.map((l) => l.leagueId)), [leagues]);
+  const multiAddLeagues = useMemo(
+    () => (groupFilter ? allMultiAddLeagues.filter((l) => groupLeagueIds.has(l.league.id)) : allMultiAddLeagues),
+    [allMultiAddLeagues, groupFilter, groupLeagueIds]
+  );
+  const faabLeagues = useMemo(
+    () => (groupFilter ? allFaabLeagues.filter((l) => groupLeagueIds.has(l.leagueId)) : allFaabLeagues),
+    [allFaabLeagues, groupFilter, groupLeagueIds]
+  );
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const syncWaiverHistory = async () => {
@@ -477,6 +503,23 @@ export default function WaiverAssistant({
             </>
           }
         />
+
+        {groups.length > 0 && (
+          <div className="field" style={{ marginBottom: 12, gap: 8 }}>
+            <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
+              All leagues
+            </button>
+            {groups.map((g) => (
+              <button
+                key={g}
+                className={`chip-filter ${groupFilter === g ? "on" : ""}`}
+                onClick={() => setGroupFilter((cur) => (cur === g ? null : g))}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
 
         {!selectedId && waiverSummary.positionLeagues > 0 && (
           <StatCardGrid variant="hero">

@@ -61,6 +61,34 @@
    100+-league result set. */
 .mgrswitcherlist{max-height:280px;overflow-y:auto}
 
+/* Global command palette (Cmd/Ctrl+K, 2026-09) — reuses .modalbg's real
+   scrim so no new overlay treatment is introduced, but top-anchored and
+   narrower than .modal (which is sized for the 960px player-card view).
+   No box-shadow, matching .modal's own approach of relying on the scrim
+   for separation rather than an elevation shadow (the flat-by-default
+   rule) — .mgrtabmenu's box-shadow above is a different, older pattern
+   for a shadow-less-scrim inline dropdown and isn't the model here. */
+.cmdpalbg{padding-top:14vh}
+.cmdpal{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  width:100%;max-width:600px;overflow:hidden}
+.cmdpalsearch{display:flex;align-items:center;gap:10px;padding:14px 18px;
+  border-bottom:1px solid var(--line)}
+.cmdpalinput{flex:1;min-width:0;background:transparent;border:none;outline:none;
+  color:var(--bone);font-size:15px;font-family:inherit}
+.cmdpalinput::placeholder{color:var(--dim)}
+.cmdpalesc{font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:5px;
+  padding:2px 6px;flex:none}
+.cmdpalresults{max-height:360px;overflow-y:auto;padding:6px}
+.cmdpalgroup{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--dim);padding:10px 12px 4px}
+.cmdpalitem{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:9px 12px;border-radius:var(--mgr-radius);background:transparent;border:0;
+  cursor:pointer;font-size:13.5px;color:var(--bone);font-family:inherit}
+.cmdpalitem.active{background:var(--line-soft)}
+.cmdpalkbd{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:5px;
+  padding:1px 5px;margin-left:auto;flex:none}
+.mgrcollapsed .mgrsidebar .cmdpalkbd{display:none}
+
 .mgrhead{margin-bottom:22px}
 .mgrhead p{color:var(--muted);font-size:14px;margin:0;max-width:640px;line-height:1.5}
 

@@ -31,7 +31,7 @@ export default async function RecordPage() {
   const myRosterByLeague = new Map(rosterRows.map((r) => [r.leagueId, r.rosterId]));
 
   const [leagueRows, weeklyRows, matchupRows] = await Promise.all([
-    db.league.findMany({ where: { id: { in: leagueIds }, status: "in_season" }, select: { id: true, name: true, settings: true }, orderBy: { name: "asc" } }),
+    db.league.findMany({ where: { id: { in: leagueIds }, status: "in_season" }, select: { id: true, name: true, settings: true, group: true }, orderBy: { name: "asc" } }),
     db.weeklyResult.findMany({ where: { leagueId: { in: leagueIds } }, select: { leagueId: true, week: true, rosterId: true, points: true, won: true } }),
     db.matchup.findMany({ where: { leagueId: { in: leagueIds } }, select: { leagueId: true, week: true, opponentTeamName: true, opponentPoints: true } }),
   ]);
@@ -58,7 +58,7 @@ export default async function RecordPage() {
         // failure mode ever recurs for a different reason.
         .filter((w) => !(w.won === null && w.points === 0 && w.opponentPoints === 0))
         .sort((a, b) => a.week - b.week);
-      return { leagueId: lg.id, leagueName: lg.name, bestBall: isBestBall(lg.settings), weeks };
+      return { leagueId: lg.id, leagueName: lg.name, group: lg.group, bestBall: isBestBall(lg.settings), weeks };
     })
     .filter((l) => l.weeks.length > 0);
 

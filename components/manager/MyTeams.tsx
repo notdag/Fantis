@@ -14,6 +14,7 @@ export interface MyTeamRow {
   leagueId: string;
   leagueName: string;
   status: string;
+  group: string | null;
   wins: number | null;
   losses: number | null;
   ties: number | null;
@@ -40,6 +41,19 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("alerts");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [groupFilter, setGroupFilter] = useState<string | null>(null);
+
+  // Real, owner-set labels (League Info tab) — already collected per
+  // league but never used as a filter anywhere until now. Sorted for a
+  // stable chip order; a league with no group set is simply left out of
+  // every group's count/filter (it still shows under "All").
+  const groups = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of teams) {
+      if (t.group && t.group.trim()) set.add(t.group.trim());
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [teams]);
 
   // Real league-wide rank per team, from every roster in that league
   // (LeagueRoster — zero extra Sleeper calls) and the same season
@@ -66,9 +80,10 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return teams;
-    return teams.filter((t) => t.leagueName.toLowerCase().includes(q));
-  }, [teams, query]);
+    return teams.filter(
+      (t) => (!q || t.leagueName.toLowerCase().includes(q)) && (!groupFilter || t.group?.trim() === groupFilter)
+    );
+  }, [teams, query, groupFilter]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -165,6 +180,22 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
             style={{ maxWidth: 280 }}
           />
         </div>
+        {groups.length > 0 && (
+          <div className="field" style={{ marginBottom: 8, gap: 8 }}>
+            <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
+              All
+            </button>
+            {groups.map((g) => (
+              <button
+                key={g}
+                className={`chip-filter ${groupFilter === g ? "on" : ""}`}
+                onClick={() => setGroupFilter((cur) => (cur === g ? null : g))}
+              >
+                {g}
+              </button>
+            ))}
+          </div>
+        )}
         <div
           className="field"
           style={{ marginBottom: 0, gap: 12, position: "sticky", top: 0, zIndex: 1, background: "var(--ink)", padding: "8px 0" }}

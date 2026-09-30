@@ -8,6 +8,7 @@ import { LEAGUE_SUB_ROUTES, extractLeagueContext, leagueSubHref } from "./league
 import ManagerHeader from "./ManagerHeader";
 import LeagueSubNavigation from "./LeagueSubNavigation";
 import BottomNavBar from "./BottomNavBar";
+import CommandPalette from "./CommandPalette";
 import {
   IconHome,
   IconUsers,
@@ -17,6 +18,7 @@ import {
   IconChevronRight,
   IconMenu,
   IconX,
+  IconSearch,
 } from "./MgrIcons";
 
 const COOKIE = "fantis_mgr_sidebar";
@@ -208,6 +210,21 @@ export default function ManagerShell({
   // this codebase.
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Global Cmd/Ctrl+K — works from anywhere under /manager since ManagerShell
+  // wraps every page. CommandPalette itself is only mounted while open (see
+  // render below), so this is the one place that has to listen at all times.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   // Tablet tier (2026-08b, 769-1100px): the rail-vs-expanded choice for
   // NavGroup/CurrentLeagueNavGroup is a real branch in the component tree
@@ -253,6 +270,17 @@ export default function ManagerShell({
           <div className="mark">F</div>
           <b>Fantis</b>
         </div>
+        <button
+          type="button"
+          className="mgrnavlink"
+          style={{ marginBottom: 10 }}
+          onClick={() => setPaletteOpen(true)}
+          aria-label={railMode ? "Search leagues and players" : undefined}
+        >
+          <IconSearch />
+          <span className="mgrnavlabel">Search</span>
+          <span className="cmdpalkbd">⌘K</span>
+        </button>
         <NavList pathname={pathname} collapsed={railMode} leagues={leagues} />
         <button
           type="button"
@@ -272,6 +300,15 @@ export default function ManagerShell({
           <div className="mark">F</div>
           <b>Fantis</b>
         </div>
+        <button
+          type="button"
+          className="mgrhamburger"
+          style={{ marginLeft: "auto" }}
+          onClick={() => setPaletteOpen(true)}
+          aria-label="Search leagues and players"
+        >
+          <IconSearch />
+        </button>
       </div>
 
       <div
@@ -305,6 +342,7 @@ export default function ManagerShell({
         </div>
       </div>
       <BottomNavBar onOpenMore={() => setDrawerOpen(true)} />
+      {paletteOpen && <CommandPalette leagues={leagues} onClose={() => setPaletteOpen(false)} />}
     </div>
   );
 }

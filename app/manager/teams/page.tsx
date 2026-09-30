@@ -23,7 +23,7 @@ export default async function TeamsPage() {
   }
 
   const [leagueRows, rosterRows, matchupRows, alertRows, leagueRosterRows] = await Promise.all([
-    db.league.findMany({ select: { id: true, name: true, status: true }, orderBy: { name: "asc" } }),
+    db.league.findMany({ select: { id: true, name: true, status: true, group: true }, orderBy: { name: "asc" } }),
     db.roster.findMany({
       select: {
         leagueId: true,
@@ -81,6 +81,7 @@ export default async function TeamsPage() {
       leagueId: lg.id,
       leagueName: lg.name,
       status: lg.status,
+      group: lg.group,
       wins: roster?.wins ?? null,
       losses: roster?.losses ?? null,
       ties: roster?.ties ?? null,

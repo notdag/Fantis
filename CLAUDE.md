@@ -2062,6 +2062,84 @@ to add here partly based on what else is already in flight in that league.
   confirmed unrelated). Not live-verified against the real account — same
   `/admin` passphrase blocker as the last several entries.
 
+### Global command palette (Cmd/Ctrl+K) + League.group as a real filter (2026-09; requested explicitly by the owner, scoped via the impeccable skill's shape process)
+
+"anything else that can improve the user experience/navigation? remember
+the goal is to manage 200+ leagues" — a research pass (read-only, no code)
+surveyed the real nav/UX gaps before proposing anything: no cross-page
+search (three separate, page-scoped search boxes), no keyboard shortcuts
+anywhere, and `League.group` — a free-text label the owner can already set
+per league (League Info tab) — fetched into every list page's data query
+but never actually used as a filter/grouping anywhere. Scoped via
+`AskUserQuestion` to two of the four proposed fixes plus a general
+clicks/scrolling/shell review; the mobile "top nav clips a tab" issue
+flagged in an old design note turned out to already be resolved (`.mgrsubnav`
+is deliberately `display:none` below 768px now, replaced by the drawer +
+`BottomNavBar` — verified against current CSS before "fixing" a non-issue).
+
+- **`components/manager/CommandPalette.tsx`** (new) — Cmd/Ctrl+K from
+  anywhere under `/manager` (global listener lives in `ManagerShell.tsx`,
+  the one component that already wraps every page), plus a visible "Search
+  ⌘K" trigger in the sidebar and a search icon in the mobile topbar.
+  Searches real league names (the same `{id,name}` list `ManagerShell`
+  already receives — no new fetch) and real players (same offense-only,
+  substring-match idiom `PlayerLeagues.tsx`/`WaiverAssistant.tsx`'s
+  single-player lookup already use, via `usePlayerMap()`). Arrow keys +
+  Enter to navigate, mouse hover to highlight, Escape or backdrop-click to
+  close. Selecting a league jumps to `/manager/{id}`; selecting a player
+  jumps to `/manager/player?playerId={id}`, which `PlayerLeagues.tsx` now
+  reads on mount to auto-select that player instead of landing on an empty
+  search box. Deliberately mounted only while open (`{paletteOpen &&
+  <CommandPalette/>}`) rather than always-rendered-but-hidden — this defers
+  the real player-dump fetch behind `usePlayerMap()` until someone actually
+  opens it, instead of paying that cost on every single `/manager` page
+  load. Visual treatment reuses `.modalbg`'s real scrim (no new overlay
+  color) but is its own narrower, top-anchored `.cmdpal` — `.modal` is
+  sized for the 960px player-card view, wrong proportions for a search
+  dialog — and deliberately has no box-shadow, matching `.modal`'s own
+  scrim-only approach to elevation rather than `.mgrtabmenu`'s older
+  shadowed-dropdown pattern.
+- **`League.group` as a real filter chip** on the three highest-value list
+  pages (My Leagues, Waiver Assistant, Weekly Record) — same `chip-filter`
+  pattern already used everywhere else (best-ball toggle, playoff-tier
+  chips, Weekly Record's own Winning/.500/Losing filter), so a league
+  labelled e.g. "Money leagues" or "Dynasty" collapses 200+ leagues down to
+  just that group with one click. Each page derives its own distinct,
+  sorted group list from real data and hides the chip row entirely when no
+  league has a group set (never clutter for an account that hasn't adopted
+  labelling). Waiver Assistant's filter is the most involved since the page
+  already juggles three differently-shaped league arrays (`WaiverLeague[]`
+  for the lookup/FAAB tools, `LineupLeague[]` for the embedded multi-add
+  board) — solved by shadowing the props (`leagues: allLeagues` etc.) and
+  deriving filtered versions once via `useMemo`, so every existing
+  downstream reference in the file automatically respects the filter with
+  no other code touched. Open Spots was deliberately skipped — it already
+  shows a small, pre-filtered subset (16 of 210 real leagues at last
+  count), so a group filter there has little real value versus the two
+  screens that show the full list.
+- **Not done this pass** (explicitly deferred, not forgotten): unifying
+  "needs attention" across Action Queue/Command Center/Open Spots/Weekly
+  Record, and league favorites/pins. Both are real, larger pieces of work
+  — unifying needs-attention in particular would mean embedding a live
+  Sleeper trades/claims scan into the Action Queue page (currently a pure
+  `Alert`-table DB read), the same non-trivial addition Waiver Assistant's
+  own pending-claims section already required.
+- `tsc`/`eslint`/`next build` all clean; `scripts/testCommandCenter.ts`
+  (422) and `scripts/testCommandCenterExec.ts` (84) both still pass — none
+  of this touched planning/executor logic. The two `react-hooks/set-state-
+  in-effect` findings in `ManagerShell.tsx` and the one in
+  `WaiverAssistant.tsx` are confirmed pre-existing via `git diff` against
+  the same lines; `PlayerLeagues.tsx`'s new one (syncing `selectedId` from
+  `?playerId=`) matches the identical "reset on navigation" idiom already
+  used twice in `ManagerShell.tsx` itself, so it wasn't worth restructuring
+  around. `CommandPalette.tsx`'s own equivalent case (resetting `highlight`
+  when the query changes) WAS avoidable — moved into the input's `onChange`
+  handler instead of a `useEffect`, since the only place `query` actually
+  changes is that one event. Not live-verified against the real account —
+  same `/admin` passphrase blocker as the last several entries; worth a
+  real Cmd+K trial and a real group-label test before relying on either
+  for tonight's session.
+
 ### Every bulk-send tool: a real success message after submitting (2026-09; requested explicitly by the owner)
 
 "need a success or successfully message after submitting" — every bulk-write

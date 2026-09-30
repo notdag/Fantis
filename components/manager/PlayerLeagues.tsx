@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
 import { alertSeverityChipStyle } from "@/lib/manager";
 import { usePlayerMap } from "@/lib/usePlayerMap";
@@ -40,6 +41,15 @@ export default function PlayerLeagues({
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNotRostered, setShowNotRostered] = useState(false);
+
+  // Deep link from the global command palette (?playerId=...) — jumps
+  // straight to this player's cross-league view instead of landing on the
+  // empty search screen and making them re-type the name.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const id = searchParams.get("playerId");
+    if (id) setSelectedId(id);
+  }, [searchParams]);
 
   const searchResults = useMemo(() => {
     if (!pmap) return [];
