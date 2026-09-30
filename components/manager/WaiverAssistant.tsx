@@ -207,6 +207,18 @@ export default function WaiverAssistant({
   const openClaims = claims.filter((c) => claimStatus[c.key]?.kind !== "done");
   const selectedClaims = openClaims.filter((c) => claimSelected.has(c.key));
   const claimLeagueName = (id: string) => multiAddLeagues.find((l) => l.league.id === id)?.league.name ?? id;
+  // Grouped for the single-player lookup below — so a league already
+  // waiting on other real claims is visible right where you're deciding
+  // whether to add another one there, not just in the section above.
+  const claimsByLeague = useMemo(() => {
+    const m = new Map<string, Claim[]>();
+    for (const c of openClaims) {
+      const arr = m.get(c.leagueId);
+      if (arr) arr.push(c);
+      else m.set(c.leagueId, [c]);
+    }
+    return m;
+  }, [openClaims]);
   const toggleClaim = (key: string) =>
     setClaimSelected((prev) => {
       const next = new Set(prev);
@@ -304,13 +316,22 @@ export default function WaiverAssistant({
         // weren't synced — treated as "not full" rather than guessed.
         const active = lg.players.length - lg.reserve.length;
         const full = lg.rosterSize > 0 && active >= lg.rosterSize;
-        // Bench only — never a starter or IR/reserve player — real season
-        // points ascending so the weakest bench player defaults first;
-        // players with no projection yet sort last, not excluded.
+        // Every real rostered player is a choosable drop EXCEPT IR/reserve
+        // (dropping one wouldn't free an active slot anyway, so offering it
+        // would be misleading, not just unsafe) — a manual, per-league
+        // override the owner explicitly asked to see more of. Bench players
+        // sort first (weakest real season points first, so the safest pick
+        // stays the default at index 0); starters are still offered, just
+        // ranked after the bench and labelled, since dropping one is a
+        // bigger call the owner should make deliberately, not by accident.
         const dropCandidates = lg.players
-          .filter((id) => id !== selectedId && !lg.starters.includes(id) && !lg.reserve.includes(id))
-          .map((id) => ({ playerId: id, value: seasonTotals?.[id]?.pts ?? null }))
-          .sort((a, b) => (a.value ?? Infinity) - (b.value ?? Infinity));
+          .filter((id) => id !== selectedId && !lg.reserve.includes(id))
+          .map((id) => ({
+            playerId: id,
+            value: seasonTotals?.[id]?.pts ?? null,
+            isStarter: lg.starters.includes(id),
+          }))
+          .sort((a, b) => Number(a.isStarter) - Number(b.isStarter) || (a.value ?? Infinity) - (b.value ?? Infinity));
 
         return {
           leagueId: lg.leagueId,
@@ -715,6 +736,38 @@ export default function WaiverAssistant({
                       <span className="tname" style={{ flex: 1 }}>
                         {leagueName}
                       </span>
+                      {(() => {
+                        const leagueClaims = claimsByLeague.get(leagueId) ?? [];
+                        if (!claimsScanned) {
+                          return <span className="portmeta" style={{ fontSize: 11 }}>scan claims above</span>;
+                        }
+                        if (leagueClaims.length === 0) {
+                          return <span className="portmeta" style={{ fontSize: 11 }}>no pending claims</span>;
+                        }
+                        const detail = leagueClaims
+                          .map((cl) => {
+                            const add = cl.addId ? pmap?.[cl.addId]?.n ?? cl.addId : null;
+                            const drop = cl.dropId ? pmap?.[cl.dropId]?.n ?? cl.dropId : null;
+                            return `${add ?? "?"}${drop ? ` (drop ${drop})` : ""}${cl.bid != null ? ` $${cl.bid}` : ""}`;
+                          })
+                          .join(", ");
+                        return (
+                          <span
+                            className="portmeta"
+                            style={{
+                              fontSize: 11,
+                              color: "var(--amber)",
+                              maxWidth: 160,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                            title={detail}
+                          >
+                            {leagueClaims.length} pending: {detail}
+                          </span>
+                        );
+                      })()}
                       {takenByOther ? (
                         <span className="portmeta" style={{ color: "var(--red)" }}>
                           already rostered by another team in this league
@@ -736,6 +789,7 @@ export default function WaiverAssistant({
                             <option key={d.playerId} value={d.playerId}>
                               drop {pmap?.[d.playerId]?.n ?? d.playerId}
                               {d.value != null ? ` (${Math.round(d.value)} pts)` : ""}
+                              {d.isStarter ? " — starting" : ""}
                             </option>
                           ))}
                         </select>
@@ -776,12 +830,16 @@ export default function WaiverAssistant({
                 eligible to drop, are shown greyed out and can&rsquo;t be selected — real checks against
                 that league&rsquo;s actual roster, not a guess. A league with an open active-roster spot
                 (reserve/IR excluded) never proposes a drop at all. Where a drop is genuinely needed, the
-                dropdown lists every real bench player (never a starter or IR/reserve player) ranked by
-                real season-projected points, weakest first — pick a different one any time, and the Diff
-                column updates to match. If a league needs a waiver claim instead of an instant add
-                (Sleeper decides that, not Fantis), the suggested bid comes from this account&rsquo;s own
-                real past winning bids when there&rsquo;s history, or the league&rsquo;s own minimum
-                otherwise — editable per row.
+                dropdown lists every real rostered player except IR/reserve (dropping one of those wouldn&rsquo;t
+                free an active slot anyway) — bench players first, ranked weakest real season-projected
+                points first so the default stays the safe pick, with starters offered further down and
+                labelled &ldquo;starting&rdquo; so dropping one is always a deliberate choice. Pick any
+                option any time and the Diff column updates to match. The small line next to each league
+                name shows real pending waiver claims already sitting in that league (from the scan above)
+                so you can weigh this add against what&rsquo;s already in flight there. If a league needs a
+                waiver claim instead of an instant add (Sleeper decides that, not Fantis), the suggested bid
+                comes from this account&rsquo;s own real past winning bids when there&rsquo;s history, or
+                the league&rsquo;s own minimum otherwise — editable per row.
               </p>
 
               <button

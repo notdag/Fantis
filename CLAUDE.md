@@ -2027,3 +2027,37 @@ open slot and no drop was needed at all.
   used by the Mass Add board's `buildMultiAddPlan`, just applied here for
   the first time to the single-player tool — worth a quick real look at a
   known-open-slot league and a known-full league before a live run.
+
+### Waiver Assistant lookup: starters now droppable too, pending claims shown per league (2026-09; real feedback from the owner)
+
+Two follow-ups after the drop-dropdown fix above. "only 6 players to choose
+from?" — the dropdown was bench-only (same hard exclusion `buildAddPlan`
+uses everywhere else), which is right for an *auto-suggested* drop but too
+restrictive for a tool that's already asking the owner to pick manually.
+"is there a way to see all the pending claims in that league... so i can
+know how to rank it/categorize it" — a real, reasonable ask: decide whether
+to add here partly based on what else is already in flight in that league.
+
+- **Every rostered player is now a choosable drop, except IR/reserve**
+  (`candidateLeagues`' `dropCandidates` in `WaiverAssistant.tsx`) — dropping
+  a reserve/IR player is excluded because it's mechanically real, not a
+  policy call: it wouldn't free an active slot at all (the "full" check is
+  active count = players minus reserve), so offering it would be
+  misleading. Starters ARE now included, sorted after the bench (never
+  before it, so the safe weakest-bench-player pick stays the default at
+  index 0) and labelled "— starting" in the dropdown so choosing one is
+  always a deliberate, visible choice, not an accident.
+- **Pending waiver claims shown inline, per league** — a small line next to
+  each league name in the lookup table now shows how many real pending
+  claims (from the "Pending waiver claims" scan above, `classifyTransactions`
+  via `fetchLeagueTransactions`) are already sitting in that league, with
+  the actual add/drop/bid detail in both the truncated text and a full
+  hover tooltip. Three honest states: "scan claims above" (nothing scanned
+  yet), "no pending claims" (scanned, genuinely none), or "N pending: ..."
+  (real detail) — never a blank cell that could be misread as "definitely
+  none." Reuses the exact same `openClaims` data the claims section already
+  computes (`claimsByLeague`, grouped by `leagueId`) — no second fetch, no
+  new Sleeper call.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
+  confirmed unrelated). Not live-verified against the real account — same
+  `/admin` passphrase blocker as the last several entries.
