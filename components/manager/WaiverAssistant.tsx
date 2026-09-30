@@ -219,6 +219,28 @@ export default function WaiverAssistant({
     }
     return m;
   }, [openClaims]);
+  // Which leagues' pending-claim detail is expanded in the single-player
+  // lookup table below — click the count to see the real add/drop/bid list
+  // instead of a truncated tooltip.
+  const [expandedClaimLeagues, setExpandedClaimLeagues] = useState<Set<string>>(new Set());
+  const toggleClaimsExpanded = (leagueId: string) =>
+    setExpandedClaimLeagues((prev) => {
+      const next = new Set(prev);
+      if (next.has(leagueId)) next.delete(leagueId);
+      else next.add(leagueId);
+      return next;
+    });
+  // Same pattern for "show roster" — real starters/bench/IR for that
+  // league, useful even (especially) when there's an open slot and no
+  // drop dropdown to look at.
+  const [expandedRosterLeagues, setExpandedRosterLeagues] = useState<Set<string>>(new Set());
+  const toggleRosterExpanded = (leagueId: string) =>
+    setExpandedRosterLeagues((prev) => {
+      const next = new Set(prev);
+      if (next.has(leagueId)) next.delete(leagueId);
+      else next.add(leagueId);
+      return next;
+    });
   const toggleClaim = (key: string) =>
     setClaimSelected((prev) => {
       const next = new Set(prev);
@@ -296,6 +318,10 @@ export default function WaiverAssistant({
 
   const selectedSeasonPts = selectedId ? seasonTotals?.[selectedId]?.pts ?? null : null;
   const remainingByLeague = useMemo(() => new Map(faabLeagues.map((l) => [l.leagueId, l.remaining])), [faabLeagues]);
+  // Full roster lookup (starters/bench/reserve) for the "show roster"
+  // toggle — separate from candidateLeagues, which only carries what the
+  // add/drop flow itself needs.
+  const leagueById = useMemo(() => new Map(leagues.map((lg) => [lg.leagueId, lg])), [leagues]);
 
   const candidateLeagues = useMemo(() => {
     if (!selectedId) return [];
@@ -721,106 +747,172 @@ export default function WaiverAssistant({
                   const status = execStatus[leagueId];
                   const done = status?.kind === "done";
                   const noBench = full && dropCandidates.length === 0;
+                  const leagueClaims = claimsByLeague.get(leagueId) ?? [];
+                  const claimsOpen = expandedClaimLeagues.has(leagueId);
+                  const lg = leagueById.get(leagueId);
+                  const rosterOpen = expandedRosterLeagues.has(leagueId);
                   return (
-                    <TableRow
-                      as="label"
-                      key={leagueId}
-                      style={{ cursor: takenByOther || noBench || done ? "default" : "pointer", opacity: takenByOther || noBench ? 0.55 : 1 }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checkedIds.has(leagueId) && runnable(c)}
-                        disabled={takenByOther || noBench || done}
-                        onChange={() => toggle(leagueId)}
-                      />
-                      <span className="tname" style={{ flex: 1 }}>
-                        {leagueName}
-                      </span>
-                      {(() => {
-                        const leagueClaims = claimsByLeague.get(leagueId) ?? [];
-                        if (!claimsScanned) {
-                          return <span className="portmeta" style={{ fontSize: 11 }}>scan claims above</span>;
-                        }
-                        if (leagueClaims.length === 0) {
-                          return <span className="portmeta" style={{ fontSize: 11 }}>no pending claims</span>;
-                        }
-                        const detail = leagueClaims
-                          .map((cl) => {
-                            const add = cl.addId ? pmap?.[cl.addId]?.n ?? cl.addId : null;
-                            const drop = cl.dropId ? pmap?.[cl.dropId]?.n ?? cl.dropId : null;
-                            return `${add ?? "?"}${drop ? ` (drop ${drop})` : ""}${cl.bid != null ? ` $${cl.bid}` : ""}`;
-                          })
-                          .join(", ");
-                        return (
-                          <span
-                            className="portmeta"
-                            style={{
-                              fontSize: 11,
-                              color: "var(--amber)",
-                              maxWidth: 160,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
+                    <div key={leagueId}>
+                      <TableRow
+                        as="label"
+                        style={{ cursor: takenByOther || noBench || done ? "default" : "pointer", opacity: takenByOther || noBench ? 0.55 : 1 }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checkedIds.has(leagueId) && runnable(c)}
+                          disabled={takenByOther || noBench || done}
+                          onChange={() => toggle(leagueId)}
+                        />
+                        <span className="tname" style={{ flex: 1 }}>
+                          {leagueName}
+                        </span>
+                        {lg && (
+                          <button
+                            type="button"
+                            className="link"
+                            style={{ fontSize: 11 }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              toggleRosterExpanded(leagueId);
                             }}
-                            title={detail}
                           >
-                            {leagueClaims.length} pending: {detail}
+                            roster {rosterOpen ? "▲" : "▼"}
+                          </button>
+                        )}
+                        {!claimsScanned ? (
+                          <span className="portmeta" style={{ fontSize: 11 }}>scan claims above</span>
+                        ) : leagueClaims.length === 0 ? (
+                          <span className="portmeta" style={{ fontSize: 11 }}>no pending claims</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="link"
+                            style={{ fontSize: 11, color: "var(--amber)" }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              toggleClaimsExpanded(leagueId);
+                            }}
+                          >
+                            {leagueClaims.length} pending {claimsOpen ? "▲ hide" : "▼ show"}
+                          </button>
+                        )}
+                        {takenByOther ? (
+                          <span className="portmeta" style={{ color: "var(--red)" }}>
+                            already rostered by another team in this league
                           </span>
-                        );
-                      })()}
-                      {takenByOther ? (
-                        <span className="portmeta" style={{ color: "var(--red)" }}>
-                          already rostered by another team in this league
-                        </span>
-                      ) : !full ? (
-                        <span className="portmeta" style={{ color: "var(--mint)" }}>open roster spot — no drop needed</span>
-                      ) : noBench ? (
-                        <span className="portmeta" style={{ color: "var(--red)" }}>
-                          roster full, nobody eligible to drop
-                        </span>
-                      ) : (
-                        <select
-                          className="select sm"
-                          value={chosenDropId ?? ""}
-                          onClick={(e) => e.preventDefault()}
-                          onChange={(e) => setDropOverride((prev) => ({ ...prev, [leagueId]: e.target.value || null }))}
-                        >
-                          {dropCandidates.map((d) => (
-                            <option key={d.playerId} value={d.playerId}>
-                              drop {pmap?.[d.playerId]?.n ?? d.playerId}
-                              {d.value != null ? ` (${Math.round(d.value)} pts)` : ""}
-                              {d.isStarter ? " — starting" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                      {!takenByOther && full && <Diff value={diff} />}
-                      {!takenByOther && faab && (
-                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                          <input
-                            className="input"
-                            type="number"
-                            min={c.bidMin}
-                            max={budgetLeft ?? undefined}
-                            value={bidFor(c)}
+                        ) : !full ? (
+                          <span className="portmeta" style={{ color: "var(--mint)" }}>open roster spot — no drop needed</span>
+                        ) : noBench ? (
+                          <span className="portmeta" style={{ color: "var(--red)" }}>
+                            roster full, nobody eligible to drop
+                          </span>
+                        ) : (
+                          <select
+                            className="select sm"
+                            value={chosenDropId ?? ""}
                             onClick={(e) => e.preventDefault()}
-                            onChange={(e) =>
-                              setBidOverride((prev) => ({ ...prev, [leagueId]: Number(e.target.value) }))
-                            }
-                            style={{ width: 64, flex: "none", textAlign: "center" }}
-                          />
-                          {budgetLeft != null && (
-                            <span
-                              className="portmeta"
-                              style={{ fontSize: 11, color: budgetLeft < c.bidMin ? "var(--red)" : undefined }}
-                            >
-                              ${budgetLeft} left
-                            </span>
-                          )}
-                        </div>
+                            onChange={(e) => setDropOverride((prev) => ({ ...prev, [leagueId]: e.target.value || null }))}
+                          >
+                            {dropCandidates.map((d) => (
+                              <option key={d.playerId} value={d.playerId}>
+                                drop {pmap?.[d.playerId]?.n ?? d.playerId}
+                                {d.value != null ? ` (${Math.round(d.value)} pts)` : ""}
+                                {d.isStarter ? " — starting" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {!takenByOther && full && <Diff value={diff} />}
+                        {!takenByOther && faab && (
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                            <input
+                              className="input"
+                              type="number"
+                              min={c.bidMin}
+                              max={budgetLeft ?? undefined}
+                              value={bidFor(c)}
+                              onClick={(e) => e.preventDefault()}
+                              onChange={(e) =>
+                                setBidOverride((prev) => ({ ...prev, [leagueId]: Number(e.target.value) }))
+                              }
+                              style={{ width: 64, flex: "none", textAlign: "center" }}
+                            />
+                            {budgetLeft != null && (
+                              <span
+                                className="portmeta"
+                                style={{ fontSize: 11, color: budgetLeft < c.bidMin ? "var(--red)" : undefined }}
+                              >
+                                ${budgetLeft} left
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {!takenByOther && <StatusCell status={status} />}
+                      </TableRow>
+
+                      {claimsOpen && leagueClaims.length > 0 && (
+                        <TableRow as="static" style={{ background: "var(--line-soft)" }}>
+                          <span style={{ flex: "0 0 22px" }} />
+                          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, fontSize: 12, padding: "4px 0" }}>
+                            {leagueClaims.map((cl) => {
+                              const add = cl.addId ? pmap?.[cl.addId]?.n ?? cl.addId : "?";
+                              const addPos = cl.addId ? pmap?.[cl.addId]?.p : undefined;
+                              const drop = cl.dropId ? pmap?.[cl.dropId]?.n ?? cl.dropId : null;
+                              return (
+                                <div key={cl.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  {addPos && (
+                                    <span className="pos" style={posChipStyle(addPos)}>
+                                      {addPos}
+                                    </span>
+                                  )}
+                                  <span className="tname">{add}</span>
+                                  {drop && <span className="portmeta">drop {drop}</span>}
+                                  {cl.bid != null && <span className="portmeta">${cl.bid} bid</span>}
+                                  <span className="portmeta" style={{ fontStyle: "italic" }}>{cl.status}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </TableRow>
                       )}
-                      {!takenByOther && <StatusCell status={status} />}
-                    </TableRow>
+
+                      {rosterOpen && lg && (
+                        <TableRow as="static" style={{ background: "var(--line-soft)" }}>
+                          <span style={{ flex: "0 0 22px" }} />
+                          <div style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 18, fontSize: 12, padding: "4px 0" }}>
+                            {(
+                              [
+                                ["Starters", lg.starters],
+                                ["Bench", lg.players.filter((id) => !lg.starters.includes(id) && !lg.reserve.includes(id))],
+                                ["IR / Reserve", lg.reserve],
+                              ] as const
+                            ).map(([label, ids]) => (
+                              <div key={label} style={{ minWidth: 150 }}>
+                                <div className="portmeta" style={{ fontWeight: 600, marginBottom: 2 }}>
+                                  {label} ({ids.length})
+                                </div>
+                                {ids.length === 0 ? (
+                                  <span className="portmeta">—</span>
+                                ) : (
+                                  ids.map((id) => (
+                                    <div key={id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                                      {pmap?.[id]?.p && (
+                                        <span className="pos" style={posChipStyle(pmap[id].p)}>
+                                          {pmap[id].p}
+                                        </span>
+                                      )}
+                                      <span className="tname">{pmap?.[id]?.n ?? id}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </TableRow>
+                      )}
+                    </div>
                   );
                 })}
               </DataTable>

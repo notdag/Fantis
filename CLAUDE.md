@@ -2061,3 +2061,42 @@ to add here partly based on what else is already in flight in that league.
 - `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
   confirmed unrelated). Not live-verified against the real account — same
   `/admin` passphrase blocker as the last several entries.
+
+### Waiver Assistant lookup: expand pending claims and rosters inline (2026-09; real feedback from the owner)
+
+Two more real gaps in the same table. "i like the little yellow text...
+now i need u be able to show all of them... but not the players and
+whos dropped/bid... if u want to make it clickable... thats fine" — the
+truncated `1 pending: ...` text (added in the entry above) cut off after a
+few characters via CSS ellipsis, so the real detail it was supposed to show
+was invisible without a mouse hover (useless on anything touch-based, and
+easy to miss even on desktop). And separately: "can u have a way to easily
+show roster even for the no drop / open roster" — there was no way to see
+who's actually on a league's roster from this page at all, which matters
+most exactly when there's no drop dropdown to glance at for context.
+
+- **Pending claims are now a real toggle, not a hover-only truncation** —
+  the amber `N pending` text is a button; clicking it (`toggleClaimsExpanded`,
+  a `Set<string>` of open league ids) expands a real detail row directly
+  under that league showing every claim's add player (with position chip),
+  drop player if any, bid if any, and Sleeper's raw status — the same
+  `claimsByLeague` data as before, just rendered in full instead of
+  ellipsis-truncated. Three states stay honest as before: "scan claims
+  above" / "no pending claims" / a real clickable count.
+- **New "roster ▼" toggle, every row, regardless of full/open state** —
+  clicking it expands a second detail row listing the league's real
+  Starters / Bench / IR-Reserve groups (from the same `WaiverLeague` data
+  already loaded, looked up via a new `leagueById` map — no new fetch, no
+  new Sleeper call), each player with a position chip and name. Deliberately
+  shown for open-slot leagues too, not just full ones — that&rsquo;s the
+  exact case the owner called out, since an open slot previously had
+  nothing else on the row to click for context.
+- Both toggles live inside the row's `<label>` (the row itself doubles as
+  the add-league checkbox control), so each button calls
+  `e.preventDefault(); e.stopPropagation()` — the same pattern the
+  drop-dropdown and bid input already used to avoid accidentally toggling
+  the checkbox — verified by inspection against those existing handlers
+  rather than re-deriving the fix.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
+  confirmed unrelated). Not live-verified against the real account — same
+  `/admin` passphrase blocker as the last several entries.
