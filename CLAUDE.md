@@ -2331,3 +2331,50 @@ tables:
   same `/admin` passphrase blocker as the last several entries; worth a
   real scroll-past-row-1 check and a real multi-league search before
   leaning on either for a live 100+ league batch.
+
+### Waiver Assistant split into tabs (2026-09; requested explicitly by the owner, part of "everything")
+
+The last of the four "still very clunky" fixes requested together. Trending
+→ Pending claims → Mass add → Single lookup → History had grown into one
+long stacked page — getting to the tool you actually wanted meant scrolling
+past everything above it every time, the exact "too much scrolling"
+complaint confirmed earlier. Restructured using the identical pattern
+`LineupManager.tsx` already established for `/manager/lineups` (chip-filter
+tab row, a `visited: Set<Tab>` so a tab mounts once on first visit and then
+stays mounted-but-`hidden` rather than unmounting — real in-progress state
+like Mass Add's search targets, bid overrides, and a completed claims scan
+all survive switching tabs, since none of this page's real client state
+lives above the tab boundary except what's deliberately kept there).
+
+- **Always visible above the tabs** (unchanged from before): the page
+  header, the `League.group` filter chips, the waiver-position stat cards,
+  and `ConnectWriteAccess` — all five tabs depend on the write-access token
+  and/or the group filter, so neither belongs inside a single tab.
+- **Default tab is Trending**, not Mass Add — picked deliberately so landing
+  on the page never silently implies a scan already ran. The real gap that
+  tabbing introduced: the "Pending waiver claims" scan used to sit
+  physically above "Add several players at once" on the stacked page, so a
+  scan was already available by simple top-to-bottom reading order before
+  reaching the add board. Tabs break that ordering guarantee outright — the
+  owner could land directly on Mass Add having never seen the claims tab.
+  Fixed with an inline prompt inside the Mass Add tab itself: "scan now" (or
+  "Rescan", if one's already run) calls the exact same `scanClaims()`
+  function the Pending Claims tab's own button calls — one real scan,
+  shared `claims`/`claimsScanned` state at the parent level, surfaced from
+  wherever you are instead of requiring a tab switch to trigger it.
+- **Clicking a trending player now also switches to the Single Lookup tab**
+  (`go("lookup")` alongside the existing `setSelectedId`/`setQuery`) — before
+  tabs existed this just scrolled the already-visible lookup section into
+  place; with tabs, the same click needs to actually change which tab is
+  showing or the selection would silently happen off-screen.
+- `tsc`/`eslint`/`next build` all clean (same 1 pre-existing lint finding,
+  confirmed unrelated and untouched by this restructuring — same line, same
+  "reset selection when the target player changes" effect flagged since the
+  direct-execution change). `scripts/testCommandCenter.ts` (422) and
+  `scripts/testCommandCenterExec.ts` (84) both still pass. Not live-verified
+  against the real account — same `/admin` passphrase blocker as the last
+  several entries; this is the largest structural change made to this file
+  all session, so a real click-through of all five tabs (confirming a scan
+  started in one tab really shows up in another, confirming Mass Add's
+  in-progress state survives a tab switch) is worth doing before relying on
+  it for a live session.

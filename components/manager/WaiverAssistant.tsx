@@ -90,6 +90,21 @@ export default function WaiverAssistant({
   // since a 200+ league account is otherwise one long undifferentiated
   // list everywhere on this page.
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
+
+  // Tabs (2026-09) — this page had grown into one long stacked scroll
+  // (trending, claims, mass add, single lookup, history all one under the
+  // other); splitting it the same way Lineups already does cuts the
+  // scrolling down to whichever tool you actually came for. Each tab stays
+  // mounted (hidden, not unmounted) once visited, same as Lineups, so
+  // in-progress state (search targets, bid edits, a scan already run)
+  // survives switching tabs.
+  type WaiverTab = "trending" | "claims" | "add" | "lookup" | "history";
+  const [tab, setTab] = useState<WaiverTab>("trending");
+  const [visited, setVisited] = useState<Set<WaiverTab>>(new Set<WaiverTab>(["trending"]));
+  const go = (t: WaiverTab) => {
+    setTab(t);
+    setVisited((prev) => (prev.has(t) ? prev : new Set(prev).add(t)));
+  };
   const groups = useMemo(() => {
     const set = new Set<string>();
     for (const lg of allLeagues) if (lg.group && lg.group.trim()) set.add(lg.group.trim());
@@ -556,6 +571,28 @@ export default function WaiverAssistant({
         <ConnectWriteAccess onTokenReady={setMultiAddToken} />
       </section>
 
+      <section className="sec" style={{ paddingBottom: 0 }}>
+        <div className="field" style={{ marginBottom: 0 }}>
+          <button className={`chip-filter ${tab === "trending" ? "on" : ""}`} onClick={() => go("trending")}>
+            Trending
+          </button>
+          <button className={`chip-filter ${tab === "claims" ? "on" : ""}`} onClick={() => go("claims")}>
+            Pending claims{claimsScanned && openClaims.length > 0 ? ` (${openClaims.length})` : ""}
+          </button>
+          <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => go("add")}>
+            Mass add
+          </button>
+          <button className={`chip-filter ${tab === "lookup" ? "on" : ""}`} onClick={() => go("lookup")}>
+            Single lookup
+          </button>
+          <button className={`chip-filter ${tab === "history" ? "on" : ""}`} onClick={() => go("history")}>
+            History
+          </button>
+        </div>
+      </section>
+
+      {visited.has("claims") && (
+      <div hidden={tab !== "claims"}>
       <section className="sec">
         <SectionHead
           title="Pending waiver claims"
@@ -625,7 +662,11 @@ export default function WaiverAssistant({
           </>
         )}
       </section>
+      </div>
+      )}
 
+      {visited.has("trending") && (
+      <div hidden={tab !== "trending"}>
       <section className="sec">
         <SectionHead title="Hottest adds &amp; drops" right="last 24h across Sleeper" />
         <p className="hint" style={{ margin: "0 0 12px" }}>
@@ -651,6 +692,7 @@ export default function WaiverAssistant({
                       onClick={() => {
                         setSelectedId(t.player_id);
                         setQuery(p?.n ?? t.player_id);
+                        go("lookup");
                       }}
                     >
                       <span className="portmeta" style={{ minWidth: 16 }}>{i + 1}</span>
@@ -689,15 +731,40 @@ export default function WaiverAssistant({
           </div>
         </div>
       </section>
+      </div>
+      )}
 
+      {visited.has("add") && (
+      <div hidden={tab !== "add"}>
       <section className="sec">
         <SectionHead
           title="Add several players at once"
           right={`${multiAddLeagues.length} league${multiAddLeagues.length === 1 ? "" : "s"}`}
         />
+        {!claimsScanned ? (
+          <p className="hint" style={{ margin: "0 0 10px" }}>
+            Rows below won&rsquo;t show real pending claims until you scan for them —{" "}
+            <button type="button" className="link" onClick={() => void scanClaims()} disabled={claimsScanning || !multiAddToken}>
+              {claimsScanning ? "scanning…" : "scan now"}
+            </button>
+            , or switch to the Pending claims tab.
+          </p>
+        ) : openClaims.length > 0 ? (
+          <p className="hint" style={{ margin: "0 0 10px" }}>
+            {openClaims.length} real pending claim{openClaims.length === 1 ? "" : "s"} already in flight — shown per
+            row below.{" "}
+            <button type="button" className="link" onClick={() => void scanClaims()} disabled={claimsScanning}>
+              Rescan
+            </button>
+          </p>
+        ) : null}
         <BulkAdd leagues={multiAddLeagues} pmap={pmap} token={multiAddToken} prefs={prefs} claimsByLeague={claimsByLeague} />
       </section>
+      </div>
+      )}
 
+      {visited.has("lookup") && (
+      <div hidden={tab !== "lookup"}>
       <section className="sec" style={{ paddingBottom: 0 }}>
         <SectionHead title="Single-player lookup" right="adds or claims him directly, no trip to Sleeper" />
         <div className="field" style={{ maxWidth: 360, marginTop: 4 }}>
@@ -1019,7 +1086,11 @@ export default function WaiverAssistant({
           )}
         </section>
       )}
+      </div>
+      )}
 
+      {visited.has("history") && (
+      <div hidden={tab !== "history"}>
       <section className="sec">
         <SectionHead
           title="Waiver history"
@@ -1059,6 +1130,8 @@ export default function WaiverAssistant({
             ))
         )}
       </section>
+      </div>
+      )}
     </>
   );
 }
