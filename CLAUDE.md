@@ -2378,3 +2378,57 @@ lives above the tab boundary except what's deliberately kept there).
   started in one tab really shows up in another, confirming Mass Add's
   in-progress state survives a tab switch) is worth doing before relying on
   it for a live session.
+
+### League favorites/pins (2026-09; requested explicitly by the owner, part of "everything")
+
+The last of the five fixes requested together. "Favorites/pins" from the
+original nav-gaps list — a way to mark a handful of leagues (out of 200+)
+so they surface first everywhere, instead of being buried alphabetically.
+
+- **Blocked on the obvious approach, by design**: tried adding a real
+  `League.favorite Boolean` column (the same pattern `group` already uses)
+  and the harness's own auto-mode classifier refused the schema edit as a
+  "shared resource" change — this app's Postgres is shared dev/prod, so a
+  migration there is a materially bigger, riskier action than a UI
+  preference warrants, and the harness is right to gate it. Did not attempt
+  to route around that refusal (no raw SQL, no migration script, nothing
+  that reaches the same outcome a different way) — pivoted to a genuinely
+  different, lower-risk design instead.
+- **`lib/leagueFavorites.ts`** (new) — client-local only, via
+  `localStorage`, the same place the Sleeper write-access token and the
+  Command Center's own Planning/Live setting already live (`ccStore.ts`).
+  Uses the identical `useSyncExternalStore`-based external-store shape
+  `ccStore.ts` already established for exactly this kind of thing —
+  deliberately NOT a `useState` + `useEffect` pair (the first draft was,
+  and `react-hooks/set-state-in-effect` correctly flagged it; `usePlayerMap`
+  avoids the same rule only because its state update is inside a real async
+  `.then()`, not applicable here since a `localStorage` read is genuinely
+  synchronous). `useSyncExternalStore`'s server-snapshot argument returns a
+  real empty `Set` during SSR, so there's no hydration-mismatch risk from
+  a manual "mounted" gate either — matches real existing precedent instead
+  of inventing a new idiom.
+- **My Leagues** (`MyTeams.tsx`) — a star toggle on every row (inside the
+  row's own `<Link>`, so it needs `preventDefault`/`stopPropagation` to
+  toggle instead of navigating — same pattern Waiver Assistant's expandable
+  row toggles already use). Favorited leagues always sort first regardless
+  of which column is actively sorted (wins/rank/alerts/etc. still apply
+  normally within the favorite/non-favorite groups) — that ordering is the
+  actual point of pinning. A "★ Pinned (N)" chip filters down to just the
+  pinned leagues, shown only once at least one exists.
+- **Command palette** (`CommandPalette.tsx`) — two changes: league search
+  results rank favorited matches first (same favorite-then-alphabetical
+  sort as My Leagues), and opening the palette with an EMPTY query now shows
+  pinned leagues as a direct quick-jump list instead of the generic help
+  text — the actual point of pinning is reaching a league without typing
+  its name at all.
+- Not extended to Waiver Assistant/Weekly Record this pass — My Leagues and
+  the command palette are the two highest-traffic places a 200+ league
+  owner looks for "which league do I mean," and `useLeagueFavorites()` is a
+  small enough hook that adding it to more pages later is cheap if wanted.
+- `tsc`/`eslint`/`next build` all clean — zero findings on all three touched
+  files, including the hook itself once rewritten onto `useSyncExternalStore`.
+  `scripts/testCommandCenter.ts` (422) and `scripts/testCommandCenterExec.ts`
+  (84) both still pass. Not live-verified against the real account — same
+  `/admin` passphrase blocker as the last several entries; `localStorage`-
+  backed state in particular is worth a real check (pin a league, reload the
+  page, confirm it's still pinned) before relying on it.

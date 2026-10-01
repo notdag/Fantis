@@ -5,7 +5,8 @@ import Link from "next/link";
 import { statusChipStyle, statusLabel } from "@/lib/manager";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
-import { IconSearch } from "./MgrIcons";
+import { useLeagueFavorites } from "@/lib/leagueFavorites";
+import { IconSearch, IconStar } from "./MgrIcons";
 import { PageHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
@@ -42,6 +43,8 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
   const [sortBy, setSortBy] = useState<SortKey>("alerts");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
+  const [pinnedOnly, setPinnedOnly] = useState(false);
+  const { favorites, isFavorite, toggle: toggleFavorite } = useLeagueFavorites();
 
   // Real, owner-set labels (League Info tab) — already collected per
   // league but never used as a filter anywhere until now. Sorted for a
@@ -81,14 +84,23 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return teams.filter(
-      (t) => (!q || t.leagueName.toLowerCase().includes(q)) && (!groupFilter || t.group?.trim() === groupFilter)
+      (t) =>
+        (!q || t.leagueName.toLowerCase().includes(q)) &&
+        (!groupFilter || t.group?.trim() === groupFilter) &&
+        (!pinnedOnly || favorites.has(t.leagueId))
     );
-  }, [teams, query, groupFilter]);
+  }, [teams, query, groupFilter, pinnedOnly, favorites]);
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     const rows = [...filtered];
     rows.sort((a, b) => {
+      // Favorites always lead, regardless of which column is sorted —
+      // that's the whole point of pinning a handful of leagues out of
+      // 200+. Within the favorite/non-favorite groups, the chosen sort
+      // still applies normally.
+      const favDiff = Number(favorites.has(b.leagueId)) - Number(favorites.has(a.leagueId));
+      if (favDiff !== 0) return favDiff;
       switch (sortBy) {
         case "name":
           return a.leagueName.localeCompare(b.leagueName) * dir;
@@ -113,7 +125,7 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
       }
     });
     return rows;
-  }, [filtered, sortBy, sortDir, rankByLeague]);
+  }, [filtered, sortBy, sortDir, rankByLeague, favorites]);
 
   const totals = useMemo(() => {
     let wins = 0, losses = 0, ties = 0, needAttention = 0, inSeason = 0, topHalf = 0, ranked = 0;
@@ -180,6 +192,18 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
             style={{ maxWidth: 280 }}
           />
         </div>
+        {favorites.size > 0 && (
+          <div className="field" style={{ marginBottom: 8, gap: 8 }}>
+            <button
+              className={`chip-filter ${pinnedOnly ? "on" : ""}`}
+              onClick={() => setPinnedOnly((v) => !v)}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <IconStar width={13} height={13} fill="currentColor" />
+              Pinned ({favorites.size})
+            </button>
+          </div>
+        )}
         {groups.length > 0 && (
           <div className="field" style={{ marginBottom: 8, gap: 8 }}>
             <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
@@ -223,6 +247,18 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
             const rank = rankByLeague.get(t.leagueId);
             return (
               <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.leagueId}>
+                <button
+                  type="button"
+                  aria-label={isFavorite(t.leagueId) ? "Unpin league" : "Pin league to the top"}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleFavorite(t.leagueId);
+                  }}
+                  style={{ background: "none", border: 0, padding: 0, cursor: "pointer", display: "flex", flex: "none", color: isFavorite(t.leagueId) ? "var(--amber)" : "var(--dim)" }}
+                >
+                  <IconStar width={16} height={16} fill={isFavorite(t.leagueId) ? "currentColor" : "none"} />
+                </button>
                 <span className="tname" style={{ flex: 1 }}>{t.leagueName}</span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {hasRecord ? `${t.wins}-${t.losses}${(t.ties ?? 0) > 0 ? `-${t.ties}` : ""}` : "—"}

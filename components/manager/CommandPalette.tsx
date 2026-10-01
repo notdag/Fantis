@@ -9,9 +9,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { useLeagueFavorites } from "@/lib/leagueFavorites";
 import { posChipStyle } from "@/lib/players";
 import { PlayerAvatar } from "./Avatar";
-import { IconSearch } from "./MgrIcons";
+import { IconSearch, IconStar } from "./MgrIcons";
 import type { PlayerMapEntry } from "@/lib/types";
 
 const OFFENSE_POS = new Set(["QB", "RB", "WR", "TE"]);
@@ -27,9 +28,18 @@ export default function CommandPalette({
 }) {
   const router = useRouter();
   const { pmap } = usePlayerMap();
+  const { favorites } = useLeagueFavorites();
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Pinned leagues shown as a quick-jump list before anything is typed —
+  // the whole point of pinning a handful of leagues is reaching them
+  // without having to type their name at all.
+  const pinnedLeagues = useMemo(
+    () => leagues.filter((lg) => favorites.has(lg.id)),
+    [leagues, favorites]
+  );
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -43,8 +53,11 @@ export default function CommandPalette({
   const leagueResults = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return leagues.filter((lg) => lg.name.toLowerCase().includes(q)).slice(0, MAX_LEAGUES);
-  }, [leagues, query]);
+    return leagues
+      .filter((lg) => lg.name.toLowerCase().includes(q))
+      .sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)))
+      .slice(0, MAX_LEAGUES);
+  }, [leagues, query, favorites]);
 
   // Same search idiom as PlayerLeagues.tsx / WaiverAssistant.tsx's
   // single-player lookup — offense-only, substring match, alphabetical.
@@ -106,9 +119,21 @@ export default function CommandPalette({
           <span className="cmdpalesc">Esc</span>
         </div>
         {query.trim() === "" ? (
-          <p className="hint" style={{ padding: "16px 18px", margin: 0 }}>
-            Search every league you manage and any real player — no need to know which page it&rsquo;s on.
-          </p>
+          pinnedLeagues.length > 0 ? (
+            <div className="cmdpalresults">
+              <div className="cmdpalgroup">Pinned</div>
+              {pinnedLeagues.map((lg) => (
+                <button key={lg.id} type="button" className="cmdpalitem" onClick={() => goToLeague(lg.id)}>
+                  <IconStar width={14} height={14} fill="currentColor" style={{ color: "var(--amber)" }} />
+                  <span className="tname">{lg.name}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="hint" style={{ padding: "16px 18px", margin: 0 }}>
+              Search every league you manage and any real player — no need to know which page it&rsquo;s on.
+            </p>
+          )
         ) : total === 0 ? (
           <p className="hint" style={{ padding: "16px 18px", margin: 0 }}>No matches.</p>
         ) : (
