@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createReadOnlyTools, READ_TOOLS } from "../lib/commandCenter/tools";
-import { handleCommand, newSession, type Block, type EngineEnv, type Session } from "../lib/commandCenter/engine";
+import { handleChainedCommand, handleCommand, newSession, type Block, type EngineEnv, type Session } from "../lib/commandCenter/engine";
 import { analyzeDrops } from "../lib/commandCenter/drops";
 import type { CcLeague, DropSignals, LeagueSnapshot } from "../lib/commandCenter/types";
 import { CURRENT_PERMISSION, canExecute } from "../lib/commandCenter/types";
@@ -2018,6 +2018,68 @@ async function main() {
       ok(!!swapUser, "exactly one of the two players got the swap (no drop)", JSON.stringify(byName));
       ok(!!dropUser && dropUser[1] === "Fallback Bench", "the other honestly falls back to a real bench drop, not the claimed swap target", JSON.stringify(byName));
     }
+  }
+
+  // ---- Section 37: generalized "<verb> candidates" dead-end fix, "who
+  // should I bench", broadened waiver-opps phrasing, and chained commands.
+  {
+    const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const pm = basePmap();
+    const addClaimVariants = [
+      "Add candidates for this week?",
+      "Claim candidates",
+      "Any good waiver adds?",
+      "check my waivers",
+    ];
+    for (const v of addClaimVariants) {
+      const o = await handleCommand(v, newSession(), makeEnv(scenario(), pm));
+      ok(o.audit.intent === "waiver_opps", `"${v}" → waiver_opps, not the generic refusal dead-end`, o.audit.intent);
+    }
+    const benchOut = await handleCommand("Who should I bench this week", newSession(), makeEnv(scenario(), pm));
+    ok(benchOut.audit.intent === "lineup_improvements", `"who should I bench" routes the same as "who should I start"`, benchOut.audit.intent);
+    // A real "add <player>" / "claim <player>" request still reaches the
+    // normal scan workflow, completely untouched by the new dead-end fix.
+    const realAdd = await handleCommand("Add Antonio Williams", newSession(), makeEnv(scenario(), pm));
+    ok(realAdd.session.targets[0]?.id === "100", `a real "add <player>" request is never swallowed by the candidates fix`, realAdd.audit.intent);
+
+    // ---- chaining
+    const rpLu = ["QB", "RB", "BN", "BN"];
+    const luPm: PlayerMap = {
+      q: { n: "Q Back", p: "QB", t: "DAL" },
+      r1: { n: "Hurt RB", p: "RB", t: "DAL", inj: "Out" },
+      r2: { n: "Bench RB", p: "RB", t: "DAL" },
+    };
+    const luLeague = { ...lg("1", "Lineup League", rpLu), settings: { roster_positions: rpLu, settings: { reserve_slots: 1 } } };
+    const luRoster: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "r1", "r2"], starters: ["q", "r1"], reserve: [], taxi: [] };
+    const luFx: LeagueFx[] = [{ league: luLeague, rosters: [luRoster, otherRoster([])], txns: [] }];
+    const luProj: ProjectionMap = { q: { pts_ppr: 20 }, r1: { pts_ppr: 15 }, r2: { pts_ppr: 9 } };
+    const future = new Date(NOW + 86_400_000).toISOString();
+    const chainEnv = makeEnv(luFx, luPm, undefined, undefined, { projections: luProj, week: 3 });
+    chainEnv.permission = "LIVE";
+    chainEnv.kickoffs = async () => ({ DAL: future });
+
+    const chained = await handleChainedCommand("Fix my lineups, then check for roster decisions", newSession(), chainEnv);
+    ok(chained.audit.intent === "chain:lineup_improvements+roster_decisions", "chained command records both real steps in the audit", chained.audit.intent);
+    const stepLabels = chained.blocks.filter((b) => b.t === "text" && /^Step \d/.test(b.text));
+    ok(stepLabels.length === 2, "two step markers, one per chained action", String(stepLabels.length));
+    ok(draftsOf(chained.blocks).some((d) => d.kind === "SET_LINEUP"), "the first step's real lineup draft still appears in the combined output");
+
+    // An ordinary single command (no connective) is completely unaffected —
+    // same result as calling handleCommand directly.
+    const plain = await handleChainedCommand("Fix my lineups", newSession(), chainEnv);
+    ok(plain.audit.intent === "lineup_improvements", "an ordinary single command is untouched by the chaining wrapper", plain.audit.intent);
+
+    // "then" inside a real drop-order list is NEVER mistaken for a chain of
+    // actions — every segment must independently resolve to a real,
+    // mention-free intent, and a bare list of player names fails that, so
+    // this falls back to running the whole sentence as the one real
+    // execute_request it actually is.
+    const notChained = await handleChainedCommand(
+      "add Malachi Fields and Germie Bernard everywhere, drop Antonio Williams then Tank Bigsby if needed",
+      newSession(),
+      makeEnv(scenario(), pm)
+    );
+    ok(notChained.audit.intent === "execute_request", "a real drop-order list using \"then\" is never mistaken for a chain of actions", notChained.audit.intent);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

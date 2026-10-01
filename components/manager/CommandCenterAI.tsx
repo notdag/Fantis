@@ -16,7 +16,7 @@ import { useCuratedRanks } from "./useCuratedRanks";
 import { createReadOnlyTools, type RawMatchup, type WeekRecordRow } from "@/lib/commandCenter/tools";
 import type { FaabStats } from "@/lib/faabHistory";
 import {
-  handleCommand,
+  handleChainedCommand,
   newSession,
   type AuditRecord,
   type Block,
@@ -211,7 +211,7 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
         onProgress: setProgress,
       };
       try {
-        const out = await handleCommand(text, session.current, env);
+        const out = await handleChainedCommand(text, session.current, env);
         session.current = out.session;
         setTurns((t) => [{ id, command: text, blocks: out.blocks, audit: out.audit }, ...t]);
         // Audit trail (server, admin-cookie gated). A failed save is shown, never hidden.

@@ -2379,6 +2379,89 @@ lives above the tab boundary except what's deliberately kept there).
   in-progress state survives a tab switch) is worth doing before relying on
   it for a live session.
 
+### Command Center: closed more intent gaps + chained "then" commands (2026-09; requested explicitly by the owner, scoped via AskUserQuestion)
+
+"let's also improve the command center as best as we can so it can
+understand natural language, and be able to execute on the language" —
+asked directly whether this meant pushing the existing free, deterministic
+parser further or adding a real LLM (a genuine fork: an LLM needs an API
+key, has a real cost, and reverses the owner's own earlier explicit "no
+LLM" call from the surname-matching work). The owner chose to keep the
+deterministic parser, scoped to two things: close remaining phrasing/intent
+gaps, and let one message chain multiple actions together.
+
+- **Generalized the "drop candidates" dead-end fix to "add"/"claim"**
+  (`lib/commandCenter/intent.ts`) — "Add candidates for this week?" or
+  "Claim candidates" starts with a recognized `execute_request` verb and,
+  with no player named, used to fall into the generic refusal-plus-preview
+  dead end — the exact bug class already fixed once for the word "drop".
+  Found by the same audit technique documented earlier this project (grep
+  every `execute_request`-verb word against plausible informational
+  phrasing). Routes to `waiver_opps`, same as the existing "waiver
+  opportunities" trigger; a real "add &lt;player&gt;" request is completely
+  untouched since this only fires with zero player mentions.
+- **"Who should I bench" now routes like "who should I start"** — both ask
+  for the same lineup help (`lineup_improvements`); only the "start"
+  phrasing was recognized before.
+- **Broadened `waiver_opps`'s own trigger phrasing** — "waiver adds",
+  "good waiver adds", and "check my waivers" now match directly, not just
+  the narrower "waiver opportunities"/"best adds"/"who should I add"
+  phrasings it already had.
+- **New: chained commands** (`handleChainedCommand`, `lib/commandCenter/
+  engine.ts`) — "Fix my lineups, then move eligible players to IR, then
+  check waiver opportunities" runs as three real steps in order, each
+  step's session feeding the next (so a later step sees whatever the
+  earlier one left on screen, same as if they'd been typed as separate
+  messages), with all three steps' real blocks shown in one combined
+  response under "Step N of M" markers. Deliberately built as a thin
+  **wrapper around `handleCommand`**, not a new branch inside it — every one
+  of the 400+ existing test assertions calls `handleCommand` directly and
+  needed to keep seeing today's exact single-intent behavior unchanged.
+  Only the real UI entry point (`CommandCenterAI.tsx`) was switched to call
+  the new wrapper; `FloatingCommandCenter.tsx` doesn't call `handleCommand`
+  at all (confirmed by `grep` before assuming), so it needed no change.
+  - **Deliberately narrow activation, to avoid colliding with "then"'s two
+    existing real jobs**: a drop-order list separator ("drop A, then B,
+    then C") and an optional leading filler word on a single
+    `execute_request` ("then drop Tank Bigsby"). Both of those only ever
+    occur together with real player MENTIONS. So the chain detector splits
+    the message on "then"/"and then"/"after that"/";", parses EACH segment
+    independently through the real `parseIntent`, and only commits to
+    "this is a chain" when every segment lands on one of a fixed set of
+    real, **mention-free** whole-portfolio intents (`lineup_improvements`,
+    `weekly_sweep`, `ir_opps`, `waiver_opps`, `roster_decisions`,
+    `standings`, `win_projection`, `scan_leagues`, `week_record`) — a
+    mention-bearing segment (a name list) can never be classified as one of
+    those, so there is no shared sentence shape for this to confuse with
+    the two existing "then" usages. Any segment that fails this check falls
+    back to running the **entire original text** as one ordinary
+    `handleCommand` call, byte-for-byte today's behavior — confirmed
+    directly with "add Malachi Fields and Germie Bernard everywhere, drop
+    Antonio Williams then Tank Bigsby if needed" (real "then"-joined
+    drop-order syntax) correctly staying a single `execute_request`, not a
+    bogus two-step chain.
+  - Combined audit record: `intent` is `chain:<kind1>+<kind2>+...` for a
+    real audit trail of what actually ran; `durationMs`/`toolCalls` sum
+    across steps (a real total cost), `leaguesTotal`/`Scanned`/`Partial`/
+    `Failed` take the max across steps (each step scans the same real
+    account, summing would double-count), `players`/`recommendations`/
+    `errors` concatenate every step's own real list.
+  - This never touches the write path — chaining only changes how many
+    **draft/preview** blocks one message produces; sending any resulting
+    proposal to Sleeper still requires the same explicit Live-mode click
+    per proposal (or the existing bulk-send flow) as before.
+- Tests: 11 new assertions in `scripts/testCommandCenter.ts` (now 433) —
+  all four new/broadened phrasings routing correctly, a real "add
+  &lt;player&gt;" never swallowed by the candidates fix, a real two-step
+  chain producing both step markers and the first step's real `SET_LINEUP`
+  draft in the combined output, an ordinary single command completely
+  unaffected by the new wrapper, and the real drop-order "then" case
+  correctly NOT being treated as a chain. `scripts/testCommandCenterExec.ts`
+  unaffected (84, unchanged) — purely new read-only engine/intent logic, no
+  executor code touched. `tsc`/`eslint`/`next build` all clean. Not
+  live-verified against the real account — same `/admin` passphrase blocker
+  as the last several entries.
+
 ### League favorites/pins (2026-09; requested explicitly by the owner, part of "everything")
 
 The last of the five fixes requested together. "Favorites/pins" from the

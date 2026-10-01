@@ -211,7 +211,7 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     return { kind: "weekly_sweep" };
   }
 
-  if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i start\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
+  if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i (start|bench|sit)\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
     return { kind: "lineup_improvements" };
   }
 
@@ -238,7 +238,7 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   // === 0: a real named player (e.g. "add Puka Nacua...") must still reach
   // scan_player/execute_request as usual, never get swallowed by a generic
   // "waiver targets" style match just because the sentence contains "add".
-  const waiverOppsWord = /\b(waiver|add) (opportunit\w*|targets?)\b|\bbest (waiver )?(adds?|available|pickups?)\b|\bwho should i (add|pick up|claim)\b|\bwaiver opportunit/.test(t);
+  const waiverOppsWord = /\b(waiver|add) (opportunit\w*|targets?)\b|\bbest (waiver )?(adds?|available|pickups?)\b|\bwho should i (add|pick up|claim)\b|\bwaiver opportunit|\bwaiver adds?\b|\bgood (waiver )?adds?\b|\b(check|look at|any (good )?)\b.*\bwaivers?\b/.test(t);
   if (mentions.length === 0 && waiverOppsWord) return { kind: "waiver_opps" };
   if (mentions.length === 0 && /\b(roster decisions?|decision to make|need(s)? (my )?attention|needs? a decision)\b/.test(t)) return { kind: "roster_decisions" };
   {
@@ -263,6 +263,17 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   // real "drop <player>" request is completely untouched.
   if (mentions.length === 0 && /^drop\b/.test(t) && /\b(bottom|worst|weakest|lowest|candidates?)\b/.test(t)) {
     return { kind: "drops", count: numberIn(t, 3), mentions };
+  }
+
+  // Same collision class, for "add"/"claim" — "Add candidates for this
+  // week?" or "Claim candidates" starts with a recognized execute_request
+  // verb and, with no player named, would otherwise fall into the generic
+  // refusal-plus-preview dead end (found via the same audit technique that
+  // caught the "drop candidates" bug: grep every execute_request-verb word
+  // against plausible informational phrasing). A real "add <player>"
+  // request is completely untouched — this only fires with zero mentions.
+  if (mentions.length === 0 && /^(add|claim)\b/.test(t) && /\b(opportunit\w*|targets?|candidates?|suggestions?|options?)\b/.test(t)) {
+    return { kind: "waiver_opps" };
   }
 
   // "add X, Y, drop A, B if needed" — or just as naturally, "I want to waiver

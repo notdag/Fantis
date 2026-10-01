@@ -2254,4 +2254,83 @@ function pushDropBlocks(blocks: Block[], env: EngineEnv, session: Session, need:
   void session;
 }
 
+// ------------------------------------------------------------------ chaining
+
+// "Optimize my lineups, then move eligible players to IR, then check waiver
+// opportunities" — several independent, whole-portfolio commands in one
+// message, run in order with each step's session feeding the next (so a
+// later step sees any scan/result state an earlier step left behind, same
+// as if they'd been typed as separate messages).
+//
+// Deliberately narrow, and deliberately a wrapper AROUND handleCommand
+// rather than a new branch inside it: every one of the 400+ existing
+// assertions calls handleCommand directly and must keep seeing today's
+// exact single-intent behavior. This only activates when ALL of the
+// following hold, and falls back to running the whole original text as one
+// ordinary handleCommand call otherwise — so an ordinary message is
+// completely unaffected by this existing at all:
+//   1. the text actually splits into 2+ segments on an unambiguous
+//      connective ("then" / "and then" / "after that" / ";"), and
+//   2. EVERY segment, parsed independently, lands on one of the real,
+//      MENTION-FREE "whole-portfolio" intents below.
+// Condition 2 is what keeps this from ever colliding with "then" already
+// being a real token elsewhere: a drop-order list ("drop A, then B, then
+// C") and an execute_request's optional leading "then" filler word both
+// only ever occur together with real player MENTIONS attached, and a
+// mention-free segment can never be classified as one of those — so there
+// is no shared sentence shape between "a list of names" and "a chain of
+// different actions" for this check to confuse.
+const CHAIN_SPLIT = /\s*(?:,?\s+and then\s+|,?\s+then\s+|\bafter that,?\s+|;\s*)\s*/i;
+const CHAINABLE_KINDS = new Set([
+  "lineup_improvements",
+  "weekly_sweep",
+  "ir_opps",
+  "waiver_opps",
+  "roster_decisions",
+  "standings",
+  "win_projection",
+  "scan_leagues",
+  "week_record",
+]);
+
+export async function handleChainedCommand(text: string, prev: Session, env: EngineEnv): Promise<EngineOutput> {
+  const segments = text
+    .split(CHAIN_SPLIT)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (segments.length < 2) return handleCommand(text, prev, env);
+
+  const kinds = segments.map((seg) => parseIntent(seg, env.tools.index, { hasScan: false, hasDrops: false, pending: false }).kind);
+  if (!kinds.every((k) => CHAINABLE_KINDS.has(k))) return handleCommand(text, prev, env);
+
+  let session = prev;
+  const blocks: Block[] = [];
+  const audits: AuditRecord[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    blocks.push({ t: "text", text: `Step ${i + 1} of ${segments.length}: "${segments[i]}"`, tone: "info" });
+    const out = await handleCommand(segments[i], session, env);
+    session = out.session;
+    blocks.push(...out.blocks);
+    audits.push(out.audit);
+  }
+
+  const audit: AuditRecord = {
+    command: text,
+    intent: `chain:${kinds.join("+")}`,
+    permission: audits[audits.length - 1]?.permission ?? "PLANNING",
+    players: audits.flatMap((a) => a.players),
+    leaguesTotal: Math.max(0, ...audits.map((a) => a.leaguesTotal)),
+    leaguesScanned: Math.max(0, ...audits.map((a) => a.leaguesScanned)),
+    leaguesPartial: Math.max(0, ...audits.map((a) => a.leaguesPartial)),
+    leaguesFailed: Math.max(0, ...audits.map((a) => a.leaguesFailed)),
+    durationMs: audits.reduce((sum, a) => sum + a.durationMs, 0),
+    counts: null,
+    actionableLeagues: null,
+    recommendations: audits.flatMap((a) => a.recommendations).slice(0, 12),
+    errors: audits.flatMap((a) => a.errors),
+    toolCalls: audits.reduce((sum, a) => sum + a.toolCalls, 0),
+  };
+  return { session, blocks, audit };
+}
+
 export type { CcLeague };
