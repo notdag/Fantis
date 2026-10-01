@@ -2282,3 +2282,52 @@ below it.
   1 pre-existing `WaiverAssistant.tsx` lint finding, confirmed unrelated,
   untouched). Not live-verified against the real account — same `/admin`
   passphrase blocker as the last several entries.
+
+### Bulk tables: sticky headers, in-table search, bulk bid-set (2026-09; requested explicitly by the owner — "still very clunky")
+
+Asked for more navigation/UX suggestions after the command-palette +
+group-filter pass; checked the actual CSS/code before proposing anything
+rather than guessing (confirmed via `grep`: no `position:sticky` and no
+search box existed in any of the three long bulk-review lists). The owner
+said "everything" — all three shipped together since they touch the same
+tables:
+
+- **Sticky column headers** — Mass Add/Claim (`BulkAdd.tsx`) and Mass IR
+  (`BulkIR.tsx`) both wrap their `DataTable` in a bounded, scrollable div;
+  past row 1 of a 55-200 row batch, "Player / League / Roster / Bid /
+  Result" used to scroll away with everything else. New shared
+  `.mgrtable-scroll` class (`app/manager/manager.css`) replaces the old
+  inline `{maxHeight:640, overflowY:"auto"}` wrapper. Real gotcha worth
+  keeping in mind if this pattern gets reused: `.mgrtable`'s own
+  `overflow-y:hidden` (there so its border-radius clips a horizontally-
+  scrolling wide table) would otherwise become the *nearest scroll
+  container* for `position:sticky` and silently defeat it, since that box
+  has no actual scrollable overflow of its own — `.mgrtable-scroll`
+  overrides it to `visible` and takes over the real scrolling + rounded-
+  corner clipping itself, scoped only to callers that opt into the class
+  (every other `DataTable` usage app-wide is untouched).
+- **In-table search** — both tables, plus Command Center's bulk send list
+  (`ProposalsPanel.tsx`, shown once it has 8+ items): a text box filters by
+  league name and (`BulkAdd`/`BulkIR`) the target/player name, or
+  (`ProposalsPanel`) the same human description each card already shows via
+  `describeProposal()`. Deliberately filters the VIEW only — "Select
+  all"/"Select none" (relabelled "...shown" while a filter is active) act on
+  whatever's currently filtered in, real selection state for every other
+  row is left untouched, so narrowing to "Keenan Allen" and clicking Select
+  all never silently deselects everything else in the batch.
+- **Bulk bid-set** (`BulkAdd.tsx` only — the only one of the three with a
+  bid column) — a `$` input + "Set all bids" button writes the same number
+  into every FAAB row's `bidOverride` in one click instead of editing each
+  of 30+ rows by hand. Real per-row caps still apply afterward: `bidFor()`'s
+  existing `budgetLeft`/`bidMin` clamp runs at render/send time regardless
+  of how a bid got into `bidOverride`, so this can never push a league's bid
+  over what it can actually support — bulk-set and per-row typing are the
+  same input, not a separate code path.
+- `tsc`/`eslint`/`next build` all clean on all three files (zero findings,
+  not even a pre-existing one). `scripts/testCommandCenter.ts` (422),
+  `scripts/testCommandCenterExec.ts` (84), and `scripts/testMultiAddPlan.ts`
+  (20) all still pass — pure UI/display changes, no planning/executor/
+  pure-logic code touched. Not live-verified against the real account —
+  same `/admin` passphrase blocker as the last several entries; worth a
+  real scroll-past-row-1 check and a real multi-league search before
+  leaning on either for a live 100+ league batch.

@@ -99,6 +99,8 @@ export default function BulkAdd({
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
   const [dropOverride, setDropOverride] = useState<Record<string, string | null>>({});
   const [bidOverride, setBidOverride] = useState<Record<string, number>>({});
+  const [rowFilter, setRowFilter] = useState("");
+  const [bulkBid, setBulkBid] = useState<number | "">("");
   const [status, setStatus] = useState<Record<string, TaskStatus>>({});
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
@@ -245,6 +247,44 @@ export default function BulkAdd({
       else next.add(key);
       return next;
     });
+
+  // Find a specific row in a long batch (a player across 50+ leagues, or
+  // several targets at once) instead of scrolling to it. Filters the VIEW
+  // only — Select all/none below act on whatever's currently filtered in,
+  // real selection state for everything else is untouched.
+  const visibleRows = useMemo(() => {
+    const q = rowFilter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.leagueName.toLowerCase().includes(q) || nameOf(pmap, r.targetId).toLowerCase().includes(q));
+  }, [rows, rowFilter, pmap]);
+
+  const selectVisible = () =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      for (const r of visibleRows) next.delete(r.key);
+      return next;
+    });
+  const deselectVisible = () =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      for (const r of visibleRows) next.add(r.key);
+      return next;
+    });
+
+  // Set the same bid across every FAAB row in one click instead of editing
+  // each one by hand — real per-row budget caps (bidFor's own min/budgetLeft
+  // clamp) still apply when the row renders, so this can never push a bid
+  // over what a specific league can actually support.
+  const applyBulkBid = () => {
+    if (bulkBid === "" || bulkBid < 0) return;
+    setBidOverride((prev) => {
+      const next = { ...prev };
+      for (const r of rows) {
+        if (r.faab && !finished(r)) next[r.key] = bulkBid;
+      }
+      return next;
+    });
+  };
 
   const start = async () => {
     if (!token) return;
@@ -441,8 +481,30 @@ export default function BulkAdd({
           {rows.length > 0 && (
             <>
               <div className="field" style={{ margin: "12px 0", alignItems: "center" }}>
-                <button className="chip-filter" onClick={() => setDeselected(new Set())}>Select all</button>
-                <button className="chip-filter" onClick={() => setDeselected(new Set(rows.map((r) => r.key)))}>Select none</button>
+                <input
+                  className="input"
+                  placeholder="Find a league or player…"
+                  value={rowFilter}
+                  onChange={(e) => setRowFilter(e.target.value)}
+                  style={{ maxWidth: 220 }}
+                />
+                <button className="chip-filter" onClick={selectVisible}>Select all{rowFilter ? " shown" : ""}</button>
+                <button className="chip-filter" onClick={deselectVisible}>Select none{rowFilter ? " shown" : ""}</button>
+                {rows.some((r) => r.faab) && (
+                  <>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      placeholder="Bid $"
+                      value={bulkBid}
+                      onChange={(e) => setBulkBid(e.target.value === "" ? "" : Number(e.target.value))}
+                      style={{ width: 70 }}
+                      title="Set this bid on every FAAB row below (still capped per league)"
+                    />
+                    <button className="chip-filter" disabled={bulkBid === ""} onClick={applyBulkBid}>Set all bids</button>
+                  </>
+                )}
                 <span style={{ flex: 1 }} />
                 {running ? (
                   <button className="btn ghost" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
@@ -452,6 +514,7 @@ export default function BulkAdd({
                   </button>
                 )}
               </div>
+              {rowFilter && <p className="hint" style={{ margin: "0 0 8px" }}>{visibleRows.length} of {rows.length} rows match &ldquo;{rowFilter}&rdquo;</p>}
               {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above first.</p>}
 
               {confirming && (
@@ -471,7 +534,7 @@ export default function BulkAdd({
               )}
               {summary && <p className="hint" style={{ color: summaryColor, fontWeight: 600 }}>{summary}</p>}
 
-              <div style={{ maxHeight: 640, overflowY: "auto" }}>
+              <div className="mgrtable-scroll">
                 <DataTable>
                   <TableHeaderRow>
                     <span style={{ width: 22 }} />
@@ -481,7 +544,7 @@ export default function BulkAdd({
                     <span style={{ minWidth: 70 }}>Bid</span>
                     <span style={{ minWidth: 90 }}>Result</span>
                   </TableHeaderRow>
-                  {rows.map((r) => (
+                  {visibleRows.map((r) => (
                     <TableRow key={r.key} style={finished(r) ? { opacity: 0.6 } : undefined}>
                       <input
                         type="checkbox"

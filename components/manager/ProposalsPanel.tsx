@@ -242,7 +242,16 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
   const live = permission === "LIVE";
   const review = list.filter((p) => p.status === "proposed" || p.status === "approved" || p.status === "executing");
   const history = list.filter((p) => !["proposed", "approved", "executing"].includes(p.status));
-  const shown = filter === "review" ? review : history;
+  const unfiltered = filter === "review" ? review : history;
+  // Find a specific league or player in a real 70-200 proposal batch
+  // instead of scrolling to it — searches the league name and the same
+  // human description (player names included) each card already shows.
+  const [listFilter, setListFilter] = useState("");
+  const shown = useMemo(() => {
+    const q = listFilter.trim().toLowerCase();
+    if (!q) return unfiltered;
+    return unfiltered.filter((p) => p.leagueName.toLowerCase().includes(q) || describeProposal(p).toLowerCase().includes(q));
+  }, [unfiltered, listFilter]);
   const hasToken = typeof window !== "undefined" && !!getStoredToken();
   const sendable = review.filter((p) => p.status === "proposed" || p.status === "approved");
   const selectedList = sendable.filter((p) => selected.has(p.id));
@@ -281,6 +290,19 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
         </button>
       </div>
 
+      {unfiltered.length > 8 && (
+        <div className="field" style={{ margin: "0 0 10px" }}>
+          <input
+            className="input"
+            placeholder="Find a league or player…"
+            value={listFilter}
+            onChange={(e) => setListFilter(e.target.value)}
+            style={{ maxWidth: 240 }}
+          />
+          {listFilter && <span className="hint" style={{ margin: 0 }}>{shown.length} of {unfiltered.length} match</span>}
+        </div>
+      )}
+
       {!live && <p className="hint" style={{ color: "var(--amber)" }}>Planning mode: proposals below are listed but nothing can be sent. Switch to Live above to send them.</p>}
       {live && !hasToken && <p className="hint" style={{ color: "var(--red)" }}>Sleeper access isn&rsquo;t connected in this browser, so nothing can be sent. Connect it on the Lineups page.</p>}
 
@@ -293,7 +315,12 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
           </label>
           {bulkEnabled && (
             <div className="field" style={{ marginTop: 8, alignItems: "center" }}>
-              <button className="ccexample" onClick={() => setSelected(new Set(sendable.slice(0, BULK_CAP).map((p) => p.id)))}>Select all (up to {BULK_CAP})</button>
+              <button
+                className="ccexample"
+                onClick={() => setSelected(new Set(shown.filter((p) => p.status === "proposed" || p.status === "approved").slice(0, BULK_CAP).map((p) => p.id)))}
+              >
+                Select all{listFilter ? " shown" : ""} (up to {BULK_CAP})
+              </button>
               <button className="ccexample" onClick={() => setSelected(new Set())}>Deselect all</button>
               <span style={{ flex: 1 }} />
               {bulkRunning ? (

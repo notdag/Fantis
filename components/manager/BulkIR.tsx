@@ -106,6 +106,7 @@ export default function BulkIR({
   // deselected set so the default needs no effect/initialisation once the
   // async player map loads.)
   const [deselected, setDeselected] = useState<Set<string>>(new Set());
+  const [rowFilter, setRowFilter] = useState("");
   const [dropOverride, setDropOverride] = useState<Record<string, string | null>>({});
   const [status, setStatus] = useState<Record<string, TaskStatus>>({});
   const [confirming, setConfirming] = useState(false);
@@ -121,6 +122,29 @@ export default function BulkIR({
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && runnable(r));
   const leaguesAffected = new Set(rows.map((r) => r.leagueId)).size;
   const dropCount = selectedRows.filter((r) => r.needsDrop).length;
+
+  // Find a specific league or player in a long batch instead of scrolling
+  // to it. Filters the VIEW only — Select all/none below act on whatever's
+  // currently filtered in, real selection state for everything else is
+  // untouched.
+  const visibleRows = useMemo(() => {
+    const q = rowFilter.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.leagueName.toLowerCase().includes(q) || nameOf(pmap, r.playerId).toLowerCase().includes(q));
+  }, [rows, rowFilter, pmap]);
+
+  const selectVisible = () =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      for (const r of visibleRows) next.delete(r.key);
+      return next;
+    });
+  const deselectVisible = () =>
+    setDeselected((prev) => {
+      const next = new Set(prev);
+      for (const r of visibleRows) next.add(r.key);
+      return next;
+    });
 
   // One-click case: players Sleeper lists as "IR" that fit in an open IR slot.
   // Leagues whose IR is already full are never touched by this — they're
@@ -269,8 +293,15 @@ export default function BulkIR({
       ) : (
         <>
           <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
-            <button className="chip-filter" onClick={() => setDeselected(new Set())}>Select all</button>
-            <button className="chip-filter" onClick={() => setDeselected(new Set(rows.map((r) => r.key)))}>Select none</button>
+            <input
+              className="input"
+              placeholder="Find a league or player…"
+              value={rowFilter}
+              onChange={(e) => setRowFilter(e.target.value)}
+              style={{ maxWidth: 220 }}
+            />
+            <button className="chip-filter" onClick={selectVisible}>Select all{rowFilter ? " shown" : ""}</button>
+            <button className="chip-filter" onClick={deselectVisible}>Select none{rowFilter ? " shown" : ""}</button>
             <span style={{ flex: 1 }} />
             {!running && (
               <>
@@ -327,8 +358,9 @@ export default function BulkIR({
             </div>
           )}
           {summary && <p className="hint" style={{ color: summaryColor, fontWeight: 600 }}>{summary}</p>}
+          {rowFilter && <p className="hint" style={{ margin: "0 0 8px" }}>{visibleRows.length} of {rows.length} rows match &ldquo;{rowFilter}&rdquo;</p>}
 
-          <div style={{ maxHeight: 640, overflowY: "auto" }}>
+          <div className="mgrtable-scroll">
             <DataTable>
               <TableHeaderRow>
                 <span style={{ width: 22 }} />
@@ -336,7 +368,7 @@ export default function BulkIR({
                 <span style={{ minWidth: 200 }}>Action</span>
                 <span style={{ minWidth: 90 }}>Result</span>
               </TableHeaderRow>
-              {rows.map((r) => {
+              {visibleRows.map((r) => {
                 const entry = pmap[r.playerId];
                 return (
                   <TableRow key={r.key} style={finished(r) ? { opacity: 0.6 } : undefined}>

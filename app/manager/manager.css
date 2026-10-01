@@ -135,6 +135,20 @@
    never does" rule. */
 .mgrtable{border:1px solid var(--line);border-radius:var(--mgr-radius);overflow-x:auto;overflow-y:hidden;background:var(--panel)}
 .mgrtable .mgrrow{min-width:max-content}
+
+/* Sticky column headers for the long bulk-review tables (Mass Add/Claim,
+   Mass IR) — 2026-09, so "Player / League / Roster / Bid / Result" stays
+   visible past row 1 of a 55-200 row batch instead of scrolling away with
+   everything else. .mgrtable's own overflow-y:hidden (there so its
+   border-radius clips a horizontally-scrolling wide table) would otherwise
+   become the nearest "scroll container" for position:sticky and silently
+   defeat it, since that box has no scrollable overflow of its own — this
+   wrapper owns the real scrolling + rounded clipping instead, scoped only
+   to callers that opt in. */
+.mgrtable-scroll{max-height:640px;overflow-y:auto;border:1px solid var(--line);
+  border-radius:var(--mgr-radius);background:var(--panel)}
+.mgrtable-scroll .mgrtable{overflow-y:visible;border:0;border-radius:0}
+.mgrtable-scroll .mgrrow.head{position:sticky;top:0;z-index:1;background:var(--panel)}
 .mgrrow{display:flex;align-items:center;gap:14px;padding:12px 16px;width:100%;min-height:var(--mgr-row-h);
   background:none;border:0;border-top:1px solid var(--line-soft);font:inherit;color:inherit;
   text-align:left;text-decoration:none;cursor:pointer;transition:background-color .15s}
