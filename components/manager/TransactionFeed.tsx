@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { posChipStyle } from "@/lib/players";
 import {
   transactionTypeChipStyle,
@@ -60,16 +60,25 @@ export default function TransactionFeed({
     return { complete, trades, waiver, freeAgent, faabSpent, waiverClaims: waiverRows.length, activeLeagues };
   }, [thisWeek]);
 
+  // Type filter — the feed used to be every trade/waiver/free-agent move
+  // mixed together with no way to isolate just trades, making "show me my
+  // trade history" a scroll through everything else first.
+  const [typeFilter, setTypeFilter] = useState<"all" | "trade" | "waiver" | "free_agent">("all");
+  const filteredRecent = useMemo(
+    () => (typeFilter === "all" ? recent : recent.filter((t) => t.type === typeFilter)),
+    [recent, typeFilter]
+  );
+
   const dayKey = (iso: string) =>
     new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const groups = useMemo(() => {
     const map = new Map<string, ManagedTransaction[]>();
-    for (const t of recent) {
+    for (const t of filteredRecent) {
       const key = dayKey(t.createdAt);
       (map.get(key) ?? map.set(key, []).get(key)!).push(t);
     }
     return map;
-  }, [recent]);
+  }, [filteredRecent]);
 
   return (
     <>
@@ -115,7 +124,29 @@ export default function TransactionFeed({
           </p>
         </section>
       ) : (
-        Array.from(groups.entries()).map(([day, rows]) => (
+        <>
+          <section className="sec" style={{ paddingBottom: 0 }}>
+            <div className="field" style={{ marginBottom: 0, gap: 8 }}>
+              {(
+                [
+                  ["all", `All (${recent.length})`],
+                  ["trade", `Trades (${recent.filter((t) => t.type === "trade").length})`],
+                  ["waiver", `Waivers (${recent.filter((t) => t.type === "waiver").length})`],
+                  ["free_agent", `Free agents (${recent.filter((t) => t.type === "free_agent").length})`],
+                ] as const
+              ).map(([k, label]) => (
+                <button key={k} className={`chip-filter ${typeFilter === k ? "on" : ""}`} onClick={() => setTypeFilter(k)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+          {filteredRecent.length === 0 && (
+            <section className="sec">
+              <p className="hint">No {typeFilter.replace("_", " ")} transactions in this feed.</p>
+            </section>
+          )}
+          {Array.from(groups.entries()).map(([day, rows]) => (
           <section className="sec" key={day}>
             <SectionHead title={day} right={`${rows.length} moves`} />
             <DataTable>
@@ -143,7 +174,8 @@ export default function TransactionFeed({
               ))}
             </DataTable>
           </section>
-        ))
+          ))}
+        </>
       )}
     </>
   );

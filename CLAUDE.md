@@ -2462,6 +2462,62 @@ gaps, and let one message chain multiple actions together.
   live-verified against the real account — same `/admin` passphrase blocker
   as the last several entries.
 
+### Completed trades tab, transaction type filter, and a real waiver quick-link per league (2026-09; requested explicitly by the owner)
+
+"fix more, useability, navigation whatever u suggest... maybe also a page
+for all my pending trades/offers/completed etc" — checked what already
+existed before building anything: `/manager/inbox` already had real
+pending offers/claims (live Sleeper scan) but no completed history at all;
+`/manager/transactions` already had real completed trade/waiver/free-agent
+history (from the regular sync) but no way to isolate just trades, and no
+cross-link from Inbox; League Overview (and every other league sub-page)
+had no action scoped to that one specific league at all — acting on a
+league meant leaving to Lineups/Waiver Assistant and re-finding it there
+(confirmed by a research pass before proposing anything).
+
+- **Inbox gets a real "Completed trades" tab** (`InboxManager.tsx`) — a
+  genuine 4th tab, but a different shape from the other three: it's a pure
+  DB read (`LeagueTransaction` rows where `type = "trade"`, already synced
+  by the regular sync, no new Sleeper call), filtered to trades whose real
+  `rosterIds` actually include mine — not a live scan, so it works even
+  without connecting write access, and loads instantly instead of needing a
+  button click. Sleeper's own raw status (`complete`/`failed`/whatever else
+  shows up) is displayed as-is and colored honestly (mint only for a
+  confirmed `complete`, red for `failed`, neutral otherwise) — never guessed
+  into a richer "accepted/rejected/vetoed" distinction the regular sync's
+  data doesn't actually carry (only the live GraphQL pending-scan, used by
+  the other three tabs, has that nuance).
+- **`/manager/transactions` gets a real type filter** (`TransactionFeed.tsx`)
+  — All / Trades / Waivers / Free agents chips over the exact same already-
+  fetched feed (no new query), since a flat 300-row mixed feed made "find my
+  trades" a scroll through every waiver and free-agent move first.
+- **A real "Waiver for this league" button**, in `LeagueIdentityBar.tsx` —
+  the shared header reused across all 8 `/manager/[leagueId]/*` sub-pages,
+  so it shows up wherever you're actually looking at a specific league, not
+  just Overview. Jumps to `/manager/waiver?leagueId=<id>`, which
+  `WaiverAssistant.tsx` now reads to scope the ENTIRE page — trending,
+  claims, Mass Add, single lookup, FAAB — to just that one league and land
+  directly on the Mass Add tab (the actual "execute a waiver" tool) instead
+  of the default Trending landing tab. A visible amber banner ("Showing only
+  &lt;League&gt; — View every league") makes the narrowed scope obvious and
+  reversible in one click. This is a tighter override than the existing
+  `League.group` filter, not a merge with it — a single-league focus always
+  wins outright since it's strictly more specific.
+- **Not done this pass** (explicitly deferred): a Lineups-side equivalent
+  quick-link ("Optimize this league" from its Overview page), and full
+  checkbox multi-select on My Leagues to launch a bulk tool pre-scoped to
+  several hand-picked leagues at once. Both are real, same-shaped follow-ups
+  to this pattern if wanted.
+- `tsc`/`eslint`/`next build` all clean (`InboxManager.tsx`,
+  `TransactionFeed.tsx`, and `LeagueIdentityBar.tsx` all fully clean; the
+  same 1 pre-existing `WaiverAssistant.tsx` lint finding, confirmed
+  unrelated and untouched). `scripts/testCommandCenter.ts` (433) and
+  `scripts/testCommandCenterExec.ts` (84) both still pass — none of this
+  touched Command Center. Not live-verified against the real account — same
+  `/admin` passphrase blocker as the last several entries; worth a real
+  click from a league's Overview page into its scoped Mass Add tab before
+  relying on it for tonight's waivers.
+
 ### League favorites/pins (2026-09; requested explicitly by the owner, part of "everything")
 
 The last of the five fixes requested together. "Favorites/pins" from the

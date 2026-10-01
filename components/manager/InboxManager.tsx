@@ -10,7 +10,7 @@ import {
   cancelWaiverClaim,
   fetchLeagueTransactions,
 } from "@/lib/sleeperWrite";
-import { isBestBall } from "@/lib/manager";
+import { isBestBall, type ManagedTransactionPlayer } from "@/lib/manager";
 import { posChipStyle } from "@/lib/players";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { useTradeValues } from "@/lib/useTradeValues";
@@ -33,7 +33,21 @@ export interface InboxLeague {
   teams: Record<number, string | null>; // rosterId -> team name
 }
 
-type Tab = "incoming" | "outgoing" | "claims";
+// A real completed/resolved trade I was actually part of, from the regular
+// sync's own LeagueTransaction table (lib/managerSync.ts) — the same real
+// data /manager/transactions reads, just pre-filtered to trades only so
+// this page can be the one true "my trades: pending + resolved" view.
+export interface CompletedTrade {
+  id: string;
+  leagueId: string;
+  leagueName: string;
+  status: string; // Sleeper's own value verbatim — shown as-is, never guessed at
+  createdAt: string;
+  adds: ManagedTransactionPlayer[] | null;
+  drops: ManagedTransactionPlayer[] | null;
+}
+
+type Tab = "incoming" | "outgoing" | "claims" | "completed";
 type Action =
   | { kind: "accept" | "reject" | "cancelTrade"; items: Trade[] }
   | { kind: "cancelClaim"; items: Claim[] };
@@ -45,6 +59,15 @@ const ageText = (created: number | null) => {
   return d < 1 ? "today" : d === 1 ? "1 day ago" : d + " days ago";
 };
 
+// Sleeper's own raw trade status — shown as-is, never guessed at beyond a
+// real color: "complete" reads as a genuine success, anything else (failed,
+// or a status this app hasn't seen before) stays neutral/warning rather
+// than assuming it's bad.
+function tradeStatusChipStyle(status: string) {
+  const c = status === "complete" ? "var(--mint)" : status === "failed" ? "var(--red)" : "var(--muted)";
+  return { color: c, background: `color-mix(in srgb, ${c} 20%, transparent)`, borderColor: `color-mix(in srgb, ${c} 52%, transparent)` };
+}
+
 const ACTION_LABEL: Record<Action["kind"], string> = {
   accept: "Accept",
   reject: "Decline",
@@ -52,7 +75,7 @@ const ACTION_LABEL: Record<Action["kind"], string> = {
   cancelClaim: "Cancel claim",
 };
 
-export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
+export default function InboxManager({ leagues, completedTrades }: { leagues: InboxLeague[]; completedTrades: CompletedTrade[] }) {
   const [token, setToken] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("incoming");
   const { pmap } = usePlayerMap();
@@ -399,6 +422,7 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
           <button className={`chip-filter ${tab === "incoming" ? "on" : ""}`} onClick={() => setTab("incoming")}>Offers to me{scanned ? ` (${incoming.length})` : ""}</button>
           <button className={`chip-filter ${tab === "outgoing" ? "on" : ""}`} onClick={() => setTab("outgoing")}>My offers{scanned ? ` (${outgoing.length})` : ""}</button>
           <button className={`chip-filter ${tab === "claims" ? "on" : ""}`} onClick={() => setTab("claims")}>Pending claims{scanned ? ` (${openClaims.length})` : ""}</button>
+          <button className={`chip-filter ${tab === "completed" ? "on" : ""}`} onClick={() => setTab("completed")}>Completed trades ({completedTrades.length})</button>
         </div>
 
         {action && (action.kind === "cancelClaim" || action.items.length > 1) && (
@@ -413,7 +437,44 @@ export default function InboxManager({ leagues }: { leagues: InboxLeague[] }) {
           </div>
         )}
 
-        {!scanned && !scanning && <p className="hint">Run a scan to load your pending offers and claims.</p>}
+        {!scanned && !scanning && tab !== "completed" && <p className="hint">Run a scan to load your pending offers and claims.</p>}
+
+        {tab === "completed" && (
+          <>
+            <p className="hint" style={{ margin: "0 0 12px" }}>
+              Real completed trades you were actually part of — from the regular sync, not a live
+              scan, so this works without connecting write access above. Sleeper&rsquo;s own raw
+              status is shown as-is (complete/failed) rather than guessed at.
+            </p>
+            {completedTrades.length === 0 ? (
+              <p className="hint">No completed trades synced yet.</p>
+            ) : (
+              <DataTable>
+                {completedTrades.map((t) => (
+                  <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.id}>
+                    <span className="portmeta" style={{ minWidth: 90 }}>
+                      {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                    </span>
+                    <span className="tname" style={{ minWidth: 150 }}>{t.leagueName}</span>
+                    <span className="pos" style={tradeStatusChipStyle(t.status)}>{t.status}</span>
+                    <span style={{ flex: 1, display: "flex", flexWrap: "wrap", gap: 10 }}>
+                      {t.adds && t.adds.length > 0 && (
+                        <span className="portmeta" style={{ color: "var(--mint)" }}>
+                          + {t.adds.map((p) => p.playerName).join(", ")}
+                        </span>
+                      )}
+                      {t.drops && t.drops.length > 0 && (
+                        <span className="portmeta" style={{ color: "var(--red)" }}>
+                          − {t.drops.map((p) => p.playerName).join(", ")}
+                        </span>
+                      )}
+                    </span>
+                  </TableRow>
+                ))}
+              </DataTable>
+            )}
+          </>
+        )}
 
         {scanned && tab === "incoming" && (
           <>

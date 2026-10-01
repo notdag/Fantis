@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { usePlayerMap } from "@/lib/usePlayerMap";
@@ -91,16 +91,26 @@ export default function WaiverAssistant({
   // list everywhere on this page.
   const [groupFilter, setGroupFilter] = useState<string | null>(null);
 
+  // Deep link from a league's own Overview page ("Waiver search for this
+  // league") — ?leagueId=X scopes the WHOLE page to just that one league,
+  // a tighter, league-specific override of the group filter above (they're
+  // never combined: a single-league focus wins outright since it's more
+  // specific). Lets "I'm looking at League X, let me waiver someone in it"
+  // skip re-finding League X in a 200+ league search box.
+  const searchParams = useSearchParams();
+  const soloLeagueId = searchParams.get("leagueId");
+
   // Tabs (2026-09) — this page had grown into one long stacked scroll
   // (trending, claims, mass add, single lookup, history all one under the
   // other); splitting it the same way Lineups already does cuts the
   // scrolling down to whichever tool you actually came for. Each tab stays
   // mounted (hidden, not unmounted) once visited, same as Lineups, so
   // in-progress state (search targets, bid edits, a scan already run)
-  // survives switching tabs.
+  // survives switching tabs. A ?leagueId= deep link starts on Mass Add —
+  // the actual "execute a waiver" tool — instead of the default landing tab.
   type WaiverTab = "trending" | "claims" | "add" | "lookup" | "history";
-  const [tab, setTab] = useState<WaiverTab>("trending");
-  const [visited, setVisited] = useState<Set<WaiverTab>>(new Set<WaiverTab>(["trending"]));
+  const [tab, setTab] = useState<WaiverTab>(soloLeagueId ? "add" : "trending");
+  const [visited, setVisited] = useState<Set<WaiverTab>>(new Set<WaiverTab>([soloLeagueId ? "add" : "trending"]));
   const go = (t: WaiverTab) => {
     setTab(t);
     setVisited((prev) => (prev.has(t) ? prev : new Set(prev).add(t)));
@@ -110,18 +120,18 @@ export default function WaiverAssistant({
     for (const lg of allLeagues) if (lg.group && lg.group.trim()) set.add(lg.group.trim());
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [allLeagues]);
-  const leagues = useMemo(
-    () => (groupFilter ? allLeagues.filter((lg) => lg.group?.trim() === groupFilter) : allLeagues),
-    [allLeagues, groupFilter]
-  );
+  const leagues = useMemo(() => {
+    if (soloLeagueId) return allLeagues.filter((lg) => lg.leagueId === soloLeagueId);
+    return groupFilter ? allLeagues.filter((lg) => lg.group?.trim() === groupFilter) : allLeagues;
+  }, [allLeagues, groupFilter, soloLeagueId]);
   const groupLeagueIds = useMemo(() => new Set(leagues.map((l) => l.leagueId)), [leagues]);
   const multiAddLeagues = useMemo(
-    () => (groupFilter ? allMultiAddLeagues.filter((l) => groupLeagueIds.has(l.league.id)) : allMultiAddLeagues),
-    [allMultiAddLeagues, groupFilter, groupLeagueIds]
+    () => (soloLeagueId || groupFilter ? allMultiAddLeagues.filter((l) => groupLeagueIds.has(l.league.id)) : allMultiAddLeagues),
+    [allMultiAddLeagues, groupFilter, soloLeagueId, groupLeagueIds]
   );
   const faabLeagues = useMemo(
-    () => (groupFilter ? allFaabLeagues.filter((l) => groupLeagueIds.has(l.leagueId)) : allFaabLeagues),
-    [allFaabLeagues, groupFilter, groupLeagueIds]
+    () => (soloLeagueId || groupFilter ? allFaabLeagues.filter((l) => groupLeagueIds.has(l.leagueId)) : allFaabLeagues),
+    [allFaabLeagues, groupFilter, soloLeagueId, groupLeagueIds]
   );
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
@@ -530,7 +540,16 @@ export default function WaiverAssistant({
           }
         />
 
-        {groups.length > 0 && (
+        {soloLeagueId && (
+          <p className="hint" style={{ margin: "0 0 12px", color: "var(--amber)" }}>
+            Showing only {leagues[0]?.leagueName ?? "this league"} (from its Overview page).{" "}
+            <button type="button" className="link" onClick={() => router.push("/manager/waiver")}>
+              View every league
+            </button>
+          </p>
+        )}
+
+        {!soloLeagueId && groups.length > 0 && (
           <div className="field" style={{ marginBottom: 12, gap: 8 }}>
             <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
               All leagues

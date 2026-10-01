@@ -175,6 +175,9 @@ export default function LeagueIdentityBar({
         <a className="btn" href={`https://sleeper.com/leagues/${league.id}`} target="_blank" rel="noreferrer">
           Open in Sleeper →
         </a>
+        <button className="btn ghost" onClick={() => router.push(`/manager/waiver?leagueId=${league.id}`)}>
+          Waiver for this league
+        </button>
         <button className="btn ghost" onClick={openViaAutomation} disabled={automationState === "waiting"}>
           {automationState === "waiting" ? "Waiting for automation…" : "Open via automation"}
         </button>
