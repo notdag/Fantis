@@ -2650,3 +2650,12 @@ true slot (freeing it for someone else); list order decides who wins when severa
   step of 1e-6 failed its own test for exactly that reason.
 - Same exclusivity as the other lists (one list per player; priority wins). Wired into Optimize (`⇄` marker) and chat "Fix my lineups".
 - Tests: `npx tsx scripts/testFlexFirst.ts` (6); lineup optimizer (21), command center (433 + 84) unchanged. Not clicked through in a browser (admin gate).
+
+### Admin tier board: big ▲▼ arrows on the left, arrows cross tier lines (2026-10; requested explicitly by the owner)
+
+"instead of drag and drop can u add an arrow on the left ... or maybe both ... i need to make it super easy." `components/TierBoard.tsx`
+now has a stacked ▲/▼ pair at the LEFT of every row (30x18px buttons, amber on hover; `.rankarrows` in `app/globals.css`), replacing the tiny dim
+arrows on the right. Drag-and-drop is unchanged (both work). New behavior: ▲ on the first card of a tier (or ▼ on the last) moves him into the
+adjacent tier — end of the tier above / start of the tier below, respecting the position filter — so repeated clicks walk a player through the whole
+board instead of dead-ending at a tier edge. «/» still jump a whole tier. Undo/Ctrl+Z covers every arrow click. `tsc`/`eslint` clean; not
+clicked through in a browser (admin gate).

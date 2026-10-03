@@ -204,7 +204,17 @@ export default function TierBoard({
       const col = b[tier];
       const p = col[idx];
       const target = posFilter === "ALL" ? idx + dir : findAdjacentSamePos(col, idx, p.pos, dir);
-      if (target == null || target < 0 || target >= col.length) return b;
+      if (target == null || target < 0 || target >= col.length) {
+        // Already first/last in this tier: carry him across the tier line, so
+        // repeated clicks walk a player through the whole board.
+        const toTier = tier + dir;
+        if (toTier < 0 || toTier > TIER_COUNT - 1) return b;
+        const insertIdx =
+          dir === -1
+            ? posFilter === "ALL" ? b[toTier].length : appendIndexForPos(b[toTier], p.pos)
+            : posFilter === "ALL" ? 0 : prependIndexForPos(b[toTier], p.pos);
+        return movePlayer(b, { tier, idx }, { tier: toTier, idx: insertIdx });
+      }
       const next = b.map((c) => [...c]);
       const arr = next[tier];
       [arr[idx], arr[target]] = [arr[target], arr[idx]];
@@ -404,8 +414,9 @@ export default function TierBoard({
         <span className="rt">owner only</span>
       </div>
       <p className="hint" style={{ marginBottom: 10 }}>
-        Drag a player up or down to reorder them, or past a tier band to
-        re-tier them — position rank (QB1, RB4, …) updates live from where a
+        Click the ▲▼ arrows on the left of a player (or drag him) to reorder
+        — an arrow at the edge of a tier moves him into the next tier, and « » jump a
+        whole tier. Position rank (QB1, RB4, …) updates live from where a
         player lands. Nothing is saved until you click Save (or press Ctrl+S);
         Ctrl+Z steps back. Rankings displays every position mixed together;
         filter to one position below to rank within just that position instead
@@ -774,6 +785,10 @@ export default function TierBoard({
                       dragRef.current = null;
                     }}
                   >
+                    <div className="rankarrows">
+                      <button title="Move up (past the top of a tier moves to the tier above)" aria-label={`Move ${p.name} up`} onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
+                      <button title="Move down (past the bottom of a tier moves to the tier below)" aria-label={`Move ${p.name} down`} onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
+                    </div>
                     <input
                       type="checkbox"
                       aria-label={`Select ${p.name}`}
@@ -794,8 +809,6 @@ export default function TierBoard({
                       </span>
                     )}
                     <div className="btnrow">
-                      <button className="mini" title="Move up" onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
-                      <button className="mini" title="Move down" onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
                       <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
                       <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
                       <button className="mini" title="Remove" onClick={() => removePlayer(ti, ai)}>✕</button>
