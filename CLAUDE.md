@@ -2813,3 +2813,13 @@ disallows crawling; the owner supplied the numbers themselves and made the call.
 - **Attribution**: a line under the table credits Flock Fantasy (flockfantasy.com) as the source of the Expert and Mason Dodd columns and states Fantis isn't affiliated.
 - Verified on the real page in the dev server against the live table: endpoint 200 with the cache header and 351 players, header and rows share 13 aligned columns, Expert sort ascending (1, 2, 3, 5, 5, 6), credit line rendered.
   `tsc` clean; only the pre-existing setState-in-effect lint error remains.
+
+### Public Rankings: default order is now the owner's ranking, not live ADP (2026-10; real bug reported by the owner — "how is this grouped? looks wrong, olave is 6?")
+
+**Supersedes** the "default order is live ADP / Tier view is opt-in" decision in the Public Rankings entry above. Each row mixed sources that disagreed: the list was sorted by live Sleeper ADP (Olave #5), while the position chip
+("WR 6"), the tier stripe (tier 2) came from the owner's board and Expert/Mason said 17 — the owner's board has him #15. The old comment justifying ADP order (tier-1 QBs crowding the top 10) referred to the *previous*
+position-grouped curated list; the tier board's order is now a true cross-position overall ranking (Gibbs, Bijan, Smith-Njigba, Walker, Chase…), so it should lead.
+- **`#` = the player's overall rank on the owner's board** (index in the curated order, 1–360), stable under search/position filters/other sorts. The old `#` was an ADP-derived rank that changed meaning.
+- **Default sort = the owner's order, best first, with banded tier headers** (S 10, A 14, B 17, C 30, D 34, E 44, F 22, G 189). Bands show whenever `sortBy === "rank"` and ascending; sorting by any other column (ADP, Pos,
+  Expert, Mason, Proj …) drops them. The separate "Tier view" chip is gone (it's the default now). ADP is back to being an ordinary sortable column ("vs ADP" is unchanged).
+- Verified on the real page: default top 12 matches the tier board, `#` strictly increasing 1…360, Olave reads `15 · WR 6 · Expert 17`, ADP sort still works and removes the bands. `tsc` clean; only the pre-existing setState-in-effect lint error.

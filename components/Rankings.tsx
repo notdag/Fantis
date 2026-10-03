@@ -72,9 +72,6 @@ export default function Rankings() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<string | null>(null);
   const [projMode, setProjMode] = useState<ProjMode>("season");
-  // Opt-in: group by Fantis' own tiers (curated order) with banded headers. Off by default because the
-  // default order is live ADP, where tiers are interleaved (see the sort note below).
-  const [tierView, setTierView] = useState(false);
 
   const idMaps = useSleeperIdMaps();
   const refRanks = usePublicRefRanks();
@@ -159,22 +156,6 @@ export default function Rankings() {
   // order can change with the active sort, but the real-rank number
   // shouldn't. Same real-ADP-first, curated-order-fallback logic as the
   // "rank" sort branch below.
-  const adpRank = useMemo(() => {
-    const withAdp: { name: string; adp: number }[] = [];
-    const withoutAdp: string[] = [];
-    for (const p of PLAYERS) {
-      const adp = live[p.name]?.adp;
-      if (adp != null) withAdp.push({ name: p.name, adp });
-      else withoutAdp.push(p.name);
-    }
-    withAdp.sort((a, b) => a.adp - b.adp);
-    withoutAdp.sort((a, b) => (PLAYER_ORDER.get(a) ?? 0) - (PLAYER_ORDER.get(b) ?? 0));
-    const map = new Map<string, number>();
-    let i = 1;
-    for (const { name } of withAdp) map.set(name, i++);
-    for (const name of withoutAdp) map.set(name, i++);
-    return map;
-  }, [PLAYERS, PLAYER_ORDER, live]);
 
   const seasonLive = useMemo(() => {
     const merged: Record<string, SeasonProjectionTotal | undefined> = {};
@@ -223,7 +204,6 @@ export default function Rankings() {
   }, [season]);
 
   const toggleSort = (key: SortKey) => {
-    setTierView(false);
     if (sortBy === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -239,22 +219,10 @@ export default function Rankings() {
     );
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
-      if (tierView) return (PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0);
       if (sortBy === "rank") {
-        // Real live ADP, same source as the ADP column/sort below — not the
-        // curated list's own array order, which groups tier-major then
-        // position-major (QB before RB/WR/TE alphabetically) rather than by
-        // real cross-position value. That grouping put tier-1 QBs ahead of
-        // every other tier-1 player regardless of real ADP, which is why
-        // QBs were showing up top-10 overall. Curated order is now only a
-        // tiebreak for the handful of players with no live ADP (deep
-        // rookies mostly), same convention as every other sort below.
-        const aAdp = live[a.name]?.adp;
-        const bAdp = live[b.name]?.adp;
-        if (aAdp != null && bAdp != null) return (aAdp - bAdp) * dir;
-        if (aAdp != null) return -1;
-        if (bAdp != null) return 1;
-        return (PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0);
+        // The owner's own overall ranking (the tier board's order — all positions mixed, tier by tier).
+        // Live ADP is its own sortable column below; it is NOT the master rank.
+        return ((PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0)) * dir;
       }
       if (sortBy === "pos") {
         const ai = POS_ORDER[a.pos] ?? 99;
@@ -294,8 +262,10 @@ export default function Rankings() {
       if (bv == null) return -1;
       return (av - bv) * dir;
     });
-  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode, tierView, refOf]);
+  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode, refOf]);
 
+  // Tier bands show whenever the list is in the owner's ranking order (best first).
+  const tierBands = sortBy === "rank" && sortDir === "asc";
   const tierCounts = useMemo(() => {
     const m = new Map<number, number>();
     for (const p of list) m.set(p.tier, (m.get(p.tier) ?? 0) + 1);
@@ -392,13 +362,6 @@ export default function Rankings() {
         )}
       </div>
       <div className="filters">
-        <button
-          className={`chip-filter ${tierView ? "on" : ""}`}
-          onClick={() => setTierView((v) => !v)}
-          title="Group players by Fantis' own tiers instead of live ADP order"
-        >
-          Tier view
-        </button>
         {POSITIONS.map((p) => (
           <button
             key={p}
@@ -469,7 +432,7 @@ export default function Rankings() {
             const seasonStat = seasonLive[p.name];
             const projValue = projMode === "season" ? seasonStat?.pts ?? null : stat?.proj ?? null;
             const tdTotal = seasonStat ? seasonStat.passTd + seasonStat.rushTd + seasonStat.recTd : null;
-            const band = tierView && (i === 0 || list[i - 1].tier !== p.tier);
+            const band = tierBands && (i === 0 || list[i - 1].tier !== p.tier);
             return (
               <Fragment key={p.name}>
               {band && (
@@ -485,7 +448,7 @@ export default function Rankings() {
                 style={{ borderLeftColor: TIER_COLOR[p.tier - 1] || "var(--oth)" }}
                 title={`Tier ${TIER_LABELS[p.tier - 1] ?? p.tier}`}
               >
-                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{adpRank.get(p.name) ?? i + 1}</div>
+                <div className={`cell rank ${i < 3 ? "top" : ""}`}>{(PLAYER_ORDER.get(p.name) ?? i) + 1}</div>
                 <div className="cell team">
                   <Headshot id={idMaps ? sleeperId(idMaps, p) ?? null : null} pos={p.pos} size={32} />
                   <span className="tname">{p.name}</span>
