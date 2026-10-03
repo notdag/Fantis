@@ -2757,3 +2757,11 @@ after `migrate status` showed it as the only pending migration). `GET/PUT/DELETE
 board changes). **One-time migration of earlier uploads**: if the DB is empty and this browser still has the old localStorage data, the board copies it into the database and clears the local copy.
 If the database write fails, the board says so and shows the ranks for that visit only (never silently "saved"). `lib/refRanks.ts` is now types + API helpers (the localStorage store is gone).
 Round-trip checked against the real table with a probe row (written, read back through `refRanksFromRows`, deleted; table left empty). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Tier board: Mine / Expert / Mason as real columns with agreement edges (2026-10; real feedback from the owner — "where do the ranks show up … it should be a column next to mine", with a reference screenshot)
+
+The reference ranks were tiny `E`/`M` text between the team and projected points and only rendered once data existed — easy to miss. Each row now has three boxed, labelled columns right after the headshot:
+**Mine** (overall rank on your board), **Expert** and **Mason** (the imported Flock ranks). They are always shown ("—" until a CSV is loaded) so you can see where they live, and a line above the board says
+how many players are loaded (or that none are yet and to use Import list → Upload CSV). Following the owner's screenshot, each Expert/Mason cell has a coloured right edge: **green** when that rank is within N spots of
+yours, **red** when it differs by N or more (N defaults to 15, editable above the list); no edge when the player has no rank in that source. Compares against your overall `#`, so it assumes the CSV's Expert/Mason
+numbers are overall ranks (if they were positional every row would read red — raise N or tell me). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).

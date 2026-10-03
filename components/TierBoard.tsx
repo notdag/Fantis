@@ -514,6 +514,8 @@ export default function TierBoard({
   const [importTiers, setImportTiers] = useState(false);
   const [importSaveRefs, setImportSaveRefs] = useState(true);
   const [refRanks, setRefRanks] = useState<RefRanks>(initialRefRanks);
+  // How many spots apart (vs. my overall rank) before a reference rank's edge turns red.
+  const [refFlagDiff, setRefFlagDiff] = useState(15);
   // One-time: ranks uploaded by an earlier version were kept only in this
   // browser. If the database has none yet, move them over so nothing is lost.
   useEffect(() => {
@@ -1139,13 +1141,31 @@ export default function TierBoard({
         </button>
       </div>
 
-      {refRanks.count > 0 && (
-        <p className="hint" style={{ margin: "0 0 8px" }}>
-          Showing <b>E</b> (Expert) and <b>M</b> (Mason) reference ranks for {refRanks.count} players, imported{" "}
-          {refRanks.at ? new Date(refRanks.at).toLocaleDateString() : ""} (saved to your account — shows on every device).{" "}
-          <button type="button" className="link" onClick={clearRefs}>Clear</button>
-        </p>
-      )}
+      <p className="hint" style={{ margin: "0 0 8px" }}>
+        Each row shows <b>Mine</b> (your overall rank), then <b>Expert</b> and <b>Mason</b> (the Flock ranks from your imported CSV).{" "}
+        {refRanks.count > 0 ? (
+          <>
+            Loaded for {refRanks.count} players
+            {refRanks.at ? `, imported ${new Date(refRanks.at).toLocaleDateString()}` : ""} — saved to your account, shows on every device.{" "}
+            <button type="button" className="link" onClick={clearRefs}>Clear</button>{" · "}
+            Edge is <b style={{ color: "var(--red)" }}>red</b> when they differ from you by{" "}
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={refFlagDiff}
+              onChange={(e) => setRefFlagDiff(Math.max(1, Number(e.target.value) || 1))}
+              className="input"
+              style={{ width: 56, padding: "2px 6px", display: "inline-block" }}
+            />{" "}
+            or more spots, <b style={{ color: "var(--mint)" }}>green</b> when close.
+          </>
+        ) : (
+          <b style={{ color: "var(--amber)" }}>
+            None loaded yet — click Import list → Upload CSV and the columns fill in.
+          </b>
+        )}
+      </p>
       <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <input
           className="input"
@@ -1290,7 +1310,28 @@ export default function TierBoard({
                       style={{ flex: "none", margin: 0 }}
                     />
                     <Headshot id={info?.id ?? null} pos={p.pos} />
-                    <span className="ovr" title="Overall rank on your board">#{overallByName[p.name]}</span>
+                    <span className="rc" title="Overall rank on your board">
+                      <small>Mine</small>
+                      <b>{overallByName[p.name]}</b>
+                    </span>
+                    {(() => {
+                      const r = refRanks.ranks[refRankKey(looseKey(p.name), p.pos)];
+                      const mine = overallByName[p.name];
+                      // green = within the threshold of MY rank, red = they disagree by that many spots or more
+                      const edge = (v?: number) => (v == null ? "transparent" : Math.abs(v - mine) >= refFlagDiff ? "var(--red)" : "var(--mint)");
+                      return (
+                        <>
+                          <span className="rc ref" title="Expert rank (Flock)" style={{ borderRightColor: edge(r?.expert) }}>
+                            <small>Expert</small>
+                            <b>{r?.expert ?? "—"}</b>
+                          </span>
+                          <span className="rc ref" title="Mason Dodd rank (Flock)" style={{ borderRightColor: edge(r?.mason) }}>
+                            <small>Mason</small>
+                            <b>{r?.mason ?? "—"}</b>
+                          </span>
+                        </>
+                      );
+                    })()}
                     <span className="pos" style={posChipStyle(p.pos)}>
                       {p.pos}
                       {rankByName[p.name]}
@@ -1301,12 +1342,6 @@ export default function TierBoard({
                     {info && info.leagues > 0 && (
                       <span className="plteam" title={`On ${info.leagues} of your ${exposureLeagues} leagues`}>
                         ×{info.leagues}
-                      </span>
-                    )}
-                    {refRanks.count > 0 && (
-                      <span className="refranks" title="Reference ranks from your imported CSV">
-                        <span title="Expert rank (Flock)">E {refRanks.ranks[refRankKey(looseKey(p.name), p.pos)]?.expert ?? "—"}</span>
-                        <span title="Mason Dodd rank (Flock)">M {refRanks.ranks[refRankKey(looseKey(p.name), p.pos)]?.mason ?? "—"}</span>
                       </span>
                     )}
                     <span

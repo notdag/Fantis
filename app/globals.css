@@ -342,7 +342,11 @@ h1.big span{color:var(--amber)}
 .tierrow .rankarrows button:hover{color:var(--ink);background:var(--amber);border-color:var(--amber)}
 .tierrow .rankarrows button:active{transform:translateY(1px)}
 .tierrow .projpts{flex:none;min-width:52px;text-align:right;font-size:15px;font-weight:650;color:var(--amber);font-variant-numeric:tabular-nums}
-.tierrow .refranks{display:flex;flex-direction:column;gap:1px;flex:none;min-width:46px;font-size:12px;line-height:1.25;color:var(--muted);font-variant-numeric:tabular-nums}
+.tierrow .rc{flex:none;width:54px;display:flex;flex-direction:column;align-items:center;line-height:1.15;font-variant-numeric:tabular-nums}
+.tierrow .rc small{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
+.tierrow .rc b{font-size:16px;font-weight:700;color:var(--bone)}
+.tierrow .rc.ref{border:1px solid var(--line);border-right:4px solid transparent;border-radius:6px;padding:3px 0;background:var(--ink)}
+.tierrow .rc.ref b{color:var(--bone)}
 .tierrow .ovr{flex:none;min-width:34px;text-align:right;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
 
 /* league view — per-team, per-position strength rankings. Every team shows
