@@ -869,6 +869,20 @@ export default function TierBoard({
               {table.columns.mason && ", Mason Rank"}.
             </p>
           )}
+          {table &&
+            (["expert", "mason"] as const).map((k) => {
+              const st = table.sources[k];
+              if (!st) return null;
+              const bad = st.blank + st.unreadable > 0;
+              return (
+                <p key={k} className="hint" style={{ margin: "4px 0 0", color: bad ? "var(--amber)" : "var(--mint)" }}>
+                  <b>{k === "expert" ? "Expert" : "Mason"}</b> ← CSV column &ldquo;{st.header}&rdquo;: {st.numeric} ranks read
+                  {st.blank > 0 && `, ${st.blank} blank`}
+                  {st.unreadable > 0 && `, ${st.unreadable} not readable as a number (e.g. ${st.examples.map((e) => `"${e}"`).join(", ")})`}
+                  {st.alternatives.length > 0 && ` · other matching columns ignored: ${st.alternatives.join("; ")}`}
+                </p>
+              );
+            })}
           {importMatches.length > 0 && (
             <>
               <p className="hint" style={{ margin: "8px 0 4px" }}>
@@ -1321,13 +1335,13 @@ export default function TierBoard({
                       const edge = (v?: number) => (v == null ? "transparent" : Math.abs(v - mine) >= refFlagDiff ? "var(--red)" : "var(--mint)");
                       return (
                         <>
-                          <span className="rc ref" title="Expert rank (Flock)" style={{ borderRightColor: edge(r?.expert) }}>
+                          <span className={`rc ref expert${r?.expert == null ? " none" : ""}`} title={r?.expert == null ? "No Expert rank for this player in your CSV" : "Expert rank (Flock)"} style={{ borderRightColor: edge(r?.expert) }}>
                             <small>Expert</small>
-                            <b>{r?.expert ?? "—"}</b>
+                            <b>{r?.expert ?? "n/a"}</b>
                           </span>
-                          <span className="rc ref" title="Mason Dodd rank (Flock)" style={{ borderRightColor: edge(r?.mason) }}>
+                          <span className={`rc ref mason${r?.mason == null ? " none" : ""}`} title={r?.mason == null ? "No Mason rank for this player in your CSV" : "Mason Dodd rank (Flock)"} style={{ borderRightColor: edge(r?.mason) }}>
                             <small>Mason</small>
-                            <b>{r?.mason ?? "—"}</b>
+                            <b>{r?.mason ?? "n/a"}</b>
                           </span>
                         </>
                       );

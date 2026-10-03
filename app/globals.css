@@ -342,11 +342,16 @@ h1.big span{color:var(--amber)}
 .tierrow .rankarrows button:hover{color:var(--ink);background:var(--amber);border-color:var(--amber)}
 .tierrow .rankarrows button:active{transform:translateY(1px)}
 .tierrow .projpts{flex:none;min-width:52px;text-align:right;font-size:15px;font-weight:650;color:var(--amber);font-variant-numeric:tabular-nums}
-.tierrow .rc{flex:none;width:54px;display:flex;flex-direction:column;align-items:center;line-height:1.15;font-variant-numeric:tabular-nums}
-.tierrow .rc small{font-size:9.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim)}
-.tierrow .rc b{font-size:16px;font-weight:700;color:var(--bone)}
-.tierrow .rc.ref{border:1px solid var(--line);border-right:4px solid transparent;border-radius:6px;padding:3px 0;background:var(--ink)}
-.tierrow .rc.ref b{color:var(--bone)}
+.tierrow .rc{flex:none;width:60px;display:flex;flex-direction:column;align-items:center;line-height:1.15;font-variant-numeric:tabular-nums}
+.tierrow .rc small{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.tierrow .rc b{font-size:19px;font-weight:800;color:var(--bone)}
+.tierrow .rc.ref{border:1px solid var(--line);border-right:5px solid transparent;border-radius:7px;padding:3px 0;background:var(--ink)}
+.tierrow .rc.expert{background:color-mix(in srgb,var(--amber) 14%,var(--ink));border-color:color-mix(in srgb,var(--amber) 45%,var(--line))}
+.tierrow .rc.expert small,.tierrow .rc.expert b{color:var(--amber)}
+.tierrow .rc.mason{background:color-mix(in srgb,#35B6F0 15%,var(--ink));border-color:color-mix(in srgb,#35B6F0 45%,var(--line))}
+.tierrow .rc.mason small,.tierrow .rc.mason b{color:#6CCBF5}
+.tierrow .rc.ref.none{background:transparent;border-style:dashed;opacity:.55}
+.tierrow .rc.ref.none b{font-size:13px;font-weight:500;color:var(--dim)}
 .tierrow .ovr{flex:none;min-width:34px;text-align:right;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums}
 
 /* league view — per-team, per-position strength rankings. Every team shows

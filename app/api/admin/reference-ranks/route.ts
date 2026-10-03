@@ -19,8 +19,10 @@ interface Row {
   mason: number | null;
 }
 
+// Sources like Flock publish decimal ranks (12.5); the column is a whole number, so
+// round to the nearest rank instead of discarding the value.
 const rankOrNull = (v: unknown): number | null =>
-  typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 5000 ? v : null;
+  typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 5000 ? Math.round(v) : null;
 
 export async function GET() {
   if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });

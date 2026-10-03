@@ -334,9 +334,18 @@ export interface TableRow {
   expert?: number;
   mason?: number;
 }
+export interface ColumnStat {
+  header: string; // the CSV header actually used
+  numeric: number; // cells that parsed to a rank
+  blank: number; // empty cells
+  unreadable: number; // non-empty cells that are not a number
+  examples: string[]; // a few unreadable values, verbatim
+  alternatives: string[]; // other headers that also looked like this source (the best-populated one was used)
+}
 export interface ParsedTable {
   columns: { rank: boolean; team: boolean; pos: boolean; tier: boolean; expert: boolean; mason: boolean };
   rows: TableRow[];
+  sources: { expert?: ColumnStat; mason?: ColumnStat };
 }
 
 function splitDelimited(line: string, delim: string): string[] {
@@ -369,6 +378,18 @@ const toNum = (v: string | undefined): number | undefined => {
   const n = Number(v.replace(/^#/, "").trim());
   return v.trim() !== "" && Number.isFinite(n) ? n : undefined;
 };
+// Rank cells as spreadsheets write them: "12", "12.0", "#12", "T-12" / "T12" (tied),
+// "12T", "12*", "12 (3)" (first number wins). Anything else (N/A, a name, "RB2") is
+// NOT guessed at — it comes back undefined and is counted as unreadable.
+export const toRank = (v: string | undefined): number | undefined => {
+  if (v == null) return undefined;
+  let t = v.trim();
+  if (!t) return undefined;
+  t = t.replace(/^#/, "").replace(/^t[-\s]?(?=\d)/i, "").replace(/\s*\(.*\)\s*$/, "").replace(/[*†‡]+$/, "").replace(/(?<=\d)t$/i, "").trim();
+  if (!/^\d+(\.\d+)?$/.test(t)) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
+};
 const toTier = (v: string | undefined): number | undefined => {
   if (!v) return undefined;
   const t = v.trim();
@@ -396,8 +417,32 @@ export function parseRankTable(raw: string): ParsedTable | null {
     const head = splitDelimited(lines[h], delim).map((c) => c.replace(/^\uFEFF/, "").toLowerCase().trim());
     const find = (test: (x: string) => boolean) => head.findIndex(test);
     // Order matters: "Flock Mason Rank" also contains "flock"/"rank".
-    const mason = find((x) => x.includes("mason"));
-    const expert = find((x) => (x.includes("expert") || x.includes("flock")) && !x.includes("mason"));
+    const candidates = (test: (x: string) => boolean) => head.map((x, i) => (test(x) ? i : -1)).filter((i) => i >= 0);
+    const masonCands = candidates((x) => x.includes("mason"));
+    const expertCands = candidates((x) => (x.includes("expert") || x.includes("flock")) && !x.includes("mason"));
+    const dataCells = lines.slice(h + 1).map((l) => splitDelimited(l, delim));
+    // If several headers look like the same source, use the one with the most real
+    // numbers in it (a stray sparse "Expert Tier" column must not win by being first).
+    const best = (cands: number[]) =>
+      cands.length === 0
+        ? -1
+        : cands.reduce((a, b) => (dataCells.filter((c) => toRank(c[b]) != null).length > dataCells.filter((c) => toRank(c[a]) != null).length ? b : a));
+    const mason = best(masonCands);
+    const expert = best(expertCands);
+    const statFor = (idx: number, cands: number[]): ColumnStat | undefined => {
+      if (idx < 0) return undefined;
+      const st: ColumnStat = { header: lines[h] ? splitDelimited(lines[h], delim)[idx].replace(/^\uFEFF/, "") : "", numeric: 0, blank: 0, unreadable: 0, examples: [], alternatives: cands.filter((i) => i !== idx).map((i) => splitDelimited(lines[h], delim)[i]) };
+      for (const c of dataCells) {
+        if (!c[0] && !c.some(Boolean)) continue;
+        const raw = c[idx]?.trim() ?? "";
+        if (!raw) st.blank++;
+        else if (toRank(raw) == null) {
+          st.unreadable++;
+          if (st.examples.length < 4 && !st.examples.includes(raw)) st.examples.push(raw);
+        } else st.numeric++;
+      }
+      return st;
+    };
     const name = find((x) => x === "name" || x === "player" || x === "player name" || x === "full name");
     const rank = find((x) => x === "rank" || x === "#" || x === "my rank" || x === "overall" || x === "overall rank");
     const team = find((x) => x === "team");
@@ -417,13 +462,14 @@ export function parseRankTable(raw: string): ParsedTable | null {
         team: team >= 0 ? c[team]?.trim() || undefined : undefined,
         pos: pos >= 0 ? c[pos]?.trim().toUpperCase() || undefined : undefined,
         tier: tier >= 0 ? toTier(c[tier]) : undefined,
-        expert: expert >= 0 ? toNum(c[expert]) : undefined,
-        mason: mason >= 0 ? toNum(c[mason]) : undefined,
+        expert: expert >= 0 ? toRank(c[expert]) : undefined,
+        mason: mason >= 0 ? toRank(c[mason]) : undefined,
       });
     }
     return {
       columns: { rank: rank >= 0, team: team >= 0, pos: pos >= 0, tier: tier >= 0, expert: expert >= 0, mason: mason >= 0 },
       rows,
+      sources: { expert: statFor(expert, expertCands), mason: statFor(mason, masonCands) },
     };
   }
   return null;

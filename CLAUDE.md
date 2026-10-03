@@ -2765,3 +2765,15 @@ The reference ranks were tiny `E`/`M` text between the team and projected points
 how many players are loaded (or that none are yet and to use Import list → Upload CSV). Following the owner's screenshot, each Expert/Mason cell has a coloured right edge: **green** when that rank is within N spots of
 yours, **red** when it differs by N or more (N defaults to 15, editable above the list); no edge when the player has no rank in that source. Compares against your overall `#`, so it assumes the CSV's Expert/Mason
 numbers are overall ranks (if they were positional every row would read red — raise N or tell me). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Reference ranks: decimal Expert ranks were being dropped; columns made legible (2026-10; real bug reported by the owner — "i see expert ranks up to 200, just they are in decimals, round to nearest")
+
+Only 103 of 327 saved players had an Expert rank (268 had Mason). Root cause: the CSV's Expert ranks are **decimals** (e.g. 12.5). The parser accepted them, but `PUT /api/admin/reference-ranks` required whole numbers
+(`Number.isInteger`) and silently nulled anything else — and a row with neither source was discarded. Mason's whole numbers survived, which is why only Expert looked empty.
+- **Fix**: `toRank` (`lib/rankingsHelpers.ts`) rounds to the nearest whole rank (12.5 → 13, 12.4 → 12), also accepts `#12`, `T-12`/`T12`/`12T` (ties), `12*`, `12 (3)`; and the API now rounds (`Math.round`) instead of rejecting.
+  Things that are not numbers (`N/A`, blank, `RB2`, `-`) are still NOT guessed.
+- **No more silent drops**: the import panel now reports, per source, which CSV column was used and how many cells were read / blank / unreadable (with examples). If several headers look like the same source it uses the one
+  with the most real numbers and lists the ignored look-alikes.
+- **Columns made distinguishable**: Mine / Expert / Mason are bigger (19px bold), Expert has an amber tint, Mason a blue tint, a missing rank shows a dashed, faded "n/a" cell (hover: "No Expert rank for this player in your CSV").
+- The rows already saved have null Expert values and cannot be recovered — **re-upload the CSV once** to refill them (an upload replaces the saved set).
+- Tests: `npx tsx scripts/testRankTable.ts` (39). Real-data check: the DB showed 327 saved rows, 103 Expert / 268 Mason, matching the diagnosis. `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
