@@ -1,5 +1,5 @@
 // Table (header row) rank import. Run: npx tsx scripts/testRankTable.ts
-import { buildSleeperIndex, matchTableRows, parseRankTable } from "../lib/rankingsHelpers";
+import { buildSleeperIndex, matchPastedList, matchTableRows, parseRankTable } from "../lib/rankingsHelpers";
 import type { PlayerMap } from "../lib/types";
 
 let pass = 0;
@@ -57,6 +57,37 @@ ok(josh[1].status === "add" && josh[1].pos === "TE", "…and the TE one");
 ok(matchTableRows([{ name: "Josh Allen" }], [], index)[0].status === "ambiguous", "without a Position column the same name is ambiguous");
 ok(matchTableRows([{ name: "Josh Allen", pos: "RB" }], [], index)[0].status === "unmatched", "a position that contradicts every candidate is reported, not forced");
 ok(matchTableRows([{ name: "Ja'Marr Chase" }, { name: "ja'marr chase" }], board, index)[1].status === "unmatched", "duplicate row reported");
+
+// ── hardening: what spreadsheets really export ──
+const bom = "﻿" + csv.replace(/,/g, ";");
+const bt = parseRankTable(bom)!;
+ok(!!bt && bt.rows.length === 2 && bt.columns.expert, "BOM + semicolon delimiter parses");
+const titled = "Flock Rankings export\nupdated Oct 2\n" + tsv;
+const tt = parseRankTable(titled)!;
+ok(!!tt && tt.rows.length === 5 && tt.columns.mason, "title lines above the header are skipped");
+ok(parseRankTable("﻿Name,Team\nA B,KC") === null, "Name+Team only (no rank/tier/expert column) is not treated as a rank table");
+
+// ── first-name variants (Kenneth → Kenny) ──
+const pm2: PlayerMap = {
+  "11": { n: "Kenny Gainwell", p: "RB", t: "TB" },
+  "12": { n: "Michael Pittman Jr.", p: "WR", t: "IND" },
+  "13": { n: "Josh Allen", p: "QB", t: "BUF" },
+  "14": { n: "Joshua Allen", p: "TE", t: "KC" },
+};
+const ix2 = buildSleeperIndex(pm2);
+const b2 = [{ name: "Kenny Gainwell", pos: "RB", team: "TB" }];
+const g = matchTableRows([{ name: "Kenneth Gainwell", pos: "RB", expert: 40 }], b2, ix2)[0];
+ok(g.status === "board" && g.name === "Kenny Gainwell" && g.fuzzy === true, "Kenneth Gainwell → board Kenny Gainwell", JSON.stringify(g));
+const g2 = matchTableRows([{ name: "Kenneth Gainwell" }], [], ix2)[0];
+ok(g2.status === "add" && g2.name === "Kenny Gainwell" && g2.fuzzy === true, "…and from Sleeper when not on the board");
+const mp = matchTableRows([{ name: "Mike Pittman", pos: "WR" }], [], ix2)[0];
+ok(mp.status === "add" && mp.name === "Michael Pittman Jr.", "Mike Pittman → Michael Pittman Jr.");
+const ja = matchTableRows([{ name: "Josh Allen" }], [], ix2)[0];
+ok(ja.status === "add" && ja.pos === "QB", "an exact name match wins over the variant fallback (Josh Allen → the QB, not Joshua Allen the TE)", JSON.stringify(ja));
+const ja2 = matchTableRows([{ name: "Joshua Allen", pos: "QB" }], [], ix2)[0];
+ok(ja2.status === "add" && ja2.pos === "QB", "variant + Position picks the right namesake", JSON.stringify(ja2));
+const gl = matchPastedList("1. Kenneth Gainwell", b2, ix2)[0];
+ok(gl.status === "board" && gl.fuzzy, "plain list gets the same variant fallback");
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

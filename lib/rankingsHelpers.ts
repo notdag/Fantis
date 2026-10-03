@@ -47,6 +47,30 @@ export function looseKey(n: string): string {
     .trim();
 }
 
+// Common first-name variants, so "Kenneth Gainwell" finds Sleeper's "Kenny
+// Gainwell" (and Mike/Michael, Josh/Joshua …). Used ONLY as a fallback after an
+// exact name match fails, and a fuzzy match is accepted only when it is unique
+// (and the position agrees when one is given) — otherwise it is left unmatched.
+const NICK_GROUPS = [
+  ["kenneth", "kenny", "ken"], ["michael", "mike"], ["joshua", "josh"], ["matthew", "matt"],
+  ["christopher", "chris"], ["anthony", "tony"], ["william", "will", "bill", "billy"],
+  ["robert", "rob", "bob", "bobby"], ["richard", "rich", "rick", "ricky"], ["jonathan", "jon", "jonny"],
+  ["nicholas", "nick"], ["alexander", "alex"], ["benjamin", "ben"], ["daniel", "dan", "danny"],
+  ["joseph", "joe", "joey"], ["thomas", "tom", "tommy"], ["timothy", "tim"], ["zachary", "zach", "zack"],
+  ["jeffrey", "jeff"], ["samuel", "sam"], ["theodore", "theo", "ted"], ["andrew", "andy", "drew"],
+  ["gabriel", "gabe"], ["cameron", "cam"], ["jerome", "jerry"], ["gregory", "greg"], ["patrick", "pat"],
+  ["david", "dave"], ["james", "jim", "jimmy"], ["donald", "don"], ["charles", "charlie", "chuck"],
+  ["edward", "ed", "eddie"], ["frederick", "fred", "freddie"], ["lawrence", "larry"], ["raymond", "ray"],
+];
+const NICK_ROOT = new Map<string, string>();
+for (const g of NICK_GROUPS) for (const n of g) NICK_ROOT.set(n, g[0]);
+
+export function fuzzyKey(n: string): string {
+  const parts = looseKey(n).split(" ");
+  if (parts.length < 2) return parts.join(" ");
+  return [NICK_ROOT.get(parts[0]) ?? parts[0], ...parts.slice(1)].join(" ");
+}
+
 // name|pos → Sleeper entry, with the same suffix-stripped fallback the rest of
 // the app uses ("Brian Thomas" vs "Brian Thomas Jr."). When Sleeper's ~11k
 // dump holds several entries with one name+position (retired/inactive
@@ -73,7 +97,17 @@ export function buildSleeperIndex(pmap: PlayerMap) {
     const k = looseKey(e.n);
     (byLooseName.get(k) ?? byLooseName.set(k, []).get(k)!).push({ id, e });
   }
+  const byFuzzyName = new Map<string, { id: string; e: PlayerMapEntry }[]>();
+  for (const id in pmap) {
+    const e = pmap[id];
+    if (!e.t || !(RANKABLE_POSITIONS as readonly string[]).includes(e.p)) continue;
+    const k = fuzzyKey(e.n);
+    (byFuzzyName.get(k) ?? byFuzzyName.set(k, []).get(k)!).push({ id, e });
+  }
   return {
+    candidatesByFuzzyName(name: string): { id: string; e: PlayerMapEntry }[] {
+      return byFuzzyName.get(fuzzyKey(name)) ?? [];
+    },
     candidatesByName(name: string): { id: string; e: PlayerMapEntry }[] {
       return byLooseName.get(looseKey(name)) ?? [];
     },
@@ -215,6 +249,7 @@ export interface PastedMatch {
   pos?: string;
   team?: string;
   note?: string;
+  fuzzy?: boolean; // matched via a first-name variant (Kenneth → Kenny)
 }
 
 const LEADING_RANK = /^\s*(?:#\s*)?\d{1,4}\s*(?:[.):\-–—]\s*|\s+(?=[A-Za-z]))/;
@@ -249,6 +284,12 @@ export function matchPastedList(
     const c = index.candidatesByName(candidate);
     if (c.length === 1) return { raw: "", status: "add", name: c[0].e.n, pos: c[0].e.p, team: c[0].e.t };
     if (c.length > 1) return { raw: "", status: "ambiguous", note: c.map((x) => `${x.e.p} ${x.e.t}`).join(" or ") };
+    // Fallback: first-name variants (unique only).
+    const fk = fuzzyKey(candidate);
+    const fb = board.filter((p) => fuzzyKey(p.name) === fk);
+    if (fb.length === 1) return { raw: "", status: "board", name: fb[0].name, pos: fb[0].pos, fuzzy: true, note: `matched as ${fb[0].name}` };
+    const fc = index.candidatesByFuzzyName(candidate);
+    if (fb.length === 0 && fc.length === 1) return { raw: "", status: "add", name: fc[0].e.n, pos: fc[0].e.p, team: fc[0].e.t, fuzzy: true, note: `matched as ${fc[0].e.n}` };
     return null;
   };
 
@@ -300,6 +341,7 @@ export interface ParsedTable {
 
 function splitDelimited(line: string, delim: string): string[] {
   if (delim === "\t") return line.split("\t").map((c) => c.trim());
+  const sep = delim === ";" ? ";" : ",";
   const out: string[] = [];
   let cur = "";
   let q = false;
@@ -312,7 +354,7 @@ function splitDelimited(line: string, delim: string): string[] {
       } else if (ch === '"') q = false;
       else cur += ch;
     } else if (ch === '"') q = true;
-    else if (ch === ",") {
+    else if (ch === sep) {
       out.push(cur.trim());
       cur = "";
     } else cur += ch;
@@ -336,43 +378,63 @@ const toTier = (v: string | undefined): number | undefined => {
   return i >= 0 && t.length === 1 ? i + 1 : undefined;
 };
 
-// Returns null when the first line isn't a recognisable header (so the caller
-// falls back to the plain name-list parser).
-export function parseRankTable(text: string): ParsedTable | null {
+// Tolerates what spreadsheets actually export: a UTF-8 BOM, tab / comma /
+// semicolon delimiters, quoted cells, and a few title lines above the header.
+// Returns null when no line in the first few is a header with a Name column
+// (so the caller falls back to the plain name-list parser).
+export function parseRankTable(raw: string): ParsedTable | null {
+  const text = raw.replace(/^\uFEFF/, "");
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return null;
-  const delim = lines[0].includes("\t") ? "\t" : ",";
-  const head = splitDelimited(lines[0], delim).map((h) => h.toLowerCase().trim());
-  const find = (test: (h: string) => boolean) => head.findIndex(test);
-  // Order matters: "Flock Mason Rank" also contains "flock"/"rank".
-  const mason = find((h) => h.includes("mason"));
-  const expert = find((h, ) => (h.includes("expert") || h.includes("flock")) && !h.includes("mason"));
-  const name = find((h) => h === "name" || h === "player" || h === "player name");
-  const rank = find((h) => h === "rank" || h === "#" || h === "my rank" || h === "overall");
-  const team = find((h) => h === "team");
-  const pos = find((h) => h === "pos" || h === "position");
-  const tier = find((h) => h === "tier");
-  if (name < 0) return null;
-
-  const rows: TableRow[] = [];
-  for (const line of lines.slice(1)) {
-    const c = splitDelimited(line, delim);
-    const nm = c[name]?.trim();
-    if (!nm) continue;
-    rows.push({
-      name: nm,
-      rank: rank >= 0 ? toNum(c[rank]) : undefined,
-      team: team >= 0 ? c[team]?.trim() || undefined : undefined,
-      pos: pos >= 0 ? c[pos]?.trim().toUpperCase() || undefined : undefined,
-      tier: tier >= 0 ? toTier(c[tier]) : undefined,
-      expert: expert >= 0 ? toNum(c[expert]) : undefined,
-      mason: mason >= 0 ? toNum(c[mason]) : undefined,
-    });
-  }
-  return {
-    columns: { rank: rank >= 0, team: team >= 0, pos: pos >= 0, tier: tier >= 0, expert: expert >= 0, mason: mason >= 0 },
-    rows,
+  const pickDelim = (l: string) => {
+    const counts: [string, number][] = [["\t", l.split("\t").length], [",", l.split(",").length], [";", l.split(";").length]];
+    counts.sort((x, y) => y[1] - x[1]);
+    return counts[0][0];
   };
+  for (let h = 0; h < Math.min(6, lines.length - 1); h++) {
+    const delim = pickDelim(lines[h]);
+    const head = splitDelimited(lines[h], delim).map((c) => c.replace(/^\uFEFF/, "").toLowerCase().trim());
+    const find = (test: (x: string) => boolean) => head.findIndex(test);
+    // Order matters: "Flock Mason Rank" also contains "flock"/"rank".
+    const mason = find((x) => x.includes("mason"));
+    const expert = find((x) => (x.includes("expert") || x.includes("flock")) && !x.includes("mason"));
+    const name = find((x) => x === "name" || x === "player" || x === "player name" || x === "full name");
+    const rank = find((x) => x === "rank" || x === "#" || x === "my rank" || x === "overall" || x === "overall rank");
+    const team = find((x) => x === "team");
+    const pos = find((x) => x === "pos" || x === "position");
+    const tier = find((x) => x === "tier");
+    // A real rank table has at least one rank-type column; Name+Team alone is just a roster list.
+    if (name < 0 || [rank, tier, expert, mason].every((i) => i < 0)) continue;
+
+    const rows: TableRow[] = [];
+    for (const line of lines.slice(h + 1)) {
+      const c = splitDelimited(line, delim);
+      const nm = c[name]?.trim();
+      if (!nm) continue;
+      rows.push({
+        name: nm,
+        rank: rank >= 0 ? toNum(c[rank]) : undefined,
+        team: team >= 0 ? c[team]?.trim() || undefined : undefined,
+        pos: pos >= 0 ? c[pos]?.trim().toUpperCase() || undefined : undefined,
+        tier: tier >= 0 ? toTier(c[tier]) : undefined,
+        expert: expert >= 0 ? toNum(c[expert]) : undefined,
+        mason: mason >= 0 ? toNum(c[mason]) : undefined,
+      });
+    }
+    return {
+      columns: { rank: rank >= 0, team: team >= 0, pos: pos >= 0, tier: tier >= 0, expert: expert >= 0, mason: mason >= 0 },
+      rows,
+    };
+  }
+  return null;
+}
+
+// What the first line looks like, for an honest "couldn't find a Name column" message.
+export function describeFirstLine(raw: string): string[] {
+  const line = raw.replace(/^\uFEFF/, "").split(/\r?\n/).find((l) => l.trim());
+  if (!line) return [];
+  const delim = line.includes("\t") ? "\t" : line.split(";").length > line.split(",").length ? ";" : ",";
+  return splitDelimited(line, delim).filter(Boolean).slice(0, 12);
 }
 
 export interface TableMatch extends PastedMatch {
@@ -400,7 +462,14 @@ export function matchTableRows(
       const c = index.candidatesByName(row.name).filter((x) => !wantPos || x.e.p === wantPos);
       if (c.length === 1) m = { raw: row.name, status: "add", name: c[0].e.n, pos: c[0].e.p, team: c[0].e.t };
       else if (c.length > 1) m = { raw: row.name, status: "ambiguous", note: c.map((x) => `${x.e.p} ${x.e.t}`).join(" or ") };
-      else m = { raw: row.name, status: "unmatched", note: "no player with that name" };
+      else {
+        const fk = fuzzyKey(row.name);
+        const fb = board.filter((p) => fuzzyKey(p.name) === fk && (!wantPos || p.pos === wantPos));
+        const fc = index.candidatesByFuzzyName(row.name).filter((x) => !wantPos || x.e.p === wantPos);
+        if (fb.length === 1) m = { raw: row.name, status: "board", name: fb[0].name, pos: fb[0].pos, fuzzy: true, note: `matched as ${fb[0].name}` };
+        else if (fb.length === 0 && fc.length === 1) m = { raw: row.name, status: "add", name: fc[0].e.n, pos: fc[0].e.p, team: fc[0].e.t, fuzzy: true, note: `matched as ${fc[0].e.n}` };
+        else m = { raw: row.name, status: "unmatched", note: "no player with that name" };
+      }
     }
     // Keyed on name+position: the QB and TE named Josh Allen are two players.
     const key = m.name ? `${looseKey(m.name)}|${m.pos ?? ""}` : "";

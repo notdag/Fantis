@@ -20,6 +20,7 @@ import {
   isInjured,
   looseKey,
   matchPastedList,
+  describeFirstLine,
   matchTableRows,
   parseRankTable,
   parseHistory,
@@ -521,6 +522,19 @@ export default function TierBoard({
     }
     return n;
   }, [table, importMatches, flat]);
+  // Saves Expert / Mason reference ranks for every matched row; returns how many players got one.
+  const persistRefs = (matches: TableMatch[]): number => {
+    const refs: Record<string, RefRank> = {};
+    let n = 0;
+    for (const m of matches) {
+      if ((m.status !== "board" && m.status !== "add") || !m.name || !m.pos) continue;
+      if (m.row.expert == null && m.row.mason == null) continue;
+      refs[refRankKey(looseKey(m.name), m.pos)] = { expert: m.row.expert, mason: m.row.mason };
+      n++;
+    }
+    if (n > 0) saveRefRanks(refs);
+    return n;
+  };
   const onCsvFile = async (file: File | undefined) => {
     if (!file) return;
     if (file.size > 2_000_000) {
@@ -528,7 +542,26 @@ export default function TierBoard({
       return;
     }
     setImportFile(file.name);
-    setImportText(await file.text());
+    const text = await file.text();
+    setImportText(text);
+    // Reference ranks are display-only and harmless, so a table with Expert /
+    // Mason columns is saved the moment it's uploaded — no extra Apply needed
+    // just to SEE them. Board changes (reorder / tiers / adds) still wait for Apply.
+    const parsed = parseRankTable(text);
+    if (parsed && (parsed.columns.expert || parsed.columns.mason)) {
+      if (!index) {
+        setSaveMsg({ text: "Sleeper player data is still loading — press Apply below once the preview appears to show the ranks.", error: true });
+        return;
+      }
+      const n = persistRefs(matchTableRows(parsed.rows, flat, index));
+      setSaveMsg(
+        n > 0
+          ? { text: `Saved Expert/Mason ranks for ${n} players — they're now shown next to your rankings. Review the rest below and press Apply for any board changes.` }
+          : { text: "Table found, but none of its players matched — no reference ranks saved. Check the names below.", error: true }
+      );
+    } else if (!parsed) {
+      setSaveMsg({ text: `Couldn't find a header row with a Name column (first line: ${describeFirstLine(text).join(" | ") || "empty"}).`, error: true });
+    }
   };
   const applyImport = () => {
     if (importMatches.length === 0) return;
@@ -572,17 +605,7 @@ export default function TierBoard({
       return reorder ? next.map((col) => sortByAdp(col, (p) => orderOf.get(looseKey(p.name)))) : next;
     });
 
-    let savedRefs = 0;
-    if (table && importSaveRefs && (table.columns.expert || table.columns.mason)) {
-      const refs: Record<string, RefRank> = {};
-      for (const m of importMatches as TableMatch[]) {
-        if ((m.status !== "board" && m.status !== "add") || !m.name || !m.pos) continue;
-        if (m.row.expert == null && m.row.mason == null) continue;
-        refs[refRankKey(looseKey(m.name), m.pos)] = { expert: m.row.expert, mason: m.row.mason };
-        savedRefs++;
-      }
-      saveRefRanks(refs);
-    }
+    const savedRefs = table && importSaveRefs ? persistRefs(importMatches as TableMatch[]) : 0;
     const bits = [
       reorder ? `reordered ${importCounts.board} on-board player${importCounts.board === 1 ? "" : "s"}` : null,
       tierOf.size ? `set ${tierOf.size} tier${tierOf.size === 1 ? "" : "s"}` : null,
@@ -790,6 +813,12 @@ export default function TierBoard({
             style={{ width: "100%", fontFamily: "inherit", resize: "vertical" }}
           />
           {!index && importText.trim() && <p className="hint">Loading Sleeper player data…</p>}
+          {!table && importText.trim() && /[,\t;]/.test(importText.split(/\r?\n/)[0] ?? "") && (
+            <p className="hint" style={{ margin: "8px 0 0", color: "var(--amber)" }}>
+              No header row with a <b>Name</b> column found, so this is being read as a plain list of names. First line:{" "}
+              {describeFirstLine(importText).join(" | ")}
+            </p>
+          )}
           {table && (
             <p className="hint" style={{ margin: "8px 0 0" }}>
               Table detected, {table.rows.length} rows. Columns found:{" "}
@@ -813,15 +842,15 @@ export default function TierBoard({
                 {" · "}
                 <b style={{ color: importCounts.unmatched ? "var(--red)" : undefined }}>{importCounts.unmatched} not matched</b>
               </p>
-              {importMatches.some((m) => m.status !== "board") && (
+              {importMatches.some((m) => m.status !== "board" || m.fuzzy) && (
                 <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--line-soft)", borderRadius: 8, marginBottom: 8 }}>
                   {importMatches
-                    .filter((m) => m.status !== "board")
+                    .filter((m) => m.status !== "board" || m.fuzzy)
                     .map((m, i) => (
                       <div key={i} className="tierrow" style={{ cursor: "default", padding: "6px 12px" }}>
                         <span className="plname" style={{ fontSize: 13.5 }}>{m.raw}</span>
-                        <span className="plteam" style={{ color: m.status === "add" ? "var(--mint)" : m.status === "ambiguous" ? "var(--amber)" : "var(--red)" }}>
-                          {m.status === "add" ? `not on board: ${m.name} · ${m.pos} ${m.team}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
+                        <span className="plteam" style={{ color: m.status === "board" || m.status === "add" ? "var(--mint)" : m.status === "ambiguous" ? "var(--amber)" : "var(--red)" }}>
+                          {m.status === "board" ? `${m.note} (name variant)` : m.status === "add" ? `not on board: ${m.name} · ${m.pos} ${m.team}${m.fuzzy ? " (name variant)" : ""}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
                         </span>
                       </div>
                     ))}

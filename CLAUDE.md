@@ -2734,3 +2734,16 @@ for me to upload a CSV." The **Import list** panel now has **Upload CSV…** (re
   (1–8 or S–G; default OFF; shows how many players would change tier) are explicit checkboxes. Not-on-board players found on Sleeper can be added (listed tier if tiers are on, else bottom of G).
 - Not scraped: Flock's `robots.txt` disallows all crawlers; the owner supplies their own file. Tests: `npx tsx scripts/testRankTable.ts` (18), `testRankImport` (14), `testRankingsHelpers` (31).
   Real-data check with the exact column header on the live board: all columns mapped, 6 of 7 rows matched (the fake name unmatched). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Tier board CSV import: hardened after "I uploaded it but don't see his rankings" + "Kenneth Gainwell missing" (2026-10; real bug reported by the owner)
+
+- **Kenneth Gainwell** was on the board all along — as Sleeper's "Kenny Gainwell". The matcher only knew exact names, so the CSV's "Kenneth" was skipped. Added a nickname-aware FALLBACK
+  (`fuzzyKey`, ~35 first-name groups: Kenneth/Kenny, Mike/Michael, Josh/Joshua …): tried only when the exact name fails, accepted only if unique (and the Position column agrees when present), and
+  shown in the preview as "matched as Kenny Gainwell (name variant)". An exact match always wins over a variant (Josh Allen → the QB, never Joshua Allen the TE).
+- **Reference ranks now save the moment the file is uploaded** (previously they also needed a separate Apply click — easy to miss, and the likeliest reason nothing showed). Apply now only governs
+  board changes (reorder / tiers / adds). The panel reports what it did ("Saved Expert/Mason ranks for N players…") or exactly what it saw ("Couldn't find a header row with a Name column (first line: …)").
+- **Parser hardened** for what spreadsheets actually export: UTF-8 BOM, tab/comma/**semicolon** delimiters, quoted cells, Windows line endings, and up to 5 title lines above the header. A file with only
+  Name/Team/Position (no Rank/Tier/Expert/Mason column) is treated as a plain name list, not a rank table.
+- **Persistence is still browser-local** (`localStorage`, `lib/refRanks.ts`): it survives reloads in that browser but does not follow the owner to another device/browser. Making it durable everywhere needs a new
+  DB table = a migration on the shared Postgres, which needs the owner's explicit OK (see the harness gate noted under "League favorites/pins").
+- Tests: `npx tsx scripts/testRankTable.ts` (27). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
