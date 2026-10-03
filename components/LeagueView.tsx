@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { PLAYERS, POS_COLOR, posChipStyle } from "@/lib/players";
+import { POS_COLOR, posChipStyle } from "@/lib/players";
+import { usePlayers } from "@/lib/usePlayers";
 import { isRankedAdp } from "@/lib/sleeper";
 import { useProjections } from "@/lib/useProjections";
 import { useTradeValues } from "@/lib/useTradeValues";
@@ -10,6 +11,7 @@ import { stripSuffix } from "@/lib/playerIdMap";
 import { posRankColor } from "@/lib/rankColor";
 import { computeTeamPower } from "@/lib/teamPower";
 import PlayerCard from "@/components/PlayerCard";
+import TeamCard from "@/components/TeamCard";
 import type { LeagueBundle } from "@/lib/types";
 
 const POSITIONS = ["QB", "RB", "WR", "TE"] as const;
@@ -45,6 +47,7 @@ export default function LeagueView({
 }) {
   const { lg, teams, pmap } = bundle;
 
+  const PLAYERS = usePlayers();
   const { projections } = useProjections();
   const values = useTradeValues();
   const valuesLoading = Object.keys(values).length === 0;
@@ -54,7 +57,7 @@ export default function LeagueView({
     const map: Record<string, (typeof PLAYERS)[number]> = {};
     for (const p of PLAYERS) map[p.name] = p;
     return map;
-  }, []);
+  }, [PLAYERS]);
 
   // How many players are curated at each position — position rank color
   // bands scale to this so a shallow position (TE) and a deep one (RB) both
@@ -63,7 +66,7 @@ export default function LeagueView({
     const counts: Record<string, number> = {};
     for (const p of PLAYERS) counts[p.pos] = (counts[p.pos] || 0) + 1;
     return counts;
-  }, []);
+  }, [PLAYERS]);
   const availablePoolSize = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const p of available) counts[p.pos] = (counts[p.pos] || 0) + 1;
@@ -119,12 +122,14 @@ export default function LeagueView({
     [teams, teamPower]
   );
 
+  const [waiverPos, setWaiverPos] = useState<"ALL" | (typeof POSITIONS)[number]>("ALL");
   const topWaivers = useMemo(
     () =>
       [...available]
+        .filter((p) => waiverPos === "ALL" || p.pos === waiverPos)
         .sort((a, b) => (a.adp ?? 9999) - (b.adp ?? 9999))
         .slice(0, 10),
-    [available]
+    [available, waiverPos]
   );
 
   const [openPlayer, setOpenPlayer] = useState<OpenPlayer | null>(null);
@@ -141,6 +146,11 @@ export default function LeagueView({
       poolSize: curatedPoolSize[pos] ?? 0,
     });
   };
+
+  // Team scorecard — same click-through modal pattern as a player's name,
+  // triggered by clicking a team's name in the standings list (not the row
+  // itself, which still toggles the roster panel open/closed).
+  const [openTeamRid, setOpenTeamRid] = useState<number | null>(null);
 
   const [openRids, setOpenRids] = useState<Set<number>>(new Set());
   const toggleTeam = (rid: number) => {
@@ -184,7 +194,18 @@ export default function LeagueView({
             const powerScore = teamPower[t.rid]?.total ?? 0;
             return (
               <div className="trrow" key={t.rid}>
-                <button className="trtop" onClick={() => toggleTeam(t.rid)}>
+                <div
+                  className="trtop"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => toggleTeam(t.rid)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleTeam(t.rid);
+                    }
+                  }}
+                >
                   <span className="rk">{i + 1}.</span>
                   {t.avatar ? (
                     // eslint-disable-next-line @next/next/no-img-element
@@ -192,7 +213,15 @@ export default function LeagueView({
                   ) : (
                     <div className="ava" />
                   )}
-                  <span className="tname">{t.name}</span>
+                  <button
+                    className="tname"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenTeamRid(t.rid);
+                    }}
+                  >
+                    {t.name}
+                  </button>
                   <div className="trbar">
                     {POSITIONS.map((pos) => (
                       <div key={pos} style={{ background: POS_COLOR[pos] }}>
@@ -201,7 +230,7 @@ export default function LeagueView({
                     ))}
                   </div>
                   <span className={`chev ${open ? "open" : ""}`}>▼</span>
-                </button>
+                </div>
                 <div className="trbottom">
                   <span className="trscore">{Math.round(powerScore)}</span>
                   <span className="trranktext">
@@ -268,7 +297,20 @@ export default function LeagueView({
                         </div>
                       ))}
                       <div className="trcol">
-                        <header style={{ background: "var(--amber)" }}>Waivers</header>
+                        <header style={{ background: "var(--amber)" }}>
+                          Waivers
+                          <span className="waiverposfilter">
+                            {(["ALL", ...POSITIONS] as const).map((p) => (
+                              <button
+                                key={p}
+                                className={waiverPos === p ? "on" : ""}
+                                onClick={() => setWaiverPos(p)}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </span>
+                        </header>
                         {topWaivers.length === 0 && (
                           <div className="trempty">None available</div>
                         )}
@@ -320,6 +362,26 @@ export default function LeagueView({
           betting advice.
         </p>
       </section>
+
+      {openTeamRid != null &&
+        (() => {
+          const team = teams.find((t) => t.rid === openTeamRid);
+          if (!team) return null;
+          const rank = rankedTeams.findIndex((t) => t.rid === openTeamRid) + 1;
+          return (
+            <TeamCard
+              team={team}
+              rank={rank}
+              totalTeams={teams.length}
+              powerScore={teamPower[team.rid]?.total ?? 0}
+              posRanks={teamPower[team.rid]?.rankByPos ?? {}}
+              byPos={teamRosters[team.rid] ?? { QB: [], RB: [], WR: [], TE: [] }}
+              curatedPoolSize={curatedPoolSize}
+              onOpenPlayer={openPlayerCard}
+              onClose={() => setOpenTeamRid(null)}
+            />
+          );
+        })()}
 
       {openPlayer && pmap[openPlayer.id] && (
         <PlayerCard

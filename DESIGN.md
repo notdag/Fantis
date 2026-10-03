@@ -23,10 +23,10 @@ colors:
 typography:
   display:
     fontFamily: "Inter, -apple-system, 'Segoe UI', sans-serif"
-    fontSize: "clamp(34px, 5vw, 56px)"
+    fontSize: "clamp(42px, 7vw, 84px)"
     fontWeight: 700
-    lineHeight: 1.08
-    letterSpacing: "-0.01em"
+    lineHeight: 1.02
+    letterSpacing: "-0.02em"
   headline:
     fontFamily: "Inter, -apple-system, 'Segoe UI', sans-serif"
     fontSize: "32px"
@@ -186,7 +186,7 @@ Quiet neutrals carry the page; amber is the only saturated color spent on UI chr
 **Character:** One typeface for everything, doing all the work through weight, size, and case rather than a second face. Deliberately not "condensed sports-display" — that was the old scoreboard identity this system replaced.
 
 ### Hierarchy
-- **Display** (700, `clamp(34px, 5vw, 56px)`, 1.08 line-height): the Leagues landing hero only ("Win your fantasy league."). The single loudest moment in the app; used nowhere else.
+- **Display** (700, `clamp(42px, 7vw, 84px)`, 1.02 line-height, -0.02em tracking): the Leagues landing hero only ("Win your fantasy league."). Bumped up from an earlier 34–56px range (2026-08-09) to make the hero read as the loudest moment it's meant to be. The single loudest moment in the app; used nowhere else.
 - **Headline** (700, 32px, 1.2): player-card name in the detail modal — the only other place text goes this large.
 - **Title** (600, 19px, 1.3, -0.005em): section headings ("Rankings", "Trade calculator", "Start / Sit", league name).
 - **Subtitle** (600, 17px): the Rankings detail panel's player name, chart section labels.
@@ -196,7 +196,7 @@ Quiet neutrals carry the page; amber is the only saturated color spent on UI chr
 - **Body** (500, 13px): the most common text size in the app — results, tabs, general UI text.
 - **Caption** (500, 12px): secondary/meta text — hint lines, sub-labels, roster meta.
 - **Label** (600, 10.5px, uppercase, 0.07em tracking): table column headers, tier/position micro-labels.
-- **Micro** (700, 9px): the smallest text in the app — the sort-column arrow glyph and the position-power bar's in-segment rank digit (that digit occasionally drops to 7px where the bar segment is too narrow for 9px to fit; treat 7px as Micro's floor, not a separate step).
+- **Micro** (700, 10px, uppercase where it labels): the smallest text carrying information — roster slot labels, stat-badge labels, position-power bar rank digits, bubble names. 10px is the floor (raised from 9px/7px after the 2026-09 audit found them unreadable on phones). The one exception is the sort-column arrow glyph, which stays 9px because it is an icon, not text.
 
 Sizes are tuned in half-pixel increments around these anchors on individual components (e.g. 13.5px on some table cells beside 13px Body, 15px/15.5px beside 16px Body Large) — that fine adjustment is intentional per-component polish, not a separate named step for every value.
 

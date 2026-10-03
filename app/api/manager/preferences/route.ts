@@ -1,0 +1,67 @@
+import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
+import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
+import { db } from "@/lib/db";
+
+// The owner's preferred / avoided players for lineup optimising. Plain
+// Sleeper player ids — nothing sensitive, and no Sleeper token is involved.
+async function authorized() {
+  const store = await cookies();
+  return isValidToken(store.get(ADMIN_COOKIE)?.value);
+}
+
+export async function GET() {
+  if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
+  const rows = await db.playerPreference.findMany({ orderBy: { rank: "asc" } });
+  return NextResponse.json({
+    priority: rows.filter((r) => r.kind === "priority").map((r) => r.playerId),
+    avoid: rows.filter((r) => r.kind === "avoid").map((r) => r.playerId),
+    irRelease: rows.filter((r) => r.kind === "ir_release").map((r) => r.playerId),
+    neverStart: rows.filter((r) => r.kind === "never_start").map((r) => r.playerId),
+    flexFirst: rows.filter((r) => r.kind === "flex_first").map((r) => r.playerId),
+  });
+}
+
+// Replaces the whole list in one transaction (the UI always sends the full
+// ordered lists, same "full replace" approach as the curated-player save).
+export async function PUT(req: Request) {
+  if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
+  const body = (await req.json().catch(() => null)) as { priority?: unknown; avoid?: unknown; irRelease?: unknown; neverStart?: unknown; flexFirst?: unknown } | null;
+  const clean = (v: unknown): string[] | null => {
+    if (!Array.isArray(v)) return null;
+    const out: string[] = [];
+    for (const id of v) {
+      if (typeof id !== "string" || !/^[A-Za-z0-9]+$/.test(id)) return null;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out.length <= 500 ? out : null;
+  };
+  const priority = clean(body?.priority ?? []);
+  const avoid = clean(body?.avoid ?? []);
+  const irRelease = clean(body?.irRelease ?? []);
+  const neverStart = clean(body?.neverStart ?? []);
+  const flexFirst = clean(body?.flexFirst ?? []);
+  if (!priority || !avoid || !irRelease || !neverStart || !flexFirst) return NextResponse.json({ error: "Invalid lists." }, { status: 400 });
+
+  // A player can only be in one list at a time (playerId is the primary
+  // key) — priority wins over everything else (a protected player is never
+  // one you'd release from your own IR, or hard-bench, either); each later
+  // list excludes ids already claimed by an earlier one.
+  const avoidOnly = avoid.filter((id) => !priority.includes(id));
+  const irReleaseOnly = irRelease.filter((id) => !priority.includes(id) && !avoidOnly.includes(id));
+  const neverStartOnly = neverStart.filter((id) => !priority.includes(id) && !avoidOnly.includes(id) && !irReleaseOnly.includes(id));
+  const flexFirstOnly = flexFirst.filter((id) => !priority.includes(id) && !avoidOnly.includes(id) && !irReleaseOnly.includes(id) && !neverStartOnly.includes(id));
+  await db.$transaction([
+    db.playerPreference.deleteMany({}),
+    db.playerPreference.createMany({
+      data: [
+        ...priority.map((playerId, rank) => ({ playerId, kind: "priority", rank })),
+        ...avoidOnly.map((playerId) => ({ playerId, kind: "avoid", rank: 0 })),
+        ...irReleaseOnly.map((playerId, rank) => ({ playerId, kind: "ir_release", rank })),
+        ...neverStartOnly.map((playerId) => ({ playerId, kind: "never_start", rank: 0 })),
+        ...flexFirstOnly.map((playerId, rank) => ({ playerId, kind: "flex_first", rank })),
+      ],
+    }),
+  ]);
+  return NextResponse.json({ ok: true, priority: priority.length, avoid: avoidOnly.length, irRelease: irReleaseOnly.length, neverStart: neverStartOnly.length, flexFirst: flexFirstOnly.length });
+}
