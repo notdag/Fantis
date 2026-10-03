@@ -2681,3 +2681,14 @@ clicked through in a browser (admin gate).
 "arrows bigger / anything else that can help?" The left-side ▲▼ are now side by side, 42x36px with a 16px glyph (were a 30x18 stack), and each row shows
 its overall board rank (`#12`, from list order — the thing "where is he in my list" actually means) before the position chip (QB3 etc.). Names were
 already enlarged (15.5px / 650). Not clicked through in a browser (admin gate).
+
+### Tier board: player photos + Sleeper projected points column (2026-10; requested explicitly by the owner)
+
+"add player photos next to the players as well as their projected fantasy points on sleeper in another column." Every board row now has a
+38px round headshot (Sleeper's real CDN photo via `playerPhotoUrl`; falls back to a position-coloured circle with the position if Sleeper has none) and
+an amber **projected points** column (Sleeper's PPR projection, `pts_ppr`). A "Projected pts:" chip pair switches between **Week N** (current
+projection week, one ~500KB file loaded on page open) and **Season** (sum of all 18 weekly files, ~10MB, cached for the day — fetched only the first
+time "Season" is clicked, so opening /admin stays light). "—" means Sleeper has no projection (bye week, inactive, or no ID match). The board has its
+own small `Headshot` component because `PlayerAvatar`'s CSS lives in manager.css, which /admin doesn't load. Matching is the same name+position lookup as
+injuries. Real-data check: 277 board players, 221 have a week-4 projection (the rest are byes/inactive), 262 have a season projection, 1 has no Sleeper
+match (Travis Hunter); Gibbs 24.8 wk / 399 szn. `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).

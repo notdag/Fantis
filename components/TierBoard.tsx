@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
 import { usePlayerMap } from "@/lib/usePlayerMap";
-import { currentProjectionWeek, getProjections, getState, SEASONS } from "@/lib/sleeper";
+import {
+  currentProjectionWeek,
+  getProjections,
+  getSeasonProjectionTotals,
+  getState,
+  playerPhotoUrl,
+  SEASONS,
+} from "@/lib/sleeper";
 import {
   buildSleeperIndex,
   findTeamDrift,
@@ -15,7 +22,7 @@ import {
   sortByAdp,
   type RankSnapshot,
 } from "@/lib/rankingsHelpers";
-import type { Player } from "@/lib/types";
+import type { Player, ProjectionMap, SeasonProjectionTotal } from "@/lib/types";
 
 const TIER_COUNT = TIER_LABELS.length; // 8: S, A, B, C, D, E, F, G
 const TIERS = Array.from({ length: TIER_COUNT }, (_, i) => i + 1);
@@ -81,6 +88,26 @@ const boardSig = (b: Board) =>
 function injColor(inj: string): string {
   if (inj === "Doubtful" || inj === "Questionable") return "var(--amber)";
   return "var(--red)";
+}
+
+// The manager's PlayerAvatar styles live in manager.css, which /admin doesn't
+// load — so the board carries its own tiny photo (falls back to the position
+// chip colour with initials if Sleeper has no headshot).
+function Headshot({ id, pos }: { id: string | null; pos: string }) {
+  const [failed, setFailed] = useState(false);
+  const ring = posChipStyle(pos).color as string;
+  const box = { width: 38, height: 38, borderRadius: "50%", border: `2px solid ${ring}`, flex: "none" as const };
+  if (!id || failed) {
+    return (
+      <span style={{ ...box, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: ring }}>
+        {pos}
+      </span>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={playerPhotoUrl(id)} alt="" loading="lazy" style={{ ...box, objectFit: "cover", background: "var(--ink)" }} onError={() => setFailed(true)} />
+  );
 }
 
 function InjBadge({ inj }: { inj: string | null | undefined }) {
@@ -179,11 +206,11 @@ export default function TierBoard({
   const flat = useMemo(() => board.flat(), [board]);
 
   const infoByName = useMemo(() => {
-    const m: Record<string, { inj: string | null; leagues: number }> = {};
+    const m: Record<string, { id: string; inj: string | null; leagues: number }> = {};
     if (!index) return m;
     for (const p of flat) {
       const hit = index.lookup(p);
-      if (hit) m[p.name] = { inj: hit.e.inj ?? null, leagues: exposure[hit.id] ?? 0 };
+      if (hit) m[p.name] = { id: hit.id, inj: hit.e.inj ?? null, leagues: exposure[hit.id] ?? 0 };
     }
     return m;
   }, [index, flat, exposure]);
@@ -288,6 +315,50 @@ export default function TierBoard({
       next[tier].splice(idx, 1);
       return next;
     });
+  };
+
+  // ── Sleeper projected points column ──
+  // "This week" is a ~500KB file Sleeper serves per week (loaded on page open).
+  // "Season" sums all 18 weekly files (~10MB, cached for the day), so it's only
+  // fetched the first time you ask for it.
+  const [projMode, setProjMode] = useState<"week" | "season">("week");
+  const [weekProj, setWeekProj] = useState<ProjectionMap | null>(null);
+  const [weekNum, setWeekNum] = useState<number | null>(null);
+  const [seasonProj, setSeasonProj] = useState<Record<string, SeasonProjectionTotal> | null>(null);
+  const [seasonLoading, setSeasonLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getState()
+      .then(async (st) => {
+        const w = currentProjectionWeek(st);
+        const p = await getProjections(SEASONS[0], w);
+        if (!cancelled) {
+          setWeekNum(w);
+          setWeekProj(p);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const chooseSeason = async () => {
+    setProjMode("season");
+    if (seasonProj || seasonLoading) return;
+    setSeasonLoading(true);
+    try {
+      setSeasonProj(await getSeasonProjectionTotals(SEASONS[0]));
+    } catch {
+      // leave null: column shows "—" and the chip label says it didn't load
+    } finally {
+      setSeasonLoading(false);
+    }
+  };
+  const projOf = (name: string): number | null => {
+    const id = infoByName[name]?.id;
+    if (!id) return null;
+    const v = projMode === "week" ? weekProj?.[id]?.pts_ppr : seasonProj?.[id]?.pts;
+    return typeof v === "number" && v > 0 ? v : null;
   };
 
   // ── "Needs ranking" panel ──
@@ -757,6 +828,13 @@ export default function TierBoard({
             {p}
           </button>
         ))}
+        <span className="hint" style={{ margin: "0 4px 0 12px", alignSelf: "center" }}>Projected pts:</span>
+        <button className={`chip-filter ${projMode === "week" ? "on" : ""}`} onClick={() => setProjMode("week")}>
+          {weekNum ? `Week ${weekNum}` : "This week"}
+        </button>
+        <button className={`chip-filter ${projMode === "season" ? "on" : ""}`} onClick={() => void chooseSeason()}>
+          {seasonLoading ? "Loading season…" : "Season"}
+        </button>
         <button
           className={`chip-filter ${injuredOnly ? "on" : ""}`}
           onClick={() => setInjuredOnly((v) => !v)}
@@ -910,6 +988,7 @@ export default function TierBoard({
                       onChange={() => toggleSelected(p.name)}
                       style={{ flex: "none", margin: 0 }}
                     />
+                    <Headshot id={info?.id ?? null} pos={p.pos} />
                     <span className="ovr" title="Overall rank on your board">#{overallByName[p.name]}</span>
                     <span className="pos" style={posChipStyle(p.pos)}>
                       {p.pos}
@@ -923,6 +1002,12 @@ export default function TierBoard({
                         ×{info.leagues}
                       </span>
                     )}
+                    <span
+                      className="projpts"
+                      title={projMode === "week" ? `Sleeper's projected PPR points, week ${weekNum ?? ""}` : "Sleeper's projected PPR points, full season"}
+                    >
+                      {projOf(p.name)?.toFixed(1) ?? "—"}
+                    </span>
                     <div className="btnrow">
                       <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
                       <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
