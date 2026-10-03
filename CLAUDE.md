@@ -2823,3 +2823,15 @@ position-grouped curated list; the tier board's order is now a true cross-positi
 - **Default sort = the owner's order, best first, with banded tier headers** (S 10, A 14, B 17, C 30, D 34, E 44, F 22, G 189). Bands show whenever `sortBy === "rank"` and ascending; sorting by any other column (ADP, Pos,
   Expert, Mason, Proj …) drops them. The separate "Tier view" chip is gone (it's the default now). ADP is back to being an ordinary sortable column ("vs ADP" is unchanged).
 - Verified on the real page: default top 12 matches the tier board, `#` strictly increasing 1…360, Olave reads `15 · WR 6 · Expert 17`, ADP sort still works and removes the bands. `tsc` clean; only the pre-existing setState-in-effect lint error.
+
+### Each public tab is its own URL (2026-10; requested explicitly by the owner — "make rankings / leagues / trade / start-sit / portfolio their own tab/url … fantis.vercel.app/rankings")
+
+The public site was one page (`app/page.tsx` → `components/FantisApp.tsx`) switching tabs with React state, so nothing was linkable. Now:
+`/` and `/leagues` (Leagues; `/` is the home/landing and renders the same view), `/rankings`, `/trade`, `/start-sit`, `/portfolio` — each a real route with its own `<title>`/description (`app/(site)/**/page.tsx`).
+- **Route group `app/(site)/`** with a shared `layout.tsx` → `components/SiteShell.tsx` (client). The nav is real `<Link>`s with the active tab derived from the path (`aria-current="page"`), the brand links home, and the shell keeps
+  the synced-Sleeper-league state (username, season, leagues, opened league `sel`, player map, `sync`/`openLeague`, `go(target)`) in a React context (`useSite()`). **Layouts stay mounted across navigations**, so syncing on `/leagues`
+  and then opening `/trade` still has your league, with no reload or refetch. A hard reload/deep link starts fresh (it's in-memory by design, same as before). `/admin` and `/manager` are outside the group and unchanged.
+- Views: `components/site/LeaguesView.tsx` (hero + league list + team hub/standings/waivers) and `components/site/ToolViews.tsx` (`TradeView`, `StartSitView`, `PortfolioView` — thin wrappers that pass the shared state to the unchanged
+  `Trade`/`StartSit`/`Portfolio`). `TeamHub`'s `onNavigate` and the hero's "See full board" now use `go()` / `<Link>`. `FantisApp.tsx` and `app/page.tsx` were removed.
+- Verified in the dev server: all six URLs 200 with their own titles; typed username persisted across Leagues → Rankings → Leagues (client navigation, no full reload); cold load of `/rankings` renders the 360-row tiered board; `/admin`, `/manager`
+  and `/api/players` still respond. `tsc`/`eslint` clean. (Gotcha seen this session: stopping the dev server mid-write can leave a corrupt `.next/dev/types/validator.ts` that breaks `next build` — delete `.next/dev` if so; it is gitignored and never deployed.)
