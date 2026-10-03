@@ -1,0 +1,122 @@
+// Pure helpers behind the /admin tier board's "Needs ranking" panel, injury
+// badges, and team-drift sync (components/TierBoard.tsx). No React, no I/O —
+// everything takes the Sleeper player map and the current board as plain
+// arguments so scripts/testRankingsHelpers.ts can exercise it directly.
+import type { PlayerMap, PlayerMapEntry } from "./types";
+
+// Local copy of lib/playerIdMap.ts's stripSuffix: that module is a "use
+// client" hook file (imports react), not something a pure helper should drag
+// in. One regex; kept identical on purpose.
+const stripSuffix = (name: string) => name.replace(/\s+(Jr\.?|Sr\.?|II|III|IV)$/i, "").trim();
+
+export const RANKABLE_POSITIONS = ["QB", "RB", "WR", "TE"] as const;
+
+// Sleeper's `injury_status` values that mean "hurt" — suspension ("Sus") is a
+// real status too but isn't an injury, so it's deliberately not here.
+// Ordered worst-first: this is also the sort order used for severity.
+export const INJURY_ORDER = ["IR", "PUP", "Out", "DNR", "Doubtful", "Questionable"] as const;
+
+export function isInjured(inj: string | null | undefined): boolean {
+  return !!inj && (INJURY_ORDER as readonly string[]).includes(inj);
+}
+
+// Lower = worse. Unknown/healthy sorts last.
+export function injurySeverity(inj: string | null | undefined): number {
+  const i = inj ? (INJURY_ORDER as readonly string[]).indexOf(inj) : -1;
+  return i === -1 ? INJURY_ORDER.length : i;
+}
+
+interface BoardPlayer {
+  name: string;
+  pos: string;
+  team: string;
+}
+
+const normName = (n: string) => stripSuffix(n).toLowerCase();
+
+// name|pos → Sleeper entry, with the same suffix-stripped fallback the rest of
+// the app uses ("Brian Thomas" vs "Brian Thomas Jr."). When Sleeper's ~11k
+// dump holds several entries with one name+position (retired/inactive
+// namesakes), prefer the one that's currently on a team — that's the one that
+// has live injury data.
+export function buildSleeperIndex(pmap: PlayerMap) {
+  const exact = new Map<string, { id: string; e: PlayerMapEntry }>();
+  const base = new Map<string, { id: string; e: PlayerMapEntry }>();
+  const put = (m: Map<string, { id: string; e: PlayerMapEntry }>, key: string, id: string, e: PlayerMapEntry) => {
+    const cur = m.get(key);
+    if (!cur || (!cur.e.t && e.t)) m.set(key, { id, e });
+  };
+  for (const id in pmap) {
+    const e = pmap[id];
+    put(exact, `${e.n}|${e.p}`, id, e);
+    put(base, `${normName(e.n)}|${e.p}`, id, e);
+  }
+  return {
+    lookup(p: { name: string; pos: string }): { id: string; e: PlayerMapEntry } | null {
+      return exact.get(`${p.name}|${p.pos}`) ?? base.get(`${normName(p.name)}|${p.pos}`) ?? null;
+    },
+  };
+}
+
+export interface UnrankedCandidate {
+  id: string; // Sleeper player_id
+  name: string;
+  pos: string;
+  team: string;
+  inj: string | null;
+  leagues: number; // how many of the owner's in-season leagues roster him
+}
+
+// Offensive players the owner actually has to make decisions about but who
+// aren't on the board yet. "Relevant" means rostered in at least `minLeagues`
+// of the owner's own leagues (exposure comes from the synced Roster table) —
+// without that filter, "every injured QB/RB/WR/TE in the NFL" is several
+// hundred irrelevant names. Sorted most-rostered first, so the injured
+// player sitting on 40 of your teams outranks a deep reserve on one.
+export function findUnranked(
+  pmap: PlayerMap,
+  board: BoardPlayer[],
+  exposure: Record<string, number>,
+  minLeagues = 1
+): UnrankedCandidate[] {
+  // A candidate counts as already ranked if ANY board player shares his
+  // suffix-insensitive name — slightly over-excludes a same-name namesake at
+  // another position, which is the safe direction (the board keys cards by
+  // name, so adding a second "same name" card would collide anyway).
+  const ranked = new Set(board.map((p) => normName(p.name)));
+  const out: UnrankedCandidate[] = [];
+  for (const id in exposure) {
+    const leagues = exposure[id];
+    if (leagues < minLeagues) continue;
+    const e = pmap[id];
+    if (!e || !e.t) continue; // not on an NFL team right now
+    if (!(RANKABLE_POSITIONS as readonly string[]).includes(e.p)) continue;
+    if (ranked.has(normName(e.n))) continue;
+    out.push({ id, name: e.n, pos: e.p, team: e.t, inj: e.inj ?? null, leagues });
+  }
+  out.sort((a, b) => b.leagues - a.leagues || a.name.localeCompare(b.name));
+  return out;
+}
+
+export interface TeamDrift {
+  name: string;
+  pos: string;
+  from: string; // team on the board
+  to: string; // team on Sleeper now ("" = no team: released / retired)
+}
+
+// Ranked players whose team no longer matches Sleeper's. The board's team
+// text is hand-maintained (and was seeded from a past dump), so trades and
+// releases silently make it stale — nothing else in the app would ever flag
+// it. Only reports players Sleeper can actually identify.
+export function findTeamDrift(index: ReturnType<typeof buildSleeperIndex>, board: BoardPlayer[]): TeamDrift[] {
+  const out: TeamDrift[] = [];
+  for (const p of board) {
+    const hit = index.lookup(p);
+    if (!hit) continue;
+    if (hit.e.t.toUpperCase() !== p.team.toUpperCase()) {
+      out.push({ name: p.name, pos: p.pos, from: p.team, to: hit.e.t });
+    }
+  }
+  return out;
+}

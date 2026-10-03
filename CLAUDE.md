@@ -2571,3 +2571,58 @@ so they surface first everywhere, instead of being buried alphabetically.
   `/admin` passphrase blocker as the last several entries; `localStorage`-
   backed state in particular is worth a real check (pin a league, reload the
   page, confirm it's still pinned) before relying on it.
+
+### Admin tier board: Needs-ranking panel, injury badges, search, bulk moves, undo, team sync (2026-10; requested explicitly by the owner)
+
+"can u code a way for me to manage the ranks easier, etc a place to add injured
+that are not in my top rankings automatically, any other ways to make it easier
+for me to rank" — `/admin`'s board (`components/TierBoard.tsx`) was drag/arrow
+reordering plus a manual name/team/tier add form, with no awareness of
+injuries, no way to find a player, and nothing noticing a player who was on
+your rosters but missing from the board. Everything below is client state on
+the board until **Save**, same as before: `save-tiers` is unchanged (still one
+full-replace transaction) and `RankedPlayer` has no schema change.
+
+- **"Needs ranking" panel** — players rostered in at least one of the owner's
+  in-season, non-best-ball leagues who aren't on the board, sorted most-hurt
+  first then by how many leagues hold them; "Injured" and "All unranked"
+  views, per-row "+ Add" and "Add all N shown" into a chosen tier (default G).
+  *Relevance is defined by your rosters, not by the NFL*: "every injured
+  QB/RB/WR/TE" is several hundred names nobody cares about. Exposure comes from
+  a server-side read of the already-synced `Roster` table in
+  `app/admin/page.tsx` (same in-season/`isBestBall` scope every `/manager`
+  tool uses; `/admin` and `/manager` share one passphrase cookie, so this
+  exposes nothing new). "Automatically" is deliberately one-click, not
+  unattended: adds land on the board unsaved so the owner still reviews and
+  hits Save — nothing re-ranks the list on its own.
+- **Injury badges + "Injured (N)" filter on every ranked row**, and a
+  "×12" league-count next to the team (hover: "On 12 of your 210 leagues") so
+  ranking decisions can weigh exposure. Source is Sleeper's `injury_status`
+  from the cached player dump (`usePlayerMap`). Suspension ("Sus") is not
+  treated as an injury.
+- **Team-drift banner** — the board's team text is hand-maintained, so trades
+  and releases silently made it stale. Compares each ranked player to Sleeper's
+  current team; "Update N teams" applies the changes. Players with *no* team
+  on Sleeper (released/retired) are listed but never auto-changed.
+- **Find, select, bulk-move** — a search box (name or team), per-row
+  checkboxes, "Select all shown" (works with the position/injured/search
+  filters), and "Move to tier"/"Remove" for the selection.
+- **Undo (50 deep, Ctrl+Z), Ctrl+S to save, sticky action bar, unsaved
+  indicator, leave-page warning.** Undo/Ctrl+Z is ignored inside text boxes. Save
+  is disabled until something actually changed ("Saved" otherwise);
+  "Discard changes" reverts to the last *saved* state (it used to revert to the
+  page-load state even after a save).
+- **Pure logic in `lib/rankingsHelpers.ts`** (`findUnranked`, `findTeamDrift`,
+  `buildSleeperIndex`, `isInjured`) so it's testable without React; Sleeper
+  namesake handling prefers the entry that's currently on a team (e.g. the
+  inactive second "Lamar Jackson"), suffix-insensitive ("Jr."), and position is
+  part of the key. `npx tsx scripts/testRankingsHelpers.ts` (22).
+- Verified against the real account via a throwaway read-only script (deleted
+  after): 275 ranked, 210 in-scope leagues, 9 rostered-but-unranked players of
+  which 2 injured (Keenan Allen Questionable ×38, Terrance Ferguson IR ×3), 6
+  stale teams (e.g. Tutu Atwell MIA→LAR). One board player Sleeper can't
+  identify at all (Travis Hunter — position mismatch), so he gets no
+  badge/drift check. `tsc`/`eslint`/`next build` clean; command-center suites
+  unaffected (433 + 84). Not clicked through in a browser — the `/admin`
+  passphrase blocks this environment — so the sticky bar, panel layout and
+  drag behaviour after the rewrite are worth one real look.

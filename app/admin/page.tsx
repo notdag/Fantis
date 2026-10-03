@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE, isValidToken } from "@/lib/adminAuth";
 import { db } from "@/lib/db";
+import { isBestBall } from "@/lib/manager";
 import AdminLogin from "@/components/AdminLogin";
 import TierBoard from "@/components/TierBoard";
 import type { Player } from "@/lib/types";
@@ -30,6 +31,26 @@ export default async function AdminPage() {
     posRank: r.posRank,
   }));
 
+  // How many of the owner's managed leagues roster each player — the signal
+  // the board's "Needs ranking" panel uses to decide an unranked injured
+  // player actually matters. Same scope every /manager tool uses (in-season,
+  // non-best-ball). Pure read of the already-synced Roster table; /admin and
+  // /manager share one passphrase cookie, so this exposes nothing the
+  // authed owner couldn't already see there.
+  const exposure: Record<string, number> = {};
+  let exposureLeagues = 0;
+  if (authed) {
+    const rosters = await db.roster.findMany({
+      where: { league: { status: "in_season" } },
+      select: { players: true, league: { select: { settings: true } } },
+    });
+    for (const r of rosters) {
+      if (isBestBall(r.league.settings)) continue;
+      exposureLeagues++;
+      for (const id of r.players) exposure[id] = (exposure[id] ?? 0) + 1;
+    }
+  }
+
   return (
     <div className="fantis">
       <div className="wrap">
@@ -40,7 +61,7 @@ export default async function AdminPage() {
             <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>admin</span>
           </div>
         </nav>
-        {authed ? <TierBoard initialPlayers={initialPlayers} /> : <AdminLogin />}
+        {authed ? <TierBoard initialPlayers={initialPlayers} exposure={exposure} exposureLeagues={exposureLeagues} /> : <AdminLogin />}
       </div>
     </div>
   );
