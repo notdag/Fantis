@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { clearRefRanks, refRankKey, saveRefRanks, useRefRanks, type RefRank } from "@/lib/refRanks";
 import {
   currentProjectionWeek,
   getProjections,
@@ -19,10 +20,13 @@ import {
   isInjured,
   looseKey,
   matchPastedList,
+  matchTableRows,
+  parseRankTable,
   parseHistory,
   pushSnapshot,
   sortByAdp,
   type PastedMatch,
+  type TableMatch,
   type RankSnapshot,
 } from "@/lib/rankingsHelpers";
 import type { Player, ProjectionMap, SeasonProjectionTotal } from "@/lib/types";
@@ -482,44 +486,114 @@ export default function TierBoard({
     }
   };
 
-  // ── Import a pasted list ──
-  // Reorders players WITHIN their current tiers to follow the pasted order
-  // (tiers are never changed by an import — a plain list has no tier info).
-  // Names not on the board can be appended to tier G, in list order.
+  // ── Import a pasted list / uploaded CSV ──
+  // Two shapes: a plain list of names (reorders players WITHIN their current
+  // tiers), or a table with a header row (Rank, Name, Team, Position, Tier,
+  // Expert Rank, Mason Rank). A table's Expert/Mason ranks are saved as
+  // reference ranks and shown next to your own; reordering by its Rank column
+  // and taking its Tier column are separate opt-in checkboxes, so importing
+  // never silently rearranges your board.
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState("");
+  const [importFile, setImportFile] = useState("");
   const [importAdd, setImportAdd] = useState(true);
-  const importMatches = useMemo<PastedMatch[]>(
-    () => (index && importText.trim() ? matchPastedList(importText, flat, index) : []),
-    [index, importText, flat]
-  );
+  const [importReorder, setImportReorder] = useState<boolean | null>(null); // null = default for the shape
+  const [importTiers, setImportTiers] = useState(false);
+  const [importSaveRefs, setImportSaveRefs] = useState(true);
+  const refRanks = useRefRanks();
+  const table = useMemo(() => (importText.trim() ? parseRankTable(importText) : null), [importText]);
+  const reorder = importReorder ?? !table; // plain list: reorder by default; table: display-only by default
+  const importMatches = useMemo<(PastedMatch | TableMatch)[]>(() => {
+    if (!index || !importText.trim()) return [];
+    return table ? matchTableRows(table.rows, flat, index) : matchPastedList(importText, flat, index);
+  }, [index, importText, flat, table]);
   const importCounts = useMemo(() => {
     const c = { board: 0, add: 0, ambiguous: 0, unmatched: 0 };
     for (const m of importMatches) c[m.status]++;
     return c;
   }, [importMatches]);
+  const tierMoves = useMemo(() => {
+    if (!table) return 0;
+    const cur = new Map(flat.map((p) => [looseKey(p.name), p.tier]));
+    let n = 0;
+    for (const m of importMatches as TableMatch[]) {
+      if (m.status === "board" && m.name && m.row.tier && cur.get(looseKey(m.name)) !== m.row.tier) n++;
+    }
+    return n;
+  }, [table, importMatches, flat]);
+  const onCsvFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2_000_000) {
+      setSaveMsg({ text: "That file is over 2MB — a rankings CSV should be far smaller.", error: true });
+      return;
+    }
+    setImportFile(file.name);
+    setImportText(await file.text());
+  };
   const applyImport = () => {
     if (importMatches.length === 0) return;
+    const usable = importMatches.filter((m) => (m.status === "board" || (m.status === "add" && importAdd)) && m.name);
+    // Order: the Rank column when the table has one, otherwise the row order.
+    const ordered = [...usable]
+      .map((m, i) => ({ m, i, r: table ? (m as TableMatch).row.rank : undefined }))
+      .sort((x, y) => (x.r ?? Infinity) - (y.r ?? Infinity) || x.i - y.i)
+      .map((x) => x.m);
     const orderOf = new Map<string, number>();
-    importMatches.forEach((m, i) => {
-      if ((m.status === "board" || (m.status === "add" && importAdd)) && m.name) orderOf.set(looseKey(m.name), i);
-    });
+    ordered.forEach((m, i) => orderOf.set(looseKey(m.name!), i));
+    const tierOf = new Map<string, number>();
+    if (table && importTiers) {
+      for (const m of importMatches as TableMatch[]) if (m.status === "board" && m.name && m.row.tier) tierOf.set(looseKey(m.name), m.row.tier);
+    }
+
     commit((b) => {
-      const next = b.map((c) => [...c]);
+      let next = b.map((c) => [...c]);
       if (importAdd) {
         for (const m of importMatches) {
           if (m.status === "add" && m.name && m.pos && m.team) {
-            next[TIER_COUNT - 1].push({ name: m.name, pos: m.pos, team: m.team, tier: TIER_COUNT, posRank: 0 });
+            const t = table && importTiers ? ((m as TableMatch).row.tier ?? TIER_COUNT) : TIER_COUNT;
+            next[t - 1].push({ name: m.name, pos: m.pos, team: m.team, tier: t, posRank: 0 });
           }
         }
       }
-      return next.map((col) => sortByAdp(col, (p) => orderOf.get(looseKey(p.name))));
+      if (tierOf.size > 0) {
+        const moved: Player[] = [];
+        next = next.map((col, ti) =>
+          col.filter((p) => {
+            const want = tierOf.get(looseKey(p.name));
+            if (want && want - 1 !== ti) {
+              moved.push({ ...p, tier: want });
+              return false;
+            }
+            return true;
+          })
+        );
+        for (const p of moved) next[p.tier - 1].push(p);
+      }
+      return reorder ? next.map((col) => sortByAdp(col, (p) => orderOf.get(looseKey(p.name)))) : next;
     });
-    setSaveMsg({
-      text: `Imported: reordered ${importCounts.board} on-board player${importCounts.board === 1 ? "" : "s"}${importAdd && importCounts.add ? `, added ${importCounts.add} to tier G` : ""} — review, then Save.`,
-    });
+
+    let savedRefs = 0;
+    if (table && importSaveRefs && (table.columns.expert || table.columns.mason)) {
+      const refs: Record<string, RefRank> = {};
+      for (const m of importMatches as TableMatch[]) {
+        if ((m.status !== "board" && m.status !== "add") || !m.name || !m.pos) continue;
+        if (m.row.expert == null && m.row.mason == null) continue;
+        refs[refRankKey(looseKey(m.name), m.pos)] = { expert: m.row.expert, mason: m.row.mason };
+        savedRefs++;
+      }
+      saveRefRanks(refs);
+    }
+    const bits = [
+      reorder ? `reordered ${importCounts.board} on-board player${importCounts.board === 1 ? "" : "s"}` : null,
+      tierOf.size ? `set ${tierOf.size} tier${tierOf.size === 1 ? "" : "s"}` : null,
+      importAdd && importCounts.add ? `added ${importCounts.add} not-on-board` : null,
+      savedRefs ? `saved Expert/Mason ranks for ${savedRefs} players (shown next to yours)` : null,
+    ].filter(Boolean);
+    setSaveMsg({ text: `Imported: ${bits.join(", ") || "nothing to change"}. Board changes are unsaved until you press Save.` });
     setImportOpen(false);
     setImportText("");
+    setImportFile("");
+    setImportReorder(null);
   };
 
   const save = async () => {
@@ -683,21 +757,51 @@ export default function TierBoard({
 
       {importOpen && (
         <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>
-          <b style={{ fontSize: 14 }}>Import a ranked list</b>
+          <b style={{ fontSize: 14 }}>Import a ranked list or CSV</b>
           <p className="hint" style={{ margin: "4px 0 8px" }}>
-            Paste your own ordered list — one player per line, numbered or not (&ldquo;1. Ja&apos;Marr Chase&rdquo;, &ldquo;2) Puka Nacua WR LAR&rdquo;, or CSV rows).
-            Players already on your board are re-ordered <b>within their current tier</b> to follow your list; tiers never change. Nothing is fetched from
-            anywhere — you provide the list.
+            Upload a CSV, or paste. <b>With a header row</b> (Rank, Name, Team, Position, Tier, Expert Rank, Mason Rank — any subset with a Name) the
+            Expert / Mason ranks are saved and shown next to your own ranks. <b>Without one</b>, one player per line (&ldquo;1. Ja&apos;Marr Chase&rdquo;,
+            &ldquo;2) Puka Nacua WR LAR&rdquo;) reorders players within their tiers. Nothing is fetched from anywhere — you provide the file.
           </p>
+          <div className="field" style={{ marginBottom: 8, alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label className="btn sm" style={{ cursor: "pointer" }}>
+              Upload CSV…
+              <input
+                type="file"
+                accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  void onCsvFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {importFile && <span className="hint" style={{ margin: 0 }}>Loaded {importFile}</span>}
+          </div>
           <textarea
             className="input"
-            rows={8}
-            placeholder={"1. Ja'Marr Chase\n2. Bijan Robinson\n3. Puka Nacua"}
+            rows={7}
+            placeholder={"…or paste here.\nRank,Name,Team,Position,Tier,Expert Rank,Mason Rank\n1,Ja'Marr Chase,CIN,WR,1,3,2"}
             value={importText}
-            onChange={(e) => setImportText(e.target.value)}
+            onChange={(e) => {
+              setImportText(e.target.value);
+              setImportFile("");
+            }}
             style={{ width: "100%", fontFamily: "inherit", resize: "vertical" }}
           />
           {!index && importText.trim() && <p className="hint">Loading Sleeper player data…</p>}
+          {table && (
+            <p className="hint" style={{ margin: "8px 0 0" }}>
+              Table detected, {table.rows.length} rows. Columns found:{" "}
+              <b>Name</b>
+              {table.columns.rank && ", Rank"}
+              {table.columns.team && ", Team"}
+              {table.columns.pos && ", Position"}
+              {table.columns.tier && ", Tier"}
+              {table.columns.expert && ", Expert Rank"}
+              {table.columns.mason && ", Mason Rank"}.
+            </p>
+          )}
           {importMatches.length > 0 && (
             <>
               <p className="hint" style={{ margin: "8px 0 4px" }}>
@@ -717,23 +821,45 @@ export default function TierBoard({
                       <div key={i} className="tierrow" style={{ cursor: "default", padding: "6px 12px" }}>
                         <span className="plname" style={{ fontSize: 13.5 }}>{m.raw}</span>
                         <span className="plteam" style={{ color: m.status === "add" ? "var(--mint)" : m.status === "ambiguous" ? "var(--amber)" : "var(--red)" }}>
-                          {m.status === "add" ? `will add: ${m.name} · ${m.pos} ${m.team}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
+                          {m.status === "add" ? `not on board: ${m.name} · ${m.pos} ${m.team}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
                         </span>
                       </div>
                     ))}
                 </div>
               )}
-              <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 8px" }}>
-                <input type="checkbox" checked={importAdd} onChange={(e) => setImportAdd(e.target.checked)} />
-                Also add the {importCounts.add} not-on-board player{importCounts.add === 1 ? "" : "s"} to the bottom of tier G
-              </label>
+              <div style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                {table && (table.columns.expert || table.columns.mason) && (
+                  <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                    <input type="checkbox" checked={importSaveRefs} onChange={(e) => setImportSaveRefs(e.target.checked)} />
+                    Show Expert{table.columns.mason ? " / Mason" : ""} ranks next to my rankings (saved in this browser)
+                  </label>
+                )}
+                <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                  <input type="checkbox" checked={reorder} onChange={(e) => setImportReorder(e.target.checked)} />
+                  Reorder my board (within tiers) to follow {table?.columns.rank ? "the Rank column" : "this list"}
+                </label>
+                {table?.columns.tier && (
+                  <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                    <input type="checkbox" checked={importTiers} onChange={(e) => setImportTiers(e.target.checked)} />
+                    Also take tiers from the Tier column (1–8 or S–G){importTiers ? ` — ${tierMoves} player${tierMoves === 1 ? "" : "s"} would change tier` : ""}
+                  </label>
+                )}
+                <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                  <input type="checkbox" checked={importAdd} onChange={(e) => setImportAdd(e.target.checked)} />
+                  Also add the {importCounts.add} not-on-board player{importCounts.add === 1 ? "" : "s"} {importTiers && table?.columns.tier ? "(in their listed tier)" : "to the bottom of tier G"}
+                </label>
+              </div>
             </>
           )}
           <div className="field" style={{ marginBottom: 0, gap: 8 }}>
-            <button className="btn" onClick={applyImport} disabled={importCounts.board + (importAdd ? importCounts.add : 0) === 0}>
-              Apply to board
+            <button
+              className="btn"
+              onClick={applyImport}
+              disabled={importMatches.length === 0 || (importCounts.board + importCounts.add === 0)}
+            >
+              Apply
             </button>
-            <span className="hint" style={{ margin: 0 }}>Unsaved until you press Save; Undo reverts it.</span>
+            <span className="hint" style={{ margin: 0 }}>Board changes stay unsaved until you press Save; Undo reverts them.</span>
           </div>
         </div>
       )}
@@ -948,6 +1074,13 @@ export default function TierBoard({
         </button>
       </div>
 
+      {refRanks.count > 0 && (
+        <p className="hint" style={{ margin: "0 0 8px" }}>
+          Showing <b>E</b> (Expert) and <b>M</b> (Mason) reference ranks for {refRanks.count} players, imported{" "}
+          {refRanks.at ? new Date(refRanks.at).toLocaleDateString() : ""} (this browser only).{" "}
+          <button type="button" className="link" onClick={() => clearRefRanks()}>Clear</button>
+        </p>
+      )}
       <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
         <input
           className="input"
@@ -1103,6 +1236,12 @@ export default function TierBoard({
                     {info && info.leagues > 0 && (
                       <span className="plteam" title={`On ${info.leagues} of your ${exposureLeagues} leagues`}>
                         ×{info.leagues}
+                      </span>
+                    )}
+                    {refRanks.count > 0 && (
+                      <span className="refranks" title="Reference ranks from your imported CSV">
+                        <span title="Expert rank (Flock)">E {refRanks.ranks[refRankKey(looseKey(p.name), p.pos)]?.expert ?? "—"}</span>
+                        <span title="Mason Dodd rank (Flock)">M {refRanks.ranks[refRankKey(looseKey(p.name), p.pos)]?.mason ?? "—"}</span>
                       </span>
                     )}
                     <span

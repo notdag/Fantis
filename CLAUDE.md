@@ -2720,3 +2720,17 @@ existing claims scan has run (shared `scanClaims`, one scan), and the lowest FAA
 - Tests: `npx tsx scripts/testWaiverSchedule.ts` (11, incl. the DST shift and the real-data expectations); command center 433 + 84 unchanged. Real-data check at
   Fri 11:16pm PT: 197 leagues → Wed 12:00 AM PT (4d 0h), 9 → Tue 9:00 PM PT, plus the daily ones. `tsc`/`eslint` clean (same 1 pre-existing WaiverAssistant finding).
   Not clicked through in a browser (admin gate).
+
+### Tier board: CSV upload + Expert/Mason reference ranks shown next to my rankings (2026-10; requested explicitly by the owner)
+
+"i'm going to import a list with the columns Rank, Name, Team, Position, Tier, Expert Rank (Flock Rank), Mason Dodd Rank (Flock Mason Rank) … display this next to my own rankings" and "create a way
+for me to upload a CSV." The **Import list** panel now has **Upload CSV…** (reads the file in the browser, ≤2MB; also .tsv/.txt) feeding the same paste box. If the first line is a header row
+(`parseRankTable` in `lib/rankingsHelpers.ts`; tab or comma, quoted fields OK; any subset of columns with a Name) it's imported as a TABLE:
+- **Expert / Mason ranks** (header contains "expert"/"flock", and "mason" — checked Mason first because "Flock Mason Rank" contains "flock") are saved as **reference ranks** and shown on every board row as `E 12` / `M 9`
+  next to the owner's own `#N` overall rank. Display-only: they never move anything. Stored in **localStorage** (`fantis_ref_ranks_v1`, `lib/refRanks.ts`, same `useSyncExternalStore` shape as league favorites) —
+  per browser; a DB table would be a gated migration. A "Clear" link and a "showing reference ranks for N players" line sit above the list.
+- **Position column disambiguates namesakes** (QB vs TE Josh Allen); two same-position namesakes (two WR Mike Williamses) stay ambiguous and are skipped, never guessed. Duplicates are keyed name+position.
+- Importing never rearranges the board by default for a table: **"Reorder within tiers to follow the Rank column"** (default OFF for a table, ON for a plain name list) and **"Take tiers from the Tier column"**
+  (1–8 or S–G; default OFF; shows how many players would change tier) are explicit checkboxes. Not-on-board players found on Sleeper can be added (listed tier if tiers are on, else bottom of G).
+- Not scraped: Flock's `robots.txt` disallows all crawlers; the owner supplies their own file. Tests: `npx tsx scripts/testRankTable.ts` (18), `testRankImport` (14), `testRankingsHelpers` (31).
+  Real-data check with the exact column header on the live board: all columns mapped, 6 of 7 rows matched (the fake name unmatched). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).

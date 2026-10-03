@@ -278,3 +278,138 @@ export function matchPastedList(
   }
   return out;
 }
+
+// ── Pasted TABLE with a header row (Rank, Name, Team, Position, Tier, Expert Rank, Mason Rank) ──
+// Used when the first line looks like a header. Delimiter is tab (pasted from a
+// spreadsheet) or comma (CSV, quotes supported). The owner supplies the data;
+// nothing is fetched. Expert / Mason ranks are "reference ranks" shown next to
+// the owner's own rankings — they never change the board by themselves.
+export interface TableRow {
+  rank?: number;
+  name: string;
+  team?: string;
+  pos?: string;
+  tier?: number; // 1-8 (S..G); letters S-G are converted
+  expert?: number;
+  mason?: number;
+}
+export interface ParsedTable {
+  columns: { rank: boolean; team: boolean; pos: boolean; tier: boolean; expert: boolean; mason: boolean };
+  rows: TableRow[];
+}
+
+function splitDelimited(line: string, delim: string): string[] {
+  if (delim === "\t") return line.split("\t").map((c) => c.trim());
+  const out: string[] = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (q) {
+      if (ch === '"' && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else if (ch === '"') q = false;
+      else cur += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+const TIER_LETTERS = ["S", "A", "B", "C", "D", "E", "F", "G"];
+const toNum = (v: string | undefined): number | undefined => {
+  if (v == null) return undefined;
+  const n = Number(v.replace(/^#/, "").trim());
+  return v.trim() !== "" && Number.isFinite(n) ? n : undefined;
+};
+const toTier = (v: string | undefined): number | undefined => {
+  if (!v) return undefined;
+  const t = v.trim();
+  const n = Number(t);
+  if (Number.isInteger(n) && n >= 1 && n <= 8) return n;
+  const i = TIER_LETTERS.indexOf(t.toUpperCase());
+  return i >= 0 && t.length === 1 ? i + 1 : undefined;
+};
+
+// Returns null when the first line isn't a recognisable header (so the caller
+// falls back to the plain name-list parser).
+export function parseRankTable(text: string): ParsedTable | null {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return null;
+  const delim = lines[0].includes("\t") ? "\t" : ",";
+  const head = splitDelimited(lines[0], delim).map((h) => h.toLowerCase().trim());
+  const find = (test: (h: string) => boolean) => head.findIndex(test);
+  // Order matters: "Flock Mason Rank" also contains "flock"/"rank".
+  const mason = find((h) => h.includes("mason"));
+  const expert = find((h, ) => (h.includes("expert") || h.includes("flock")) && !h.includes("mason"));
+  const name = find((h) => h === "name" || h === "player" || h === "player name");
+  const rank = find((h) => h === "rank" || h === "#" || h === "my rank" || h === "overall");
+  const team = find((h) => h === "team");
+  const pos = find((h) => h === "pos" || h === "position");
+  const tier = find((h) => h === "tier");
+  if (name < 0) return null;
+
+  const rows: TableRow[] = [];
+  for (const line of lines.slice(1)) {
+    const c = splitDelimited(line, delim);
+    const nm = c[name]?.trim();
+    if (!nm) continue;
+    rows.push({
+      name: nm,
+      rank: rank >= 0 ? toNum(c[rank]) : undefined,
+      team: team >= 0 ? c[team]?.trim() || undefined : undefined,
+      pos: pos >= 0 ? c[pos]?.trim().toUpperCase() || undefined : undefined,
+      tier: tier >= 0 ? toTier(c[tier]) : undefined,
+      expert: expert >= 0 ? toNum(c[expert]) : undefined,
+      mason: mason >= 0 ? toNum(c[mason]) : undefined,
+    });
+  }
+  return {
+    columns: { rank: rank >= 0, team: team >= 0, pos: pos >= 0, tier: tier >= 0, expert: expert >= 0, mason: mason >= 0 },
+    rows,
+  };
+}
+
+export interface TableMatch extends PastedMatch {
+  row: TableRow;
+}
+
+// Same resolution rules as matchPastedList, but the Position column (when
+// present) disambiguates namesakes, and a row whose position contradicts
+// every candidate is reported rather than forced.
+export function matchTableRows(
+  rows: TableRow[],
+  board: { name: string; pos: string; team: string }[],
+  index: ReturnType<typeof buildSleeperIndex>
+): TableMatch[] {
+  const out: TableMatch[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const k = looseKey(row.name);
+    const wantPos = row.pos && (RANKABLE_POSITIONS as readonly string[]).includes(row.pos) ? row.pos : undefined;
+    let m: PastedMatch;
+    const onBoard = board.filter((p) => looseKey(p.name) === k && (!wantPos || p.pos === wantPos));
+    if (onBoard.length === 1) m = { raw: row.name, status: "board", name: onBoard[0].name, pos: onBoard[0].pos };
+    else if (onBoard.length > 1) m = { raw: row.name, status: "ambiguous", note: "two players with that name on your board" };
+    else {
+      const c = index.candidatesByName(row.name).filter((x) => !wantPos || x.e.p === wantPos);
+      if (c.length === 1) m = { raw: row.name, status: "add", name: c[0].e.n, pos: c[0].e.p, team: c[0].e.t };
+      else if (c.length > 1) m = { raw: row.name, status: "ambiguous", note: c.map((x) => `${x.e.p} ${x.e.t}`).join(" or ") };
+      else m = { raw: row.name, status: "unmatched", note: "no player with that name" };
+    }
+    // Keyed on name+position: the QB and TE named Josh Allen are two players.
+    const key = m.name ? `${looseKey(m.name)}|${m.pos ?? ""}` : "";
+    if (key && seen.has(key)) {
+      out.push({ raw: row.name, status: "unmatched", note: "duplicate of an earlier row", row });
+      continue;
+    }
+    if (key) seen.add(key);
+    out.push({ ...m, row });
+  }
+  return out;
+}
