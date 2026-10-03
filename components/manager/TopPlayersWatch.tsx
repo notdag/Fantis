@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getProjections } from "@/lib/sleeper";
 import { scoringKey } from "@/lib/scoringKey";
-import { findBenchedWatched } from "@/lib/topPlayersWatch";
+import { adaptivePosRanks, findBenchedWatched } from "@/lib/topPlayersWatch";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { posChipStyle } from "@/lib/players";
@@ -77,21 +77,28 @@ export default function TopPlayersWatch({
         players: l.roster!.players,
         reserve: l.roster!.reserve,
       }));
+    const unavailableReason = (id: string) => {
+      const e = pmap[id];
+      if (!e) return "unknown";
+      if (e.inj && OUT_STATUSES.has(e.inj)) return e.inj;
+      return e.t && BYE_WEEKS_2026[e.t] === currentWeek ? "bye week" : null;
+    };
+    // Top-N counts healthy players only, so an Out/IR player never holds a
+    // top-20/30/45/25 spot — the next healthy player slides in.
+    const adaptive = adaptivePosRanks(
+      [...ranks].map(([id, r]) => ({ id, pos: pmap[id]?.p ?? null, posRank: r.posRank })),
+      unavailableReason
+    );
     return findBenchedWatched(watchLeagues, {
       limits,
-      posRankOf: (id) => ranks.get(id)?.posRank,
+      posRankOf: (id) => adaptive.get(id),
       rankOrder: (id) => ranks.get(id)?.order,
       priorityIndex: (id) => priorityIndex.get(id),
       posOf: (id) => pmap[id]?.p ?? null,
       points: proj
         ? (leagueId, id) => proj[id]?.[scoringByLeague.get(leagueId) ?? "pts_ppr"] ?? 0
         : undefined,
-      unavailableReason: (id) => {
-        const e = pmap[id];
-        if (!e) return "unknown";
-        if (e.inj && OUT_STATUSES.has(e.inj)) return e.inj;
-        return e.t && BYE_WEEKS_2026[e.t] === currentWeek ? "bye week" : null;
-      },
+      unavailableReason,
     });
   }, [leagues, pmap, ranks, limits, priorityIndex, currentWeek, proj, scoringByLeague]);
 
@@ -149,7 +156,7 @@ export default function TopPlayersWatch({
             {hideLower && lowerCount > 0
               ? `✓ No clear misses among your top players (${label}) — ${lowerCount} lower-projection case${lowerCount === 1 ? " is" : "s are"} hidden.`
               : `✓ Every healthy top player you own (${label}) is starting wherever he can.`}
-            {unavailable.length > 0 && ` (${unavailable.length} more are benched because they're injured or on bye.)`}
+            {unavailable.length > 0 && ` (${unavailable.length} priority-list player${unavailable.length === 1 ? " is" : "s are"} benched because injured or on bye.)`}
           </span>
           <span style={{ flex: 1 }} />
           {topInput}
@@ -174,8 +181,8 @@ export default function TopPlayersWatch({
       </div>
       {unavailable.length > 0 && (
         <p className="portmeta" style={{ margin: "6px 0 0" }}>
-          {unavailable.length} more top player{unavailable.length === 1 ? " is" : "s are"}{" "}
-          benched because they&rsquo;re injured or on bye — not counted.
+          {unavailable.length} priority-list player{unavailable.length === 1 ? " is" : "s are"}{" "}
+          benched because injured or on bye — not counted. (Injured players never hold a top-N spot.)
         </p>
       )}
       {open && (

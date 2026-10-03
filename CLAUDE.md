@@ -2626,3 +2626,13 @@ full-replace transaction) and `RankedPlayer` has no schema change.
   unaffected (433 + 84). Not clicked through in a browser — the `/admin`
   passphrase blocks this environment — so the sticky bar, panel layout and
   drag behaviour after the rewrite are worth one real look.
+
+### Lineups "top players" watch: injured players no longer hold a top-N spot (2026-10; requested explicitly by the owner)
+
+"make sure auto adapts and doesn't include inj players in the top 20 30 45 25 ... if they are out or IR they are not included."
+`components/manager/TopPlayersWatch.tsx` (the QB 20 / RB 30 / WR 45 / TE 25 notice) used each player's raw
+/admin position rank, so an Out/IR player still occupied a top-N slot and was only reported as "benched because injured".
+New `adaptivePosRanks` (`lib/topPlayersWatch.ts`) re-numbers each position counting only players who can play this week
+(same Out/IR/PUP/Sus/COV/NA/DNR + bye check as before), so the window slides: the next healthy player takes the spot,
+and injured players are never watched. Priority-list players are unchanged (still reported as unavailable if hurt).
+Tests: `npx tsx scripts/testTopPlayersWatch.ts` (5). The Optimize tool itself already excluded Out/IR from every lineup.

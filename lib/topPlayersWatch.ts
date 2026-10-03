@@ -129,3 +129,26 @@ export function findBenchedWatched(leagues: WatchLeague[], opts: WatchOptions): 
   }
   return out;
 }
+
+// "Top N at a position" that adapts to injuries: re-numbers each position's
+// curated ranking counting only players who can actually play this week, so
+// an Out/IR (or bye) player in the top 20 doesn't hold a spot — the next
+// healthy player slides in. Unavailable players get NO rank (undefined), so
+// they're never watched. Priority-list players are handled separately by
+// findBenchedWatched and are unaffected.
+export function adaptivePosRanks(
+  entries: { id: string; pos: string | null; posRank: number }[],
+  unavailableReason: (id: string) => string | null
+): Map<string, number> {
+  const byPos = new Map<string, { id: string; posRank: number }[]>();
+  for (const e of entries) {
+    if (!e.pos || unavailableReason(e.id)) continue;
+    (byPos.get(e.pos) ?? byPos.set(e.pos, []).get(e.pos)!).push(e);
+  }
+  const out = new Map<string, number>();
+  for (const list of byPos.values()) {
+    list.sort((a, b) => a.posRank - b.posRank);
+    list.forEach((e, i) => out.set(e.id, i + 1));
+  }
+  return out;
+}
