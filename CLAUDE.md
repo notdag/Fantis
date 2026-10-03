@@ -2800,3 +2800,16 @@ Brought the tier-board look to the public Rankings table (`components/Rankings.t
   confirm they have the right to. They stay behind `/admin` (`/api/admin/reference-ranks` is passphrase-gated). If permission is confirmed, adding them to this page is a small change.
 - Verified on the real page in the dev server: header and rows share 11 aligned columns (season view), 359 photos load, Tier view yields 8 bands with counts and switches ADP order → tier order. `tsc` clean; the only `eslint` error is the pre-existing
   setState-in-effect on the "close the panel when the selection is filtered out" effect (same effect, line shifted).
+
+### Expert / Mason ranks on the PUBLIC Rankings page (2026-10; requested explicitly by the owner — "add expert and mason to public page")
+
+Reversed the earlier hold: the owner explicitly asked to publish the imported Flock Fantasy Expert and Mason Dodd ranks to visitors. (Risk noted to the owner beforehand: they're third-party rankings and Flock's `robots.txt`
+disallows crawling; the owner supplied the numbers themselves and made the call. If Flock ever objects, remove the two columns and the `/api/reference-ranks` route — nothing else depends on them.)
+- **New public, read-only `GET /api/reference-ranks`** → `{count, ranks:{key:{expert?,mason?}}}`, CDN-cached 5 min. It exposes only the numbers (no timestamps/ids). The write path stays passphrase-gated at
+  `/api/admin/reference-ranks` (PUT/DELETE; unauthenticated → 401).
+- `components/Rankings.tsx`: **Expert** and **Mason** columns after Team (amber / blue tints, "n/a" faded when a player isn't in the CSV), both **sortable** (lower = better, missing always last), in both This-Week and Season views;
+  grid templates/min-widths widened (`.rk`, `.rk-season`, `.tierhead`). Lookup key = `refRankKey(looseKey(name), pos)`, the same key the admin importer saves under. `lib/usePublicRefRanks.ts` fetches once per page load and
+  degrades to "n/a" on any failure.
+- **Attribution**: a line under the table credits Flock Fantasy (flockfantasy.com) as the source of the Expert and Mason Dodd columns and states Fantis isn't affiliated.
+- Verified on the real page in the dev server against the live table: endpoint 200 with the cache header and 351 players, header and rows share 13 aligned columns, Expert sort ascending (1, 2, 3, 5, 5, 6), credit line rendered.
+  `tsc` clean; only the pre-existing setState-in-effect lint error remains.

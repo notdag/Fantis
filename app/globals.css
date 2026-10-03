@@ -188,15 +188,15 @@ h1.big span{color:var(--amber)}
    leaving every other .pos usage (Trade, League view, player card) at their
    existing sizes since they weren't part of what was reviewed. */
 .board .pos{font-size:11px}
-.rk{grid-template-columns:36px minmax(190px,1fr) 64px 50px 40px 56px 56px 72px}
-.rk.rk-season{grid-template-columns:36px minmax(190px,1fr) 64px 50px 40px 56px 58px 58px 58px 44px 72px}
+.rk{grid-template-columns:36px minmax(190px,1fr) 64px 50px 58px 58px 40px 56px 56px 72px}
+.rk.rk-season{grid-template-columns:36px minmax(190px,1fr) 64px 50px 58px 58px 40px 56px 58px 58px 58px 44px 72px}
 .ww{grid-template-columns:40px 1fr 64px 64px 76px}
 /* Mobile fix: at narrow widths these fixed-column rows leave almost no room
    for the flexible Player column — names truncate to a single letter.
    Scroll the row horizontally at its natural width instead of crushing it. */
 .board{overflow-x:auto}
-.row.rk{min-width:690px}
-.row.rk.rk-season{min-width:900px}
+.row.rk{min-width:806px}
+.row.rk.rk-season{min-width:1016px}
 .tier{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:8px}
 .val{font-weight:650;font-size:14px;color:var(--amber)}
 
@@ -720,5 +720,9 @@ a.link:hover{text-decoration:underline}
 }
 
 /* Public Rankings: banded tier headers (Tier view) and a stronger projected-points column. */
-.board .tierhead{display:flex;align-items:center;gap:8px;padding:7px 14px;font-weight:800;font-size:14px;color:var(--on-accent);min-width:690px}
+.board .tierhead{display:flex;align-items:center;gap:8px;padding:7px 14px;font-weight:800;font-size:14px;color:var(--on-accent);min-width:806px}
 .board .row.rk .cell.val{background:color-mix(in srgb,var(--amber) 7%,transparent);font-size:15px}
+.board .row.rk .cell.refcell{font-size:14.5px;font-weight:700}
+.board .row.rk .cell.expert{background:color-mix(in srgb,var(--amber) 11%,transparent);color:var(--amber)}
+.board .row.rk .cell.mason{background:color-mix(in srgb,#35B6F0 12%,transparent);color:#6CCBF5}
+.board .row.rk .cell.refcell.none{background:transparent;color:var(--dim);font-size:12px;font-weight:500;opacity:.6}

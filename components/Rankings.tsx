@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
 import { usePlayers } from "@/lib/usePlayers";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
@@ -14,6 +14,9 @@ import { useGameContext } from "@/lib/useGameContext";
 import { impliedTeamTotal } from "@/lib/espnGames";
 import SortHeader from "@/components/SortHeader";
 import Headshot from "@/components/Headshot";
+import { usePublicRefRanks } from "@/lib/usePublicRefRanks";
+import { looseKey } from "@/lib/rankingsHelpers";
+import { refRankKey } from "@/lib/refRanks";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
 const POSITIONS = ["ALL", "QB", "RB", "WR", "TE"] as const;
@@ -24,7 +27,7 @@ interface LiveStat {
 }
 
 type ProjMode = "week" | "season";
-type SortKey = "rank" | "pos" | "adp" | "proj" | "rushYd" | "recYd" | "passYd" | "td";
+type SortKey = "rank" | "pos" | "adp" | "proj" | "rushYd" | "recYd" | "passYd" | "td" | "expert" | "mason";
 type SortDir = "asc" | "desc";
 
 // Lower ADP is better (drafted earlier), so it defaults ascending; everything
@@ -41,6 +44,8 @@ const DEFAULT_DIR: Record<SortKey, SortDir> = {
   recYd: "desc",
   passYd: "desc",
   td: "desc",
+  expert: "asc", // a lower rank number is better
+  mason: "asc",
 };
 
 // Which sort columns are visible in each mode — used to reset sortBy to
@@ -72,6 +77,8 @@ export default function Rankings() {
   const [tierView, setTierView] = useState(false);
 
   const idMaps = useSleeperIdMaps();
+  const refRanks = usePublicRefRanks();
+  const refOf = useCallback((p: { name: string; pos: string }) => refRanks[refRankKey(looseKey(p.name), p.pos)], [refRanks]);
 
   const [seasonTotals, setSeasonTotals] = useState<Record<
     string,
@@ -269,6 +276,9 @@ export default function Rankings() {
       } else if (sortBy === "passYd") {
         av = seasonLive[a.name]?.passYd ?? null;
         bv = seasonLive[b.name]?.passYd ?? null;
+      } else if (sortBy === "expert" || sortBy === "mason") {
+        av = refOf(a)?.[sortBy] ?? null;
+        bv = refOf(b)?.[sortBy] ?? null;
       } else if (sortBy === "td") {
         const as = seasonLive[a.name];
         const bs = seasonLive[b.name];
@@ -284,7 +294,7 @@ export default function Rankings() {
       if (bv == null) return -1;
       return (av - bv) * dir;
     });
-  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode, tierView]);
+  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode, tierView, refOf]);
 
   const tierCounts = useMemo(() => {
     const m = new Map<number, number>();
@@ -413,6 +423,12 @@ export default function Rankings() {
               <SortHeader label="Pos" sortKey="pos" active={sortBy} dir={sortDir} onClick={toggleSort} />
             </div>
             <div className="cell r">Team</div>
+            <div className="cell r">
+              <SortHeader label="Expert" sortKey="expert" active={sortBy} dir={sortDir} onClick={toggleSort} />
+            </div>
+            <div className="cell r">
+              <SortHeader label="Mason" sortKey="mason" active={sortBy} dir={sortDir} onClick={toggleSort} />
+            </div>
             <div className="cell r">Bye</div>
             {projMode === "week" ? (
               <>
@@ -484,6 +500,12 @@ export default function Rankings() {
                 <div className="cell r" style={{ color: "var(--muted)", fontWeight: 600 }}>
                   {p.team}
                 </div>
+                <div className={`cell r refcell expert${refOf(p)?.expert == null ? " none" : ""}`} title="Expert rank (Flock Fantasy)">
+                  {refOf(p)?.expert ?? "n/a"}
+                </div>
+                <div className={`cell r refcell mason${refOf(p)?.mason == null ? " none" : ""}`} title="Mason Dodd rank (Flock Fantasy)">
+                  {refOf(p)?.mason ?? "n/a"}
+                </div>
                 <div className="cell r num" style={{ color: "var(--muted)" }}>
                   {BYE_WEEKS_2026[p.team] ?? "—"}
                 </div>
@@ -537,6 +559,13 @@ export default function Rankings() {
             );
           })}
         </div>
+
+        {Object.keys(refRanks).length > 0 && (
+          <p className="hint" style={{ margin: "8px 0 0" }}>
+            Expert and Mason columns are the expert and Mason Dodd rankings from Flock Fantasy (flockfantasy.com), shown for
+            comparison — lower is better. Fantis is not affiliated with Flock Fantasy.
+          </p>
+        )}
 
         {selectedPlayer && (
           <>
