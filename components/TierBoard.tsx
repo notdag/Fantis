@@ -1246,6 +1246,7 @@ export default function TierBoard({
       )}
 
       <div className="tierlist">
+        <div className="tiergrid">
         {TIERS.map((t) => {
           const ti = t - 1;
           const color = TIER_COLOR[ti];
@@ -1256,7 +1257,7 @@ export default function TierBoard({
           return (
             <div key={t}>
               <div
-                className={`tierband ${cards.length === 0 ? "empty" : ""}`}
+                className={`tierband ${cards.length === 0 ? "empty" : "hasgrid"}`}
                 style={{ background: color }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
@@ -1278,24 +1279,37 @@ export default function TierBoard({
                   <>Tier {TIER_LABELS[ti]} — drop here</>
                 ) : (
                   <>
-                    {TIER_LABELS[ti]}
-                    <span className="count">{cards.length}</span>
-                    <button
-                      className="tierbandbtn"
-                      title="Reorder this tier by Sleeper ADP (best first)"
-                      onClick={() => void sortTierByAdp(ti)}
-                    >
-                      Sort by ADP
-                    </button>
+                    <div className="bandlead">
+                      <span className="bandletter">{TIER_LABELS[ti]}</span>
+                      <span>TIER</span>
+                      <span className="count">{cards.length}</span>
+                      <button
+                        className="tierbandbtn"
+                        title="Reorder this tier by Sleeper ADP (best first)"
+                        onClick={() => void sortTierByAdp(ti)}
+                      >
+                        Sort by ADP
+                      </button>
+                    </div>
+                    <span className="bandlabel">{projMode === "week" ? `Wk ${weekNum ?? ""} pts` : "Szn pts"}</span>
+                    <span className="bandlabel">Team</span>
+                    <span className="bandlabel">Expert</span>
+                    <span className="bandlabel">Mason</span>
+                    <span />
                   </>
                 )}
               </div>
               {cards.map(({ p, ai }) => {
                 const info = infoByName[p.name];
+                const r = refRanks.ranks[refRankKey(looseKey(p.name), p.pos)];
+                const mine = overallByName[p.name];
+                // green edge = within the threshold of MY rank, red = they disagree by that many spots or more
+                const edge = (v?: number) => (v == null ? "transparent" : Math.abs(v - mine) >= refFlagDiff ? "var(--red)" : "var(--mint)");
+                const proj = projOf(p.name);
                 return (
                   <div
                     key={p.name}
-                    className="tierrow"
+                    className="tierrow gridrow"
                     draggable
                     style={selected.has(p.name) ? { background: "var(--line-soft)" } : undefined}
                     onDragStart={() => {
@@ -1312,59 +1326,58 @@ export default function TierBoard({
                       dragRef.current = null;
                     }}
                   >
-                    <div className="rankarrows">
-                      <button title="Move up (past the top of a tier moves to the tier above)" aria-label={`Move ${p.name} up`} onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
-                      <button title="Move down (past the bottom of a tier moves to the tier below)" aria-label={`Move ${p.name} down`} onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
+                    <div className="gc ctrl">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.name}`}
+                        checked={selected.has(p.name)}
+                        onChange={() => toggleSelected(p.name)}
+                        style={{ flex: "none", margin: 0 }}
+                      />
+                      <div className="rankarrows">
+                        <button title="Move up (past the top of a tier moves to the tier above)" aria-label={`Move ${p.name} up`} onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
+                        <button title="Move down (past the bottom of a tier moves to the tier below)" aria-label={`Move ${p.name} down`} onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
+                      </div>
                     </div>
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${p.name}`}
-                      checked={selected.has(p.name)}
-                      onChange={() => toggleSelected(p.name)}
-                      style={{ flex: "none", margin: 0 }}
-                    />
-                    <Headshot id={info?.id ?? null} pos={p.pos} />
-                    <span className="rc" title="Overall rank on your board">
-                      <small>Mine</small>
-                      <b>{overallByName[p.name]}</b>
-                    </span>
-                    {(() => {
-                      const r = refRanks.ranks[refRankKey(looseKey(p.name), p.pos)];
-                      const mine = overallByName[p.name];
-                      // green = within the threshold of MY rank, red = they disagree by that many spots or more
-                      const edge = (v?: number) => (v == null ? "transparent" : Math.abs(v - mine) >= refFlagDiff ? "var(--red)" : "var(--mint)");
-                      return (
-                        <>
-                          <span className={`rc ref expert${r?.expert == null ? " none" : ""}`} title={r?.expert == null ? "No Expert rank for this player in your CSV" : "Expert rank (Flock)"} style={{ borderRightColor: edge(r?.expert) }}>
-                            <small>Expert</small>
-                            <b>{r?.expert ?? "n/a"}</b>
-                          </span>
-                          <span className={`rc ref mason${r?.mason == null ? " none" : ""}`} title={r?.mason == null ? "No Mason rank for this player in your CSV" : "Mason Dodd rank (Flock)"} style={{ borderRightColor: edge(r?.mason) }}>
-                            <small>Mason</small>
-                            <b>{r?.mason ?? "n/a"}</b>
-                          </span>
-                        </>
-                      );
-                    })()}
-                    <span className="pos" style={posChipStyle(p.pos)}>
-                      {p.pos}
-                      {rankByName[p.name]}
-                    </span>
-                    <span className="plname">{p.name}</span>
-                    <InjBadge inj={info?.inj} />
-                    <span className="plteam">{p.team}</span>
-                    {info && info.leagues > 0 && (
-                      <span className="plteam" title={`On ${info.leagues} of your ${exposureLeagues} leagues`}>
-                        ×{info.leagues}
+                    <div className="gc rk" title="Your overall rank">{mine}</div>
+                    <div className="gc player">
+                      <Headshot id={info?.id ?? null} pos={p.pos} />
+                      <div className="nm">
+                        <span className="plname">
+                          {p.name} <InjBadge inj={info?.inj} />
+                        </span>
+                        {info && info.leagues > 0 && (
+                          <small title={`On ${info.leagues} of your ${exposureLeagues} leagues`}>on {info.leagues} of your leagues</small>
+                        )}
+                      </div>
+                    </div>
+                    <div className="gc">
+                      <span className="pos" style={posChipStyle(p.pos)}>
+                        {p.pos} {rankByName[p.name]}
                       </span>
-                    )}
-                    <span
-                      className="projpts"
+                    </div>
+                    <div
+                      className="gc proj"
                       title={projMode === "week" ? `Sleeper's projected PPR points, week ${weekNum ?? ""}` : "Sleeper's projected PPR points, full season"}
                     >
-                      {projOf(p.name)?.toFixed(1) ?? "—"}
-                    </span>
-                    <div className="btnrow">
+                      {proj?.toFixed(2) ?? "—"}
+                    </div>
+                    <div className="gc team">{p.team}</div>
+                    <div
+                      className={`gc ref expert${r?.expert == null ? " none" : ""}`}
+                      style={{ "--edge": edge(r?.expert) } as React.CSSProperties}
+                      title={r?.expert == null ? "No Expert rank for this player in your CSV" : "Expert rank (Flock)"}
+                    >
+                      {r?.expert ?? "n/a"}
+                    </div>
+                    <div
+                      className={`gc ref mason${r?.mason == null ? " none" : ""}`}
+                      style={{ "--edge": edge(r?.mason) } as React.CSSProperties}
+                      title={r?.mason == null ? "No Mason rank for this player in your CSV" : "Mason Dodd rank (Flock)"}
+                    >
+                      {r?.mason ?? "n/a"}
+                    </div>
+                    <div className="gc act">
                       <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
                       <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
                       <button className="mini" title="Remove" onClick={() => removePlayer(ti, ai)}>✕</button>
@@ -1375,6 +1388,7 @@ export default function TierBoard({
             </div>
           );
         })}
+        </div>
       </div>
     </section>
   );

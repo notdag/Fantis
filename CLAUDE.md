@@ -2777,3 +2777,14 @@ Only 103 of 327 saved players had an Expert rank (268 had Mason). Root cause: th
 - **Columns made distinguishable**: Mine / Expert / Mason are bigger (19px bold), Expert has an amber tint, Mason a blue tint, a missing rank shows a dashed, faded "n/a" cell (hover: "No Expert rank for this player in your CSV").
 - The rows already saved have null Expert values and cannot be recovered — **re-upload the CSV once** to refill them (an upload replaces the saved set).
 - Tests: `npx tsx scripts/testRankTable.ts` (39). Real-data check: the DB showed 327 saved rows, 103 Expert / 268 Mason, matching the diagnosis. `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Tier board restructured into an aligned grid (2026-10; requested explicitly by the owner, with a reference screenshot — "make my format more succinct like this, right now it's all over the place")
+
+The board rows were a free-flowing flex row (arrows, checkbox, photo, rank, ref ranks, chip, name, team, ×N, points, buttons), so columns didn't line up from row to row. Rows and tier headers now share ONE grid
+template (`--tbcols` on `.tiergrid`, `app/globals.css`): **[select + ▲▼] · Mine (#) · Player (photo, name, injury badge, "on N of your leagues") · Pos chip ("RB 1") · Wk/Szn pts · Team · Expert · Mason · [« » ✕]**.
+Each tier header carries the column labels (Wk N pts / Team / Expert / Mason) above its columns, as in the reference, with the S/A/B… letter in a small badge and "Sort by ADP" kept in the header. Expert/Mason cells keep the
+amber/blue tints, a green/red right edge (agree/disagree with your rank, threshold editable) and a faded "n/a" when a player isn't in the CSV. Rows are 56px; the list scrolls horizontally below ~900px instead of wrapping.
+Only the board rows changed — the Needs-ranking / history / import lists still use the plain flex `.tierrow`. Drag-and-drop, arrows, bulk select, undo and all data logic are untouched (markup/CSS only).
+Design note: this follows the owner's explicit reference (like the player-card exception) while keeping the app's tokens — amber/blue tints, no new accent colours.
+Verified in a real browser against the real `globals.css` using a throwaway static harness (deleted): all four labelled columns sit at identical x-centres in every row, rows are 56px, edge colours and the n/a state render. Not verified on the real
+`/admin` page itself (passphrase gate), so check it once with live data. `tsc`/`eslint` clean.
