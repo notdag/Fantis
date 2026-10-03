@@ -2788,3 +2788,15 @@ Only the board rows changed — the Needs-ranking / history / import lists still
 Design note: this follows the owner's explicit reference (like the player-card exception) while keeping the app's tokens — amber/blue tints, no new accent colours.
 Verified in a real browser against the real `globals.css` using a throwaway static harness (deleted): all four labelled columns sit at identical x-centres in every row, rows are 56px, edge colours and the n/a state render. Not verified on the real
 `/admin` page itself (passphrase gate), so check it once with live data. `tsc`/`eslint` clean.
+
+### Public Rankings page: photos, Team column, Tier view (2026-10; requested explicitly by the owner — "change it for fantis the live site for people not on admin as well")
+
+Brought the tier-board look to the public Rankings table (`components/Rankings.tsx`), within what that page already is:
+- **Player photos** (shared `components/Headshot.tsx`, now also used by the admin board; position-ringed round Sleeper headshot, position-label fallback) and a **separate Team column** (it used to trail the name).
+  Position chip now reads "RB 1". Projected-points column has a subtle amber tint and slightly larger type. Grid templates/min-widths widened for the extra column (`.rk`, `.rk-season`).
+- **Tier view** chip (off by default): groups by Fantis' own tiers (curated order) with banded tier headers (letter badge, "TIER", count), same look as the admin board. **Why it's opt-in**: the public default order is live Sleeper ADP,
+  deliberately — the old curated order put every tier-1 QB first. In ADP order tiers are interleaved, so banding would split/lie; clicking any sort header turns Tier view off.
+- **Expert / Mason ranks are NOT shown publicly.** They are the owner's import of another site's (Flock / Mason Dodd) rankings, whose `robots.txt` disallows crawling; republishing them to visitors needs the owner to
+  confirm they have the right to. They stay behind `/admin` (`/api/admin/reference-ranks` is passphrase-gated). If permission is confirmed, adding them to this page is a small change.
+- Verified on the real page in the dev server: header and rows share 11 aligned columns (season view), 359 photos load, Tier view yields 8 bands with counts and switches ADP order → tier order. `tsc` clean; the only `eslint` error is the pre-existing
+  setState-in-effect on the "close the panel when the selection is filtered out" effect (same effect, line shifted).

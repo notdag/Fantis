@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
+import Headshot from "@/components/Headshot";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import {
   clearLegacyRefRanks,
@@ -18,7 +19,6 @@ import {
   getProjections,
   getSeasonProjectionTotals,
   getState,
-  playerPhotoUrl,
   SEASONS,
 } from "@/lib/sleeper";
 import {
@@ -105,26 +105,6 @@ const boardSig = (b: Board) =>
 function injColor(inj: string): string {
   if (inj === "Doubtful" || inj === "Questionable") return "var(--amber)";
   return "var(--red)";
-}
-
-// The manager's PlayerAvatar styles live in manager.css, which /admin doesn't
-// load — so the board carries its own tiny photo (falls back to the position
-// chip colour with initials if Sleeper has no headshot).
-function Headshot({ id, pos }: { id: string | null; pos: string }) {
-  const [failed, setFailed] = useState(false);
-  const ring = posChipStyle(pos).color as string;
-  const box = { width: 38, height: 38, borderRadius: "50%", border: `2px solid ${ring}`, flex: "none" as const };
-  if (!id || failed) {
-    return (
-      <span style={{ ...box, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: ring }}>
-        {pos}
-      </span>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={playerPhotoUrl(id)} alt="" loading="lazy" style={{ ...box, objectFit: "cover", background: "var(--ink)" }} onError={() => setFailed(true)} />
-  );
 }
 
 function InjBadge({ inj }: { inj: string | null | undefined }) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
 import { usePlayers } from "@/lib/usePlayers";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
@@ -13,6 +13,7 @@ import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { useGameContext } from "@/lib/useGameContext";
 import { impliedTeamTotal } from "@/lib/espnGames";
 import SortHeader from "@/components/SortHeader";
+import Headshot from "@/components/Headshot";
 import type { SeasonProjectionTotal } from "@/lib/types";
 
 const POSITIONS = ["ALL", "QB", "RB", "WR", "TE"] as const;
@@ -66,6 +67,9 @@ export default function Rankings() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [selected, setSelected] = useState<string | null>(null);
   const [projMode, setProjMode] = useState<ProjMode>("season");
+  // Opt-in: group by Fantis' own tiers (curated order) with banded headers. Off by default because the
+  // default order is live ADP, where tiers are interleaved (see the sort note below).
+  const [tierView, setTierView] = useState(false);
 
   const idMaps = useSleeperIdMaps();
 
@@ -212,6 +216,7 @@ export default function Rankings() {
   }, [season]);
 
   const toggleSort = (key: SortKey) => {
+    setTierView(false);
     if (sortBy === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -227,6 +232,7 @@ export default function Rankings() {
     );
     const dir = sortDir === "asc" ? 1 : -1;
     return filtered.sort((a, b) => {
+      if (tierView) return (PLAYER_ORDER.get(a.name) ?? 0) - (PLAYER_ORDER.get(b.name) ?? 0);
       if (sortBy === "rank") {
         // Real live ADP, same source as the ADP column/sort below — not the
         // curated list's own array order, which groups tier-major then
@@ -278,7 +284,13 @@ export default function Rankings() {
       if (bv == null) return -1;
       return (av - bv) * dir;
     });
-  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode]);
+  }, [PLAYERS, PLAYER_ORDER, pos, query, sortBy, sortDir, live, seasonLive, projMode, tierView]);
+
+  const tierCounts = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of list) m.set(p.tier, (m.get(p.tier) ?? 0) + 1);
+    return m;
+  }, [list]);
 
   // If the selected player gets filtered out (search/position change), close
   // the panel instead of leaving it detached from anything on screen.
@@ -370,6 +382,13 @@ export default function Rankings() {
         )}
       </div>
       <div className="filters">
+        <button
+          className={`chip-filter ${tierView ? "on" : ""}`}
+          onClick={() => setTierView((v) => !v)}
+          title="Group players by Fantis' own tiers instead of live ADP order"
+        >
+          Tier view
+        </button>
         {POSITIONS.map((p) => (
           <button
             key={p}
@@ -393,6 +412,7 @@ export default function Rankings() {
             <div className="cell r">
               <SortHeader label="Pos" sortKey="pos" active={sortBy} dir={sortDir} onClick={toggleSort} />
             </div>
+            <div className="cell r">Team</div>
             <div className="cell r">Bye</div>
             {projMode === "week" ? (
               <>
@@ -433,29 +453,36 @@ export default function Rankings() {
             const seasonStat = seasonLive[p.name];
             const projValue = projMode === "season" ? seasonStat?.pts ?? null : stat?.proj ?? null;
             const tdTotal = seasonStat ? seasonStat.passTd + seasonStat.rushTd + seasonStat.recTd : null;
+            const band = tierView && (i === 0 || list[i - 1].tier !== p.tier);
             return (
+              <Fragment key={p.name}>
+              {band && (
+                <div className="tierhead" style={{ background: TIER_COLOR[p.tier - 1] || "var(--oth)" }}>
+                  <span className="bandletter">{TIER_LABELS[p.tier - 1] ?? p.tier}</span>
+                  <span>TIER</span>
+                  <span className="count">{tierCounts.get(p.tier)}</span>
+                </div>
+              )}
               <div
                 className={`row rk ${projMode === "season" ? "rk-season" : ""} rowclick ${selected === p.name ? "on" : ""}`}
-                key={p.name}
                 onClick={() => setSelected(selected === p.name ? null : p.name)}
                 style={{ borderLeftColor: TIER_COLOR[p.tier - 1] || "var(--oth)" }}
                 title={`Tier ${TIER_LABELS[p.tier - 1] ?? p.tier}`}
               >
                 <div className={`cell rank ${i < 3 ? "top" : ""}`}>{adpRank.get(p.name) ?? i + 1}</div>
                 <div className="cell team">
+                  <Headshot id={idMaps ? sleeperId(idMaps, p) ?? null : null} pos={p.pos} size={32} />
                   <span className="tname">{p.name}</span>
-                  {/* --dim fails contrast at this size (3.1:1, need 4.5:1) —
-                      --muted passes (~6.4:1) and is already the documented
-                      secondary-text step. */}
-                  <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: 8 }}>
-                    {p.team}
-                  </span>
                 </div>
                 <div className="cell r">
                   <span className="pos" style={posChipStyle(p.pos)}>
-                    {p.pos}
-                    {p.posRank}
+                    {p.pos} {p.posRank}
                   </span>
+                </div>
+                {/* --dim fails contrast at this size (3.1:1, need 4.5:1) — --muted passes
+                    (~6.4:1) and is already the documented secondary-text step. */}
+                <div className="cell r" style={{ color: "var(--muted)", fontWeight: 600 }}>
+                  {p.team}
                 </div>
                 <div className="cell r num" style={{ color: "var(--muted)" }}>
                   {BYE_WEEKS_2026[p.team] ?? "—"}
@@ -506,6 +533,7 @@ export default function Rankings() {
                   </>
                 )}
               </div>
+              </Fragment>
             );
           })}
         </div>
