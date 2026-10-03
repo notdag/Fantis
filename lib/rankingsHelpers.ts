@@ -120,3 +120,58 @@ export function findTeamDrift(index: ReturnType<typeof buildSleeperIndex>, board
   }
   return out;
 }
+
+// ── Auto-sort a tier by ADP ──
+// Reorders ONE tier's players by Sleeper ADP (lower = drafted earlier).
+// Players with no ranked ADP keep their current relative order after every
+// player that has one — never shuffled randomly, never dropped. Stable.
+export function sortByAdp<T extends { name: string }>(players: T[], adpOf: (p: T) => number | undefined): T[] {
+  const keyed = players.map((p, i) => ({ p, i, adp: adpOf(p) }));
+  keyed.sort((a, b) => {
+    const A = a.adp === undefined ? Infinity : a.adp;
+    const B = b.adp === undefined ? Infinity : b.adp;
+    if (A !== B) return A < B ? -1 : 1;
+    return a.i - b.i;
+  });
+  return keyed.map((k) => k.p);
+}
+
+// ── Save history (browser-local snapshots of the board) ──
+export interface RankSnapshot {
+  at: string; // ISO time the snapshot was taken (= when the save replaced it)
+  players: { name: string; pos: string; team: string; tier: number }[];
+}
+export const HISTORY_LIMIT = 20;
+
+const snapSig = (s: RankSnapshot["players"]) => s.map((p) => `${p.tier}|${p.name}|${p.pos}|${p.team}`).join(";");
+
+// Newest first, capped, and a snapshot identical to the newest is skipped
+// (saving twice with no changes shouldn't burn a history slot).
+export function pushSnapshot(history: RankSnapshot[], snap: RankSnapshot): RankSnapshot[] {
+  if (snap.players.length === 0) return history;
+  if (history[0] && snapSig(history[0].players) === snapSig(snap.players)) return history;
+  return [snap, ...history].slice(0, HISTORY_LIMIT);
+}
+
+// Defensive parse of whatever is in localStorage — never trust it.
+export function parseHistory(raw: string | null): RankSnapshot[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    if (!Array.isArray(v)) return [];
+    return v
+      .filter(
+        (s) =>
+          s &&
+          typeof s.at === "string" &&
+          Array.isArray(s.players) &&
+          s.players.every(
+            (p: unknown) =>
+              !!p && typeof (p as { name?: unknown }).name === "string" && typeof (p as { tier?: unknown }).tier === "number"
+          )
+      )
+      .slice(0, HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}

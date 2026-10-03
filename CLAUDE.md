@@ -2659,3 +2659,19 @@ arrows on the right. Drag-and-drop is unchanged (both work). New behavior: ▲ o
 adjacent tier — end of the tier above / start of the tier below, respecting the position filter — so repeated clicks walk a player through the whole
 board instead of dead-ending at a tier edge. «/» still jump a whole tier. Undo/Ctrl+Z covers every arrow click. `tsc`/`eslint` clean; not
 clicked through in a browser (admin gate).
+
+### Admin tier board: save history + per-tier "Sort by ADP" (2026-10; requested explicitly by the owner — "ok" to the suggested next steps)
+
+- **Save history** ("Save history" in the board's action bar): every successful Save first stores the version it just replaced
+  (last 20, newest first, identical-to-newest skipped). **Restore** loads a version into the board as an ordinary unsaved edit — Undo reverts
+  it, Save makes it live. Stored in the **browser's localStorage** (`fantis_rank_history_v1`), deliberately NOT the database: a new table is a
+  migration on the shared Postgres, which the harness gates (same reason league favorites are client-local). Consequence: history is per
+  browser/device, and a cleared browser loses it. Writes are best-effort — a blocked/full localStorage never fails the save itself.
+- **Sort by ADP** button on every tier band: reorders that tier's *currently shown* cards (so a position filter sorts just that position) by
+  Sleeper's real ADP (`adp_dd_ppr` from the current-week projections, the same field `add-missing-players` uses; `< 999` = ranked). Players with
+  no ADP stay below the ranked ones in their existing order — never shuffled or dropped; hidden cards keep their exact slots. Undo-able.
+  Real-data check: ADP resolved for 221 of 277 board players; tier S sorted to Gibbs, Smith-Njigba, Bijan, Nacua, Chase, St. Brown, McBride, Allen.
+- Pure logic (`sortByAdp`, `pushSnapshot`, `parseHistory`) in `lib/rankingsHelpers.ts`; `npx tsx scripts/testRankingsHelpers.ts` (now 31).
+  `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+- Still open from the same suggestion list: ranking-vs-FantasyCalc/ADP disagreement flags; league-page "Optimize this league" link; multi-select
+  on My Leagues; Action Queue alerts that open the actual fix.

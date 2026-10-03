@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { currentProjectionWeek, getProjections, getState, SEASONS } from "@/lib/sleeper";
 import {
   buildSleeperIndex,
   findTeamDrift,
   findUnranked,
   injurySeverity,
   isInjured,
+  parseHistory,
+  pushSnapshot,
+  sortByAdp,
+  type RankSnapshot,
 } from "@/lib/rankingsHelpers";
 import type { Player } from "@/lib/types";
 
@@ -17,6 +22,7 @@ const TIERS = Array.from({ length: TIER_COUNT }, (_, i) => i + 1);
 const ADD_POSITIONS = ["QB", "RB", "WR", "TE"];
 const UNDO_LIMIT = 50;
 const PANEL_PAGE = 25;
+const HISTORY_KEY = "fantis_rank_history_v1";
 
 type Board = Player[][]; // index 0..(TIER_COUNT-1) = tier 1..TIER_COUNT
 
@@ -344,6 +350,58 @@ export default function TierBoard({
     setSelected(new Set());
   };
 
+  // ── Save history (restore a previous version) ──
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history_, setHistory_] = useState<RankSnapshot[]>([]);
+  const toggleHistory = () => {
+    if (!historyOpen) {
+      try {
+        setHistory_(parseHistory(window.localStorage.getItem(HISTORY_KEY)));
+      } catch {
+        setHistory_([]);
+      }
+    }
+    setHistoryOpen((v) => !v);
+  };
+  const restoreSnapshot = (snap: RankSnapshot) => {
+    // Loaded as an ordinary unsaved edit: Undo reverts it, Save makes it live.
+    commit(() => groupByTier(snap.players.map((p) => ({ ...p, posRank: 0 }))));
+    setSelected(new Set());
+    setSaveMsg({ text: "Restored into the board — press Save to make it live." });
+    setHistoryOpen(false);
+  };
+
+  // ── Sort one tier by Sleeper ADP ──
+  const [sortMsg, setSortMsg] = useState("");
+  const sortTierByAdp = async (ti: number) => {
+    if (!index) {
+      setSortMsg("Sleeper player data is still loading — try again in a second.");
+      return;
+    }
+    try {
+      setSortMsg("Loading ADP…");
+      const state = await getState();
+      const proj = await getProjections(SEASONS[0], currentProjectionWeek(state));
+      const adpOf = (p: Player) => {
+        const hit = index.lookup(p);
+        const a = hit ? proj[hit.id]?.adp_dd_ppr : undefined;
+        return typeof a === "number" && a < 999 ? a : undefined;
+      };
+      commit((b) => {
+        const next = b.map((c) => [...c]);
+        // Only the cards currently shown are reordered (so a position filter
+        // sorts just that position); hidden ones keep their exact slots.
+        const shownIdx = next[ti].map((p, i) => (isShown(p) ? i : -1)).filter((i) => i >= 0);
+        const sorted = sortByAdp(shownIdx.map((i) => next[ti][i]), adpOf);
+        shownIdx.forEach((i, k) => (next[ti][i] = sorted[k]));
+        return next;
+      });
+      setSortMsg(`Tier ${TIER_LABELS[ti]} sorted by Sleeper ADP (players with no ADP stay below, in their current order).`);
+    } catch {
+      setSortMsg("Couldn't load ADP from Sleeper.");
+    }
+  };
+
   const save = async () => {
     if (saving) return;
     setSaving(true);
@@ -361,6 +419,20 @@ export default function TierBoard({
       if (!res.ok) {
         setSaveMsg({ text: body.error || "Save failed.", error: true });
         return;
+      }
+      // Keep what this save just replaced, so a bad save can be rolled back.
+      // Browser-local on purpose (a DB table would be a migration on the
+      // shared Postgres); best-effort — a full/blocked localStorage never
+      // fails the save itself.
+      try {
+        const prev = parseHistory(window.localStorage.getItem(HISTORY_KEY));
+        const snap: RankSnapshot = {
+          at: new Date().toISOString(),
+          players: savedBoard.flatMap((col, ti) => col.map((p) => ({ name: p.name, pos: p.pos, team: p.team, tier: ti + 1 }))),
+        };
+        window.localStorage.setItem(HISTORY_KEY, JSON.stringify(pushSnapshot(prev, snap)));
+      } catch {
+        // ignore
       }
       setSavedBoard(board);
       setSaveMsg({ text: "Saved — live everywhere on the next page load." });
@@ -445,6 +517,9 @@ export default function TierBoard({
           <button className="btn ghost sm" onClick={reset} disabled={saving || !dirty}>
             Discard changes
           </button>
+          <button className="btn ghost sm" onClick={toggleHistory}>
+            {historyOpen ? "Hide history" : "Save history"}
+          </button>
           {dirty && (
             <span className="hint" style={{ color: "var(--amber)", margin: 0 }}>
               ● Unsaved changes
@@ -482,6 +557,32 @@ export default function TierBoard({
           </div>
         )}
       </div>
+
+      {historyOpen && (
+        <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>
+          <b style={{ fontSize: 14 }}>Previous versions</b>
+          <p className="hint" style={{ margin: "4px 0 8px" }}>
+            Each Save keeps the version it replaced (last 20, stored in this browser only). Restoring loads a version into
+            the board as an unsaved change — Undo reverts it, Save makes it live.
+          </p>
+          {history_.length === 0 ? (
+            <p className="hint" style={{ margin: 0 }}>Nothing yet — a version is kept every time you Save.</p>
+          ) : (
+            <div style={{ border: "1px solid var(--line-soft)", borderRadius: 8, overflow: "hidden" }}>
+              {history_.map((h) => (
+                <div key={h.at} className="tierrow" style={{ cursor: "default" }}>
+                  <span className="plname">{new Date(h.at).toLocaleString()}</span>
+                  <span className="plteam">{h.players.length} players</span>
+                  <button className="btn ghost sm" onClick={() => restoreSnapshot(h)}>Restore</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {sortMsg && (
+        <p className="hint" style={{ margin: "0 0 10px" }}>{sortMsg}</p>
+      )}
 
       {/* ── Needs ranking: unranked players on the owner's rosters ── */}
       <div
@@ -760,6 +861,13 @@ export default function TierBoard({
                   <>
                     {TIER_LABELS[ti]}
                     <span className="count">{cards.length}</span>
+                    <button
+                      className="tierbandbtn"
+                      title="Reorder this tier by Sleeper ADP (best first)"
+                      onClick={() => void sortTierByAdp(ti)}
+                    >
+                      Sort by ADP
+                    </button>
                   </>
                 )}
               </div>

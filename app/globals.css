@@ -327,6 +327,8 @@ h1.big span{color:var(--amber)}
 .tierlist{border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .tierband{display:flex;align-items:center;gap:8px;padding:7px 14px;font-weight:800;font-size:14px;color:var(--on-accent)}
 .tierband .count{font-weight:600;font-size:12px;opacity:.65}
+.tierband .tierbandbtn{margin-left:auto;border:1px solid currentColor;background:transparent;color:inherit;font-size:11px;font-weight:600;border-radius:5px;padding:2px 8px;cursor:pointer;opacity:.75}
+.tierband .tierbandbtn:hover{opacity:1}
 .tierband.empty{padding:5px 14px;font-size:11px;font-weight:600;opacity:.7}
 .tierrow{display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--line-soft);font-size:13px;cursor:grab;background:var(--panel)}
 .tierrow:hover{background:var(--line-soft)}

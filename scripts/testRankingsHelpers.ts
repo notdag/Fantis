@@ -4,6 +4,10 @@ import {
   findTeamDrift,
   findUnranked,
   injurySeverity,
+  sortByAdp,
+  pushSnapshot,
+  parseHistory,
+  HISTORY_LIMIT,
   isInjured,
 } from "../lib/rankingsHelpers";
 import type { PlayerMap } from "../lib/types";
@@ -76,6 +80,26 @@ const drift = findTeamDrift(index, [
 ok(drift.length === 2, "only real mismatches are reported", JSON.stringify(drift));
 ok(drift.some((d) => d.name === "Hurt Back" && d.from === "MIA" && d.to === "DAL"), "trade detected");
 ok(drift.some((d) => d.name === "Cut Guy" && d.to === ""), "release reported with empty team");
+
+// ── sortByAdp ──
+const adp: Record<string, number> = { A: 30, B: 5, C: 12 };
+const sorted = sortByAdp([{ name: "A" }, { name: "X" }, { name: "B" }, { name: "Y" }, { name: "C" }], (p) => adp[p.name]);
+ok(sorted.map((p) => p.name).join("") === "BCAXY", "ADP ascending; unranked keep relative order at the end", sorted.map((p) => p.name).join(""));
+ok(sortByAdp([{ name: "P" }, { name: "Q" }], () => 7).map((p) => p.name).join("") === "PQ", "ties are stable");
+
+// ── history ──
+const snap = (n: number) => ({ at: new Date(n).toISOString(), players: [{ name: "P" + n, pos: "WR", team: "SF", tier: 1 }] });
+let h = pushSnapshot([], snap(1));
+h = pushSnapshot(h, snap(2));
+ok(h.length === 2 && h[0].players[0].name === "P2", "newest first");
+ok(pushSnapshot(h, { ...snap(2), at: "later" }).length === 2, "identical-to-newest snapshot is skipped");
+ok(pushSnapshot(h, { at: "x", players: [] }).length === 2, "empty snapshot ignored");
+let big = [] as ReturnType<typeof pushSnapshot>;
+for (let i = 0; i < HISTORY_LIMIT + 5; i++) big = pushSnapshot(big, snap(i));
+ok(big.length === HISTORY_LIMIT && big[0].players[0].name === "P" + (HISTORY_LIMIT + 4), "capped at the limit, newest kept");
+ok(parseHistory(JSON.stringify(h)).length === 2, "round-trips");
+ok(parseHistory("not json").length === 0 && parseHistory(null).length === 0 && parseHistory("{}").length === 0, "garbage parses to empty");
+ok(parseHistory(JSON.stringify([{ at: 1 }, snap(3)])).length === 1, "malformed entries are dropped");
 
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
