@@ -20,6 +20,7 @@ import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
 import { StatusCell } from "./BulkConfirm";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkAdd from "./BulkAdd";
+import WaiverDeadlines from "./WaiverDeadlines";
 import { useRefreshLeagues } from "./useRefreshLeagues";
 import type { LineupLeague } from "./LineupManager";
 import type { PlayerMapEntry } from "@/lib/types";
@@ -589,6 +590,16 @@ export default function WaiverAssistant({
       <section className="sec">
         <ConnectWriteAccess onTokenReady={setMultiAddToken} />
       </section>
+
+      <WaiverDeadlines
+        leagues={multiAddLeagues.map((l) => ({ leagueId: l.league.id, leagueName: l.league.name, settings: l.league.settings }))}
+        faabRemaining={remainingByLeague}
+        claimsByLeague={claimsByLeague}
+        claimsScanned={claimsScanned}
+        scanning={claimsScanning}
+        canScan={!!multiAddToken}
+        onScan={() => void scanClaims()}
+      />
 
       <section className="sec" style={{ paddingBottom: 0 }}>
         <div className="field" style={{ marginBottom: 0 }}>

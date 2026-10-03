@@ -2703,3 +2703,20 @@ board / were found on Sleeper but aren't on the board / are ambiguous (real name
 didn't match (and duplicates). **Apply** reorders players WITHIN their current tiers to follow the pasted order (a plain list has no tier info, so tiers never change),
 optionally appending not-on-board matches to tier G in list order. Unsaved until Save; Undo reverts. Logic in `lib/rankingsHelpers.ts` (`matchPastedList`,
 `looseKey`); `npx tsx scripts/testRankImport.ts` (14). Checked on the real board with a 12-line mixed-format list. `tsc`/`eslint` clean; not clicked through (admin gate).
+
+### Waiver Assistant: "Next waiver runs" deadline panel (2026-10; requested explicitly by the owner)
+
+"waiver deadline is good" — a panel at the top of `/manager/waiver` (`components/manager/WaiverDeadlines.tsx`) that groups the owner's leagues by their next real
+waiver processing time ("in 4d 0h · Wed 12:00 AM PT · 197 leagues"), red inside 3h, amber inside 24h, with a per-group league list, pending-claim counts once the
+existing claims scan has run (shared `scanClaims`, one scan), and the lowest FAAB left. Read-only; nothing sends.
+- **The time rule was verified, not assumed** (`lib/waiverSchedule.ts`): compared each setting group against real `status_updated` timestamps of processed claims
+  from Sleeper's public transactions endpoint. `waiver_day_of_week`: 0 = Monday … 6 = Sunday; `daily_waivers_hour`: hour of day in **US Pacific time**
+  (hr=0 → ~07:05–07:15 UTC on Wednesday; hr=21 → ~04:0x UTC; hr=7 → ~14:0x UTC, all UTC-7 in October), processing a few minutes after the hour. The Pacific
+  zone is INFERRED from those matches across three setting groups (Sleeper doesn't document it) and the UI says so; DST handled via Intl `America/Los_Angeles`.
+- **Daily-waiver leagues** (`daily_waivers = 1`, 9 of the owner's leagues): `daily_waivers_days` is a bitmask I could not decode with confidence, so these show
+  the EARLIEST possible run (next time that hour arrives on any day), labelled "earliest … daily waivers (may run on other days too)" — errs toward an earlier
+  deadline, never a later one. Missing schedule data → "no waiver schedule in the synced data" (never a guess).
+- `waiver_day_of_week`, `daily_waivers`, `daily_waivers_hour` added to `SLIM_INNER_KEYS` (`lib/manager.ts`) so the client gets them.
+- Tests: `npx tsx scripts/testWaiverSchedule.ts` (11, incl. the DST shift and the real-data expectations); command center 433 + 84 unchanged. Real-data check at
+  Fri 11:16pm PT: 197 leagues → Wed 12:00 AM PT (4d 0h), 9 → Tue 9:00 PM PT, plus the daily ones. `tsc`/`eslint` clean (same 1 pre-existing WaiverAssistant finding).
+  Not clicked through in a browser (admin gate).

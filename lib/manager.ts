@@ -290,6 +290,9 @@ const SLIM_INNER_KEYS = [
   "waiver_budget",
   "waiver_bid_min",
   "waiver_clear_days", // Command Center AI: how long a dropped player stays on waivers
+  "waiver_day_of_week", // lib/waiverSchedule.ts: 0 = Monday … 6 = Sunday
+  "daily_waivers",
+  "daily_waivers_hour", // hour of day, Pacific time (inferred — see waiverSchedule.ts)
   "best_ball",
   "taxi_slots",
 ] as const;
