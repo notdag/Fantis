@@ -34,6 +34,19 @@ interface BoardPlayer {
 
 const normName = (n: string) => stripSuffix(n).toLowerCase();
 
+// Forgiving name key for pasted text: case, punctuation ("St." vs "St",
+// "Ja'Marr" vs "JaMarr" via apostrophe removal, hyphens → spaces) and
+// Jr/Sr/II/III don't matter.
+export function looseKey(n: string): string {
+  return n
+    .toLowerCase()
+    .replace(/[.'’`]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+(jr|sr|ii|iii|iv|v)$/, "")
+    .trim();
+}
+
 // name|pos → Sleeper entry, with the same suffix-stripped fallback the rest of
 // the app uses ("Brian Thomas" vs "Brian Thomas Jr."). When Sleeper's ~11k
 // dump holds several entries with one name+position (retired/inactive
@@ -51,7 +64,19 @@ export function buildSleeperIndex(pmap: PlayerMap) {
     put(exact, `${e.n}|${e.p}`, id, e);
     put(base, `${normName(e.n)}|${e.p}`, id, e);
   }
+  // Name-only candidates (current NFL QB/RB/WR/TE only) for matching a pasted
+  // list that has no position column. >1 entry = a real namesake collision.
+  const byLooseName = new Map<string, { id: string; e: PlayerMapEntry }[]>();
+  for (const id in pmap) {
+    const e = pmap[id];
+    if (!e.t || !(RANKABLE_POSITIONS as readonly string[]).includes(e.p)) continue;
+    const k = looseKey(e.n);
+    (byLooseName.get(k) ?? byLooseName.set(k, []).get(k)!).push({ id, e });
+  }
   return {
+    candidatesByName(name: string): { id: string; e: PlayerMapEntry }[] {
+      return byLooseName.get(looseKey(name)) ?? [];
+    },
     lookup(p: { name: string; pos: string }): { id: string; e: PlayerMapEntry } | null {
       return exact.get(`${p.name}|${p.pos}`) ?? base.get(`${normName(p.name)}|${p.pos}`) ?? null;
     },
@@ -174,4 +199,82 @@ export function parseHistory(raw: string | null): RankSnapshot[] {
   } catch {
     return [];
   }
+}
+
+
+
+// ── Paste-in rank list ──
+// The owner pastes their own ordered list (from their notes, a spreadsheet,
+// another site — they do the copying; nothing is fetched). Accepts one name
+// per line, optionally numbered ("1.", "2)", "#3", "4 -"), or CSV/TSV rows
+// ("1,Ja'Marr Chase,WR,CIN"), with trailing position/team tokens tolerated.
+export interface PastedMatch {
+  raw: string;
+  status: "board" | "add" | "ambiguous" | "unmatched";
+  name?: string; // board name (status "board") or Sleeper name (status "add")
+  pos?: string;
+  team?: string;
+  note?: string;
+}
+
+const LEADING_RANK = /^\s*(?:#\s*)?\d{1,4}\s*(?:[.):\-–—]\s*|\s+(?=[A-Za-z]))/;
+
+export function parsePastedLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !/^tier\b/i.test(l) && !/^[-=#*]+$/.test(l));
+}
+
+export function matchPastedList(
+  text: string,
+  board: { name: string; pos: string; team: string }[],
+  index: ReturnType<typeof buildSleeperIndex>
+): PastedMatch[] {
+  const boardByKey = new Map<string, { name: string; pos: string }[]>();
+  for (const p of board) {
+    const k = looseKey(p.name);
+    (boardByKey.get(k) ?? boardByKey.set(k, []).get(k)!).push(p);
+  }
+
+  const resolve = (candidate: string): PastedMatch | null => {
+    const k = looseKey(candidate);
+    if (!k) return null;
+    const onBoard = boardByKey.get(k);
+    if (onBoard) {
+      return onBoard.length === 1
+        ? { raw: "", status: "board", name: onBoard[0].name, pos: onBoard[0].pos }
+        : { raw: "", status: "ambiguous", note: "two players with that name are on your board" };
+    }
+    const c = index.candidatesByName(candidate);
+    if (c.length === 1) return { raw: "", status: "add", name: c[0].e.n, pos: c[0].e.p, team: c[0].e.t };
+    if (c.length > 1) return { raw: "", status: "ambiguous", note: c.map((x) => `${x.e.p} ${x.e.t}`).join(" or ") };
+    return null;
+  };
+
+  const out: PastedMatch[] = [];
+  const seen = new Set<string>();
+  for (const raw of parsePastedLines(text)) {
+    // Each delimited field is a candidate (CSV rows); within one, peel
+    // leading rank numbers, then trailing POS/TEAM tokens until a match.
+    const fields = raw.split(/[\t,|]/).map((f) => f.trim()).filter((f) => /[A-Za-z]{2}/.test(f));
+    let hit: PastedMatch | null = null;
+    for (const f of fields) {
+      const tokens = f.replace(LEADING_RANK, "").trim().split(/\s+/);
+      for (let drop = 0; drop <= 2 && tokens.length - drop >= 2 && !hit; drop++) {
+        hit = resolve(tokens.slice(0, tokens.length - drop).join(" "));
+      }
+      if (hit) break;
+    }
+    const m: PastedMatch = hit ? { ...hit, raw } : { raw, status: "unmatched", note: "no player with that name" };
+    // The same player twice: keep the first (higher) placement.
+    const key = m.name ? looseKey(m.name) : "";
+    if (key && seen.has(key)) {
+      out.push({ raw, status: "unmatched", note: "duplicate of an earlier line" });
+      continue;
+    }
+    if (key) seen.add(key);
+    out.push(m);
+  }
+  return out;
 }

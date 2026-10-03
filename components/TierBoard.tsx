@@ -17,9 +17,12 @@ import {
   findUnranked,
   injurySeverity,
   isInjured,
+  looseKey,
+  matchPastedList,
   parseHistory,
   pushSnapshot,
   sortByAdp,
+  type PastedMatch,
   type RankSnapshot,
 } from "@/lib/rankingsHelpers";
 import type { Player, ProjectionMap, SeasonProjectionTotal } from "@/lib/types";
@@ -479,6 +482,46 @@ export default function TierBoard({
     }
   };
 
+  // ── Import a pasted list ──
+  // Reorders players WITHIN their current tiers to follow the pasted order
+  // (tiers are never changed by an import — a plain list has no tier info).
+  // Names not on the board can be appended to tier G, in list order.
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importAdd, setImportAdd] = useState(true);
+  const importMatches = useMemo<PastedMatch[]>(
+    () => (index && importText.trim() ? matchPastedList(importText, flat, index) : []),
+    [index, importText, flat]
+  );
+  const importCounts = useMemo(() => {
+    const c = { board: 0, add: 0, ambiguous: 0, unmatched: 0 };
+    for (const m of importMatches) c[m.status]++;
+    return c;
+  }, [importMatches]);
+  const applyImport = () => {
+    if (importMatches.length === 0) return;
+    const orderOf = new Map<string, number>();
+    importMatches.forEach((m, i) => {
+      if ((m.status === "board" || (m.status === "add" && importAdd)) && m.name) orderOf.set(looseKey(m.name), i);
+    });
+    commit((b) => {
+      const next = b.map((c) => [...c]);
+      if (importAdd) {
+        for (const m of importMatches) {
+          if (m.status === "add" && m.name && m.pos && m.team) {
+            next[TIER_COUNT - 1].push({ name: m.name, pos: m.pos, team: m.team, tier: TIER_COUNT, posRank: 0 });
+          }
+        }
+      }
+      return next.map((col) => sortByAdp(col, (p) => orderOf.get(looseKey(p.name))));
+    });
+    setSaveMsg({
+      text: `Imported: reordered ${importCounts.board} on-board player${importCounts.board === 1 ? "" : "s"}${importAdd && importCounts.add ? `, added ${importCounts.add} to tier G` : ""} — review, then Save.`,
+    });
+    setImportOpen(false);
+    setImportText("");
+  };
+
   const save = async () => {
     if (saving) return;
     setSaving(true);
@@ -594,6 +637,9 @@ export default function TierBoard({
           <button className="btn ghost sm" onClick={reset} disabled={saving || !dirty}>
             Discard changes
           </button>
+          <button className="btn ghost sm" onClick={() => setImportOpen((v) => !v)}>
+            {importOpen ? "Close import" : "Import list"}
+          </button>
           <button className="btn ghost sm" onClick={toggleHistory}>
             {historyOpen ? "Hide history" : "Save history"}
           </button>
@@ -634,6 +680,63 @@ export default function TierBoard({
           </div>
         )}
       </div>
+
+      {importOpen && (
+        <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>
+          <b style={{ fontSize: 14 }}>Import a ranked list</b>
+          <p className="hint" style={{ margin: "4px 0 8px" }}>
+            Paste your own ordered list — one player per line, numbered or not (&ldquo;1. Ja&apos;Marr Chase&rdquo;, &ldquo;2) Puka Nacua WR LAR&rdquo;, or CSV rows).
+            Players already on your board are re-ordered <b>within their current tier</b> to follow your list; tiers never change. Nothing is fetched from
+            anywhere — you provide the list.
+          </p>
+          <textarea
+            className="input"
+            rows={8}
+            placeholder={"1. Ja'Marr Chase\n2. Bijan Robinson\n3. Puka Nacua"}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            style={{ width: "100%", fontFamily: "inherit", resize: "vertical" }}
+          />
+          {!index && importText.trim() && <p className="hint">Loading Sleeper player data…</p>}
+          {importMatches.length > 0 && (
+            <>
+              <p className="hint" style={{ margin: "8px 0 4px" }}>
+                <b style={{ color: "var(--mint)" }}>{importCounts.board} on your board</b>
+                {" · "}
+                <b>{importCounts.add} not on board (found on Sleeper)</b>
+                {" · "}
+                <b style={{ color: importCounts.ambiguous ? "var(--amber)" : undefined }}>{importCounts.ambiguous} ambiguous</b>
+                {" · "}
+                <b style={{ color: importCounts.unmatched ? "var(--red)" : undefined }}>{importCounts.unmatched} not matched</b>
+              </p>
+              {importMatches.some((m) => m.status !== "board") && (
+                <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--line-soft)", borderRadius: 8, marginBottom: 8 }}>
+                  {importMatches
+                    .filter((m) => m.status !== "board")
+                    .map((m, i) => (
+                      <div key={i} className="tierrow" style={{ cursor: "default", padding: "6px 12px" }}>
+                        <span className="plname" style={{ fontSize: 13.5 }}>{m.raw}</span>
+                        <span className="plteam" style={{ color: m.status === "add" ? "var(--mint)" : m.status === "ambiguous" ? "var(--amber)" : "var(--red)" }}>
+                          {m.status === "add" ? `will add: ${m.name} · ${m.pos} ${m.team}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+              <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 8px" }}>
+                <input type="checkbox" checked={importAdd} onChange={(e) => setImportAdd(e.target.checked)} />
+                Also add the {importCounts.add} not-on-board player{importCounts.add === 1 ? "" : "s"} to the bottom of tier G
+              </label>
+            </>
+          )}
+          <div className="field" style={{ marginBottom: 0, gap: 8 }}>
+            <button className="btn" onClick={applyImport} disabled={importCounts.board + (importAdd ? importCounts.add : 0) === 0}>
+              Apply to board
+            </button>
+            <span className="hint" style={{ margin: 0 }}>Unsaved until you press Save; Undo reverts it.</span>
+          </div>
+        </div>
+      )}
 
       {historyOpen && (
         <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>

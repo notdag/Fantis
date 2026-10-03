@@ -2692,3 +2692,14 @@ time "Season" is clicked, so opening /admin stays light). "—" means Sleeper ha
 own small `Headshot` component because `PlayerAvatar`'s CSS lives in manager.css, which /admin doesn't load. Matching is the same name+position lookup as
 injuries. Real-data check: 277 board players, 221 have a week-4 projection (the rest are byes/inactive), 262 have a season projection, 1 has no Sleeper
 match (Travis Hunter); Gibbs 24.8 wk / 399 szn. `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Tier board: paste-in rank import (2026-10; requested explicitly by the owner)
+
+The owner asked to source ranks from flockfantasy.com. **Not done by scraping**: its `robots.txt` is `User-agent: * / Disallow: /` and the page's data loads via
+JavaScript from a private source, so automated pulling would violate their stated rules (same posture as FantasyCalc — only documented endpoints; any data
+agreement is the owner's call to make with them). Built instead: **Import list** in the tier board's action bar — the owner pastes their OWN ordered list
+(numbered or not, "2) Puka Nacua WR LAR", CSV/TSV rows; trailing POS/TEAM tokens and punctuation/suffix differences tolerated). Preview shows how many matched the
+board / were found on Sleeper but aren't on the board / are ambiguous (real namesakes, e.g. two "Mike Williams", are flagged and skipped — never guessed) /
+didn't match (and duplicates). **Apply** reorders players WITHIN their current tiers to follow the pasted order (a plain list has no tier info, so tiers never change),
+optionally appending not-on-board matches to tier G in list order. Unsaved until Save; Undo reverts. Logic in `lib/rankingsHelpers.ts` (`matchPastedList`,
+`looseKey`); `npx tsx scripts/testRankImport.ts` (14). Checked on the real board with a 12-line mixed-format list. `tsc`/`eslint` clean; not clicked through (admin gate).
