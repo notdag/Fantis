@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   getPlayerGameLog,
   getSeasonWeeklyStats,
@@ -135,6 +135,7 @@ export default function PlayerCard({
   value,
   poolSize,
   onClose,
+  extra,
 }: {
   id: string;
   entry: PlayerMapEntry;
@@ -144,6 +145,9 @@ export default function PlayerCard({
   value: number | null;
   poolSize: number;
   onClose: () => void;
+  // Optional extra rows shown at the bottom of the General tab (the public Rankings page passes this week's
+  // game odds, MVP odds and player props through here).
+  extra?: ReactNode;
 }) {
   const [tab, setTab] = useState<Tab>("general");
   const [imgOk, setImgOk] = useState(true);
@@ -590,6 +594,7 @@ export default function PlayerCard({
                 blended into Fantis&rsquo; own Value. Not investment or betting advice.
               </p>
             </div>
+            {extra && <div className="pcardextra">{extra}</div>}
           </>
         )}
 

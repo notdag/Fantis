@@ -2835,3 +2835,14 @@ The public site was one page (`app/page.tsx` → `components/FantisApp.tsx`) swi
   `Trade`/`StartSit`/`Portfolio`). `TeamHub`'s `onNavigate` and the hero's "See full board" now use `go()` / `<Link>`. `FantisApp.tsx` and `app/page.tsx` were removed.
 - Verified in the dev server: all six URLs 200 with their own titles; typed username persisted across Leagues → Rankings → Leagues (client navigation, no full reload); cold load of `/rankings` renders the 360-row tiered board; `/admin`, `/manager`
   and `/api/players` still respond. `tsc`/`eslint` clean. (Gotcha seen this session: stopping the dev server mid-write can leave a corrupt `.next/dev/types/validator.ts` that breaks `next build` — delete `.next/dev` if so; it is gitignored and never deployed.)
+
+### Public Rankings: clicking a player opens the full player card with stats (2026-10; requested explicitly by the owner — "clicking on player card should show stats")
+
+Clicking a row on `/rankings` used to open a small side panel (tier, ADP, projection, odds) with no real stats — the full `PlayerCard` (General · Logs · Career · News, Adj PPG, RZ opportunity, per-game log, FC value) only opened for roster players
+inside the league views. Now a Rankings click opens that same card:
+- `components/Rankings.tsx` → new `RankCard` child: looks up the player's Sleeper id (same name+position matcher as everywhere), the Sleeper player map, and trade values, then renders `<PlayerCard>` with ADP, position rank, tier, value, pool size.
+  `usePlayerMap`/`useTradeValues` (the latter pulls heavy season data) only mount **after a click**, so the Rankings page itself stays light.
+- **Nothing lost from the old panel**: `PlayerCard` gained an optional `extra` slot (bottom of the General tab, `.pcardextra` styles) that carries this week's game odds / spread / win probability, Scoring Environment, MVP odds and
+  player props. The old side panel remains only as the **fallback for players Sleeper can't match** (e.g. Travis Hunter), so every row still opens something.
+- Verified in the dev server: Chris Olave → card with Tier A / ADP 5 / WR6 / Value / FC Value, General extras (vs ATL, −2.5, O/U 47.5, 55% to win, props), Logs tab with the full per-game table, close works, old panel not opened;
+  Travis Hunter → fallback panel. `tsc` clean; PlayerCard/Rankings lint findings are identical to the committed baseline (pre-existing).

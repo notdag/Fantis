@@ -726,3 +726,10 @@ a.link:hover{text-decoration:underline}
 .board .row.rk .cell.expert{background:color-mix(in srgb,var(--amber) 11%,transparent);color:var(--amber)}
 .board .row.rk .cell.mason{background:color-mix(in srgb,#35B6F0 12%,transparent);color:#6CCBF5}
 .board .row.rk .cell.refcell.none{background:transparent;color:var(--dim);font-size:12px;font-weight:500;opacity:.6}
+
+/* Odds / props rows carried into the player card's General tab (same look as the old Rankings side panel). */
+.pcardextra{margin-top:16px;padding-top:4px;border-top:1px solid var(--line)}
+.pcardextra .prow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-top:1px solid var(--line-soft);font-size:13.5px}
+.pcardextra .prow:first-child{border-top:0}
+.pcardextra .plabel{color:var(--muted)}
+.pcardextra .pval{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}

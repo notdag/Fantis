@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { TIER_COLOR, TIER_LABELS, posChipStyle } from "@/lib/players";
 import { usePlayers } from "@/lib/usePlayers";
 import { getSeasonProjectionTotals, isRankedAdp } from "@/lib/sleeper";
@@ -14,6 +14,10 @@ import { useGameContext } from "@/lib/useGameContext";
 import { impliedTeamTotal } from "@/lib/espnGames";
 import SortHeader from "@/components/SortHeader";
 import Headshot from "@/components/Headshot";
+import PlayerCard from "@/components/PlayerCard";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import { useTradeValues } from "@/lib/useTradeValues";
+import type { Player } from "@/lib/types";
 import { usePublicRefRanks } from "@/lib/usePublicRefRanks";
 import { looseKey } from "@/lib/rankingsHelpers";
 import { refRankKey } from "@/lib/refRanks";
@@ -324,6 +328,75 @@ export default function Rankings() {
     ? playerProps[selectedPlayer.name] || playerProps[stripSuffix(selectedPlayer.name)]
     : undefined;
 
+  // This week's game odds, scoring environment, MVP odds and player props — shown in the side panel fallback and in the
+  // player card's General tab.
+  const marketTop = selectedPlayer ? (
+    <>
+            {gameContext[selectedPlayer.team] && (
+              <div className="prow">
+                <span className="plabel">This Week&rsquo;s Game</span>
+                <span className="pval" style={{ textAlign: "right" }}>
+                  {gameContext[selectedPlayer.team].homeAway === "home" ? "vs" : "@"}{" "}
+                  {gameContext[selectedPlayer.team].opponent}
+                  {gameContext[selectedPlayer.team].spread != null && (
+                    <span style={{ color: "var(--dim)", fontWeight: 500 }}>
+                      {" "}
+                      · {gameContext[selectedPlayer.team].spread! > 0 ? "+" : ""}
+                      {gameContext[selectedPlayer.team].spread}
+                      {gameContext[selectedPlayer.team].overUnder != null &&
+                        ` · O/U ${gameContext[selectedPlayer.team].overUnder}`}
+                      {gameContext[selectedPlayer.team].winProb != null &&
+                        ` · ${Math.round(gameContext[selectedPlayer.team].winProb! * 100)}% to win`}
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+            {gameContext[selectedPlayer.team] && impliedTeamTotal(gameContext[selectedPlayer.team]) != null && (
+              <div className="prow" title="This team's own implied point total for the week — the offense's scoring environment, independent of the opponent's defense grade. Derived from the real spread + O/U total above.">
+                <span className="plabel">Scoring Environment</span>
+                <span className="pval">
+                  {impliedTeamTotal(gameContext[selectedPlayer.team])!.toFixed(1)} implied pts
+                </span>
+              </div>
+            )}
+            {selectedMvp && (
+              <div className="prow">
+                <span className="plabel">MVP Odds ({selectedMvp.sportsbook})</span>
+                <span className="pval" style={{ color: "var(--amber)" }}>
+                  {selectedMvp.american > 0 ? `+${selectedMvp.american}` : selectedMvp.american}
+                  <span style={{ color: "var(--dim)", fontWeight: 500, marginLeft: 6 }}>
+                    ({(selectedMvp.probability * 100).toFixed(1)}%)
+                  </span>
+                </span>
+              </div>
+            )}
+    </>
+  ) : null;
+  const marketProps = selectedPlayer ? (
+    <>
+            {selectedProps && selectedProps.length > 0 && (
+              <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
+                <span className="plabel">Player Props</span>
+                {selectedProps.map((p, i) => (
+                  <div
+                    key={`${p.stat}-${i}`}
+                    style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
+                  >
+                    <span style={{ color: "var(--muted)" }}>{p.stat}</span>
+                    <span className="num" style={{ color: "var(--amber)", fontWeight: 600 }}>
+                      {p.line != null ? `${p.line} ` : ""}
+                      {p.overOdds ?? "—"}
+                      {p.underOdds ? ` / ${p.underOdds}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+    </>
+  ) : null;
+
   return (
     <section className="sec">
       <div className="sechead">
@@ -531,6 +604,19 @@ export default function Rankings() {
         )}
 
         {selectedPlayer && (
+          <RankCard
+            player={selectedPlayer}
+            id={idMaps ? sleeperId(idMaps, selectedPlayer) ?? null : null}
+            adp={selectedStat?.adp != null ? Math.round(selectedStat.adp) : null}
+            poolSize={PLAYERS.filter((x) => x.pos === selectedPlayer.pos).length}
+            extra={
+              <>
+                {marketTop}
+                {marketProps}
+              </>
+            }
+            onClose={() => setSelected(null)}
+            fallback={
           <>
             <div className="panelscrim" onClick={() => setSelected(null)} />
             <div className="panel">
@@ -568,45 +654,7 @@ export default function Rankings() {
               <span className="plabel">{week != null ? `Week ${week} Proj` : "Proj"}</span>
               <span className="pval">{selectedStat?.proj != null ? selectedStat.proj.toFixed(1) : "—"}</span>
             </div>
-            {gameContext[selectedPlayer.team] && (
-              <div className="prow">
-                <span className="plabel">This Week&rsquo;s Game</span>
-                <span className="pval" style={{ textAlign: "right" }}>
-                  {gameContext[selectedPlayer.team].homeAway === "home" ? "vs" : "@"}{" "}
-                  {gameContext[selectedPlayer.team].opponent}
-                  {gameContext[selectedPlayer.team].spread != null && (
-                    <span style={{ color: "var(--dim)", fontWeight: 500 }}>
-                      {" "}
-                      · {gameContext[selectedPlayer.team].spread! > 0 ? "+" : ""}
-                      {gameContext[selectedPlayer.team].spread}
-                      {gameContext[selectedPlayer.team].overUnder != null &&
-                        ` · O/U ${gameContext[selectedPlayer.team].overUnder}`}
-                      {gameContext[selectedPlayer.team].winProb != null &&
-                        ` · ${Math.round(gameContext[selectedPlayer.team].winProb! * 100)}% to win`}
-                    </span>
-                  )}
-                </span>
-              </div>
-            )}
-            {gameContext[selectedPlayer.team] && impliedTeamTotal(gameContext[selectedPlayer.team]) != null && (
-              <div className="prow" title="This team's own implied point total for the week — the offense's scoring environment, independent of the opponent's defense grade. Derived from the real spread + O/U total above.">
-                <span className="plabel">Scoring Environment</span>
-                <span className="pval">
-                  {impliedTeamTotal(gameContext[selectedPlayer.team])!.toFixed(1)} implied pts
-                </span>
-              </div>
-            )}
-            {selectedMvp && (
-              <div className="prow">
-                <span className="plabel">MVP Odds ({selectedMvp.sportsbook})</span>
-                <span className="pval" style={{ color: "var(--amber)" }}>
-                  {selectedMvp.american > 0 ? `+${selectedMvp.american}` : selectedMvp.american}
-                  <span style={{ color: "var(--dim)", fontWeight: 500, marginLeft: 6 }}>
-                    ({(selectedMvp.probability * 100).toFixed(1)}%)
-                  </span>
-                </span>
-              </div>
-            )}
+            {marketTop}
             {selectedSeason && (
               <>
                 <div className="prow">
@@ -625,25 +673,7 @@ export default function Rankings() {
                 <span className="pval">{Math.round(fantasyCalcValue(fcValues, selectedPlayer))}</span>
               </div>
             )}
-            {selectedProps && selectedProps.length > 0 && (
-              <div className="prow" style={{ flexDirection: "column", alignItems: "stretch", gap: 7 }}>
-                <span className="plabel">Player Props</span>
-                {selectedProps.map((p, i) => (
-                  <div
-                    key={`${p.stat}-${i}`}
-                    style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}
-                  >
-                    <span style={{ color: "var(--muted)" }}>{p.stat}</span>
-                    <span className="num" style={{ color: "var(--amber)", fontWeight: 600 }}>
-                      {p.line != null ? `${p.line} ` : ""}
-                      {p.overOdds ?? "—"}
-                      {p.underOdds ? ` / ${p.underOdds}` : ""}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
+            {marketProps}
             <div className="foot">
               Tier is Fantis&rsquo; own starter grouping. ADP and projected points are live
               from Sleeper&rsquo;s public API; MVP odds and player props are live from
@@ -659,8 +689,51 @@ export default function Rankings() {
             </div>
           </div>
           </>
+            }
+          />
         )}
       </div>
     </section>
+  );
+}
+
+// Clicking a ranking opens the same full player card used in the league views (General / Logs / Career /
+// News stats). Its data hooks (the player map, trade values) only mount once a player is clicked, so the
+// Rankings page itself stays light. A player Sleeper can't match falls back to the quick side panel.
+function RankCard({
+  player,
+  id,
+  adp,
+  poolSize,
+  extra,
+  onClose,
+  fallback,
+}: {
+  player: Player;
+  id: string | null;
+  adp: number | null;
+  poolSize: number;
+  extra: ReactNode;
+  onClose: () => void;
+  fallback: ReactNode;
+}) {
+  const { pmap, loading } = usePlayerMap();
+  const values = useTradeValues();
+  const entry = id && pmap ? pmap[id] : undefined;
+  if (loading) return null;
+  if (!id || !entry) return <>{fallback}</>;
+  const val = values[player.name] ?? values[stripSuffix(player.name)];
+  return (
+    <PlayerCard
+      id={id}
+      entry={entry}
+      adp={adp}
+      posRank={player.posRank}
+      tier={player.tier}
+      value={val?.value ?? null}
+      poolSize={poolSize}
+      onClose={onClose}
+      extra={extra}
+    />
   );
 }
