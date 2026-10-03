@@ -204,6 +204,12 @@ export default function TierBoard({
     flat.forEach((p, i) => (map[p.name] = ranks[i]));
     return map;
   }, [flat]);
+  // Overall rank (1 = best on the whole board) — what "where is he in my list" means.
+  const overallByName = useMemo(() => {
+    const m: Record<string, number> = {};
+    flat.forEach((p, i) => (m[p.name] = i + 1));
+    return m;
+  }, [flat]);
 
   const moveWithinTier = (tier: number, idx: number, dir: -1 | 1) => {
     commit((b) => {
@@ -904,6 +910,7 @@ export default function TierBoard({
                       onChange={() => toggleSelected(p.name)}
                       style={{ flex: "none", margin: 0 }}
                     />
+                    <span className="ovr" title="Overall rank on your board">#{overallByName[p.name]}</span>
                     <span className="pos" style={posChipStyle(p.pos)}>
                       {p.pos}
                       {rankByName[p.name]}

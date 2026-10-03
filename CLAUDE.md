@@ -2675,3 +2675,9 @@ clicked through in a browser (admin gate).
   `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
 - Still open from the same suggestion list: ranking-vs-FantasyCalc/ADP disagreement flags; league-page "Optimize this league" link; multi-select
   on My Leagues; Action Queue alerts that open the actual fix.
+
+### Tier board: bigger arrows + overall rank number (2026-10; requested explicitly by the owner)
+
+"arrows bigger / anything else that can help?" The left-side ▲▼ are now side by side, 42x36px with a 16px glyph (were a 30x18 stack), and each row shows
+its overall board rank (`#12`, from list order — the thing "where is he in my list" actually means) before the position chip (QB3 etc.). Names were
+already enlarged (15.5px / 650). Not clicked through in a browser (admin gate).
