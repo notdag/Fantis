@@ -2846,3 +2846,16 @@ inside the league views. Now a Rankings click opens that same card:
   player props. The old side panel remains only as the **fallback for players Sleeper can't match** (e.g. Travis Hunter), so every row still opens something.
 - Verified in the dev server: Chris Olave → card with Tier A / ADP 5 / WR6 / Value / FC Value, General extras (vs ATL, −2.5, O/U 47.5, 55% to win, props), Logs tab with the full per-game table, close works, old panel not opened;
   Travis Hunter → fallback panel. `tsc` clean; PlayerCard/Rankings lint findings are identical to the committed baseline (pre-existing).
+
+### Player card: 2026 season + the weeks played + Sleeper projections (2026-10; requested explicitly by the owner — "incorporate 2026 and the weeks they played + projections from sleeper")
+
+The card (`components/PlayerCard.tsx`) was hard-wired to 2025 back to 2020. Now:
+- **2026 is the default season** in the weekly chart, the game log and the Career tab (`CARD_SEASONS = ["2026", ...HISTORICAL_SEASONS]` in `lib/sleeper.ts`). The stats fetchers already took any season; the played weeks are real Sleeper box scores.
+- **Projections for weeks not yet played**, current season only: new `getPlayerProjectedWeeks(playerId, season, fromWeek)` (`lib/sleeper.ts`) reads Sleeper's per-week projections endpoint (`/projections/nfl/regular/{season}/{week}`, weeks
+  `projWeek`..18), keeps only players with a real projection (pts_ppr > 0), and carries pass/rush/receiving attempts, yards, TDs, targets and receptions so projected rows fill the same columns as played games. **In-memory only, fetched once per
+  page session** (≈15 × 600KB, concurrently) — nothing goes to localStorage, which is already near quota. A week with no real projection (bye, out) is simply absent.
+- **Weekly chart**: solid bars = real results; **dashed bars with "~" labels = Sleeper projections**; a one-line summary ("3 games played: 70.5 pts (23.5/game) · Sleeper projects 262.6 more over 14 games"). **Game log**: projected rows are italic, tagged `proj`,
+  show "~" PPR, and are excluded from the colour scales (they never move the self-relative ranges). A week whose game has actually been played (even the in-progress Thursday game) shows the real result, never the projection. Bye weeks stay out.
+  Adj PPG / Rec % / RZ labels follow the selected season ('26). **Career** gets a 2026 row (games played so far only; no projections mixed into history).
+- Verified in the dev server on Chris Olave: 2026 default; weeks 1–3 real (28.2, 22.6, 19.7), weeks 4–18 projected, week 8 bye bar absent, 17 log rows (3 real + 14 projected), Career 2026 = 3 GP / 70.5 / 23.5 (matches the chart);
+  2025 log unchanged (17 rows, no projected rows). `tsc` clean; PlayerCard lint findings identical to the committed baseline.

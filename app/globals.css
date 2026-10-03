@@ -733,3 +733,6 @@ a.link:hover{text-decoration:underline}
 .pcardextra .prow:first-child{border-top:0}
 .pcardextra .plabel{color:var(--muted)}
 .pcardextra .pval{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+
+/* Player card: marker on game-log rows that are Sleeper projections (weeks not yet played). */
+.projtag{margin-left:5px;padding:0 4px;border:1px dashed var(--muted);border-radius:4px;font-size:9px;font-style:normal;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);vertical-align:middle}

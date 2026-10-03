@@ -4,7 +4,9 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import {
   getPlayerGameLog,
   getSeasonWeeklyStats,
-  HISTORICAL_SEASONS,
+  CARD_SEASONS,
+  getPlayerProjectedWeeks,
+  SEASONS,
   type WeeklyStatLine,
 } from "@/lib/sleeper";
 import { posChipStyle, POS_COLOR, TIER_COLOR, TIER_LABELS } from "@/lib/players";
@@ -18,7 +20,9 @@ import { useProjections } from "@/lib/useProjections";
 import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import type { PlayerMapEntry } from "@/lib/types";
 
-const CHART_SEASONS = HISTORICAL_SEASONS;
+// Current (partly played) season first, then history. The current season also shows Sleeper's projections for
+// the weeks that haven't been played yet.
+const CHART_SEASONS = CARD_SEASONS;
 type Tab = "general" | "logs" | "career" | "news";
 
 // Real "last updated" timestamp Sleeper attaches to its own player news feed
@@ -242,6 +246,25 @@ export default function PlayerCard({
   // schedule (see getSeasonSchedule) so bye weeks can be told apart from
   // weeks the team played but this player didn't suit up.
   const [logSeason, setLogSeason] = useState(CHART_SEASONS[0]);
+
+  // Sleeper's projections for the not-yet-played weeks of the CURRENT season (weekly chart + game log). Loaded once
+  // the card needs them and a current-season view is showing; the files are fetched once per page session.
+  const [projByWeek, setProjByWeek] = useState<Record<number, WeeklyStatLine> | null>(null);
+  const needProj = (tab === "general" && chartSeason === SEASONS[0]) || (tab === "logs" && logSeason === SEASONS[0]);
+  useEffect(() => {
+    if (!needProj || projWeek == null || projByWeek) return;
+    let cancelled = false;
+    getPlayerProjectedWeeks(id, SEASONS[0], projWeek)
+      .then((p) => {
+        if (!cancelled) setProjByWeek(p);
+      })
+      .catch(() => {
+        if (!cancelled) setProjByWeek({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [needProj, projWeek, id, projByWeek]);
   const [logLines, setLogLines] = useState<WeeklyStatLine[] | null>(null);
   const [logSchedule, setLogSchedule] = useState<Record<number, Record<string, string>> | null>(null);
   const [logInjuryWeeks, setLogInjuryWeeks] = useState<Record<number, WeeklyInjuryStatus> | null>(null);
@@ -359,16 +382,31 @@ export default function PlayerCard({
   }, [tab, entry.espnId]);
 
   const played = (weekly ?? []).filter((w): w is number => w != null);
-  const maxPts = Math.max(1, ...played);
+  const chartIsCurrent = chartSeason === SEASONS[0];
+  // Projected points for weeks not yet played (current season only); null = no projection / already played.
+  const projAt = (i: number): number | null =>
+    chartIsCurrent && projWeek != null && i + 1 >= projWeek && (weekly?.[i] ?? null) == null
+      ? projByWeek?.[i + 1]?.pts ?? null
+      : null;
+  const projList = Array.from({ length: 18 }, (_, i) => projAt(i)).filter((v): v is number => v != null);
+  const maxPts = Math.max(1, ...played, ...projList);
+  const playedTotal = played.reduce((a, b) => a + b, 0);
+  const projTotal = projList.reduce((a, b) => a + b, 0);
   const cols = LOG_COLUMNS[entry.p] ?? LOG_COLUMNS.WR;
 
   // Real bye weeks (team missing from that week's schedule entirely) are
   // dropped; weeks the team played but this player has no stat line
   // (DNP/inactive) still show a row with dashes, per design — a silent gap
   // in the WK column read as a bug, not "this guy's team had a bye".
-  const logRows = (logLines ?? []).filter((l) => logSchedule?.[l.week]?.[entry.t]);
+  const logIsCurrent = logSeason === SEASONS[0];
+  const mergedLogLines = (logLines ?? []).map((l) =>
+    logIsCurrent && l.pts == null && projWeek != null && l.week >= projWeek && projByWeek?.[l.week] ? projByWeek[l.week] : l
+  );
+  const logRows = mergedLogLines.filter((l) => logSchedule?.[l.week]?.[entry.t]);
+  // Colour ranges are computed from real games only — projections never move the scale.
+  const realLogRows = logRows.filter((l) => !l.projected);
   const seasonValues = (key: keyof WeeklyStatLine) =>
-    logRows.map((l) => l[key]).filter((v): v is number => v != null);
+    realLogRows.map((l) => l[key]).filter((v): v is number => v != null);
   const rankValues = seasonValues("posRank");
   const snapValues = seasonValues("snapPct");
   const colValues = Object.fromEntries(cols.map((c) => [c.key, seasonValues(c.key)]));
@@ -548,30 +586,68 @@ export default function PlayerCard({
                   ))}
                 </select>
               </div>
+              {chartIsCurrent && !chartLoading && (played.length > 0 || projList.length > 0) && (
+                <p className="hint" style={{ margin: "0 0 8px" }}>
+                  {played.length > 0 && (
+                    <>
+                      <b>{played.length}</b> game{played.length === 1 ? "" : "s"} played: <b>{playedTotal.toFixed(1)}</b> pts (
+                      {(playedTotal / played.length).toFixed(1)}/game)
+                    </>
+                  )}
+                  {played.length > 0 && projList.length > 0 && " · "}
+                  {projList.length > 0 && (
+                    <>
+                      Sleeper projects <b>{projTotal.toFixed(1)}</b> more over {projList.length} game{projList.length === 1 ? "" : "s"} (dashed bars)
+                    </>
+                  )}
+                </p>
+              )}
               {chartLoading ? (
                 <p className="hint">Loading real weekly results…</p>
-              ) : played.length === 0 ? (
+              ) : played.length === 0 && projList.length === 0 ? (
                 <p className="hint">No games played that season.</p>
               ) : (
                 <div className="wchart">
-                  {(weekly ?? []).map((pts, i) => {
-                    const pct = pts != null ? Math.max(4, (pts / maxPts) * 100) : 0;
-                    const barColor = pprTone(pts) ?? "var(--line)";
+                  {Array.from({ length: 18 }, (_, i) => weekly?.[i] ?? null).map((pts, i) => {
+                    const proj = projAt(i);
+                    const shown = pts ?? proj;
+                    const pct = shown != null ? Math.max(4, (shown / maxPts) * 100) : 0;
+                    const barColor = pprTone(shown) ?? "var(--line)";
                     return (
                       <div
                         className="wbar"
                         key={i}
-                        title={pts != null ? `Week ${i + 1}: ${pts.toFixed(1)} pts` : `Week ${i + 1}: did not play`}
+                        title={
+                          pts != null
+                            ? `Week ${i + 1}: ${pts.toFixed(1)} pts`
+                            : proj != null
+                              ? `Week ${i + 1}: ${proj.toFixed(1)} pts projected by Sleeper (not played yet)`
+                              : `Week ${i + 1}: did not play`
+                        }
                       >
                         <div className="wbarchart">
-                          {pts != null && <span className="wbarval">{pts.toFixed(1)}</span>}
+                          {shown != null && (
+                            <span className="wbarval" style={proj != null ? { fontStyle: "italic", color: "var(--muted)" } : undefined}>
+                              {proj != null ? "~" : ""}
+                              {shown.toFixed(1)}
+                            </span>
+                          )}
                           <div
                             className="wbarfill"
-                            style={{
-                              height: `${pct}%`,
-                              background: pts == null ? barColor : `color-mix(in srgb, ${barColor} 55%, var(--ink))`,
-                              borderTop: pts == null ? undefined : `2px solid ${barColor}`,
-                            }}
+                            style={
+                              proj != null
+                                ? {
+                                    height: `${pct}%`,
+                                    background: "color-mix(in srgb, var(--muted) 14%, transparent)",
+                                    border: "1.5px dashed var(--muted)",
+                                    borderBottom: 0,
+                                  }
+                                : {
+                                    height: `${pct}%`,
+                                    background: pts == null ? barColor : `color-mix(in srgb, ${barColor} 55%, var(--ink))`,
+                                    borderTop: pts == null ? undefined : `2px solid ${barColor}`,
+                                  }
+                            }
                           />
                         </div>
                         <span className="wbarwk">{i + 1}</span>
@@ -581,7 +657,7 @@ export default function PlayerCard({
                 </div>
               )}
               <p className="hint" style={{ marginTop: 8 }}>
-                Real per-week PPR results from Sleeper&rsquo;s public stats, not projections.
+                Solid bars are real per-week PPR results from Sleeper&rsquo;s public stats; dashed bars (current season only) are Sleeper&rsquo;s projections for weeks not yet played.
                 Adj PPG averages only the {chartSeason} games where this player&rsquo;s snap
                 share was at least half their own season median (real box-score data, not
                 a hand-picked exclusion) &mdash; shown as &ldquo;&mdash;&rdquo; without at least 3 such
@@ -630,14 +706,20 @@ export default function PlayerCard({
                   <tbody>
                     {logRows.map((l) => {
                       const opp = logSchedule?.[l.week]?.[entry.t];
-                      const ptsTone = pprTone(l.pts);
-                      const rankTone = l.posRank != null ? statTone(l.posRank, rankValues, false) : null;
-                      const snapTone = l.snapPct != null ? statTone(l.snapPct, snapValues) : null;
+                      const proj = !!l.projected;
+                      const ptsTone = proj ? null : pprTone(l.pts);
+                      const rankTone = !proj && l.posRank != null ? statTone(l.posRank, rankValues, false) : null;
+                      const snapTone = !proj && l.snapPct != null ? statTone(l.snapPct, snapValues) : null;
                       const injuryWeek = logInjuryWeeks?.[l.week];
                       return (
-                        <tr key={l.week}>
+                        <tr key={l.week} style={proj ? { fontStyle: "italic", color: "var(--muted)" } : undefined}>
                           <td>
                             {l.week}
+                            {proj && (
+                              <span className="projtag" title="Sleeper projection for a week not yet played">
+                                proj
+                              </span>
+                            )}
                             {injuryWeek && (
                               <span
                                 className="wkinjdot"
@@ -647,7 +729,7 @@ export default function PlayerCard({
                           </td>
                           <td>{opp ? `@${opp}` : "—"}</td>
                           <td className="num" style={toneStyle(ptsTone)}>
-                            {l.pts != null ? l.pts.toFixed(1) : "—"}
+                            {l.pts != null ? `${proj ? "~" : ""}${l.pts.toFixed(1)}` : "—"}
                           </td>
                           <td className="num" style={toneStyle(rankTone)}>
                             {l.posRank ?? "—"}
@@ -657,10 +739,10 @@ export default function PlayerCard({
                           </td>
                           {cols.map((c) => {
                             const v = l[c.key] as number | null;
-                            const tone = v != null ? statTone(v, colValues[c.key]) : null;
+                            const tone = !proj && v != null ? statTone(v, colValues[c.key]) : null;
                             return (
                               <td className="num" key={c.key} style={toneStyle(tone)}>
-                                {v == null ? "—" : c.decimals ? v.toFixed(c.decimals) : v}
+                                {v == null ? "—" : proj ? v.toFixed(1) : c.decimals ? v.toFixed(c.decimals) : v}
                               </td>
                             );
                           })}
@@ -679,7 +761,7 @@ export default function PlayerCard({
               </div>
             )}
             <p className="hint" style={{ marginTop: 8 }}>
-              Real box-score stats from Sleeper; opponent and bye weeks from
+              Real box-score stats from Sleeper (rows marked proj, current season only, are Sleeper\u2019s projections for weeks not yet played, shown in italics with \u201C~\u201D \u2014 they never affect the colour scale); opponent and bye weeks from
               ESPN&rsquo;s real schedule (bye weeks are left out entirely, not
               shown as a blank row). Cell color shows how that game compares
               to this player&rsquo;s own {logSeason} range for that stat &mdash; real,

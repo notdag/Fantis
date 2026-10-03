@@ -380,6 +380,9 @@ export async function getSeasonWeeklyStats(
 // decision rather than the data's actual limit.
 export const HISTORICAL_SEASONS = ["2025", "2024", "2023", "2022", "2021", "2020"];
 
+// Seasons the player card can show: the current (partly played) season first, then history.
+export const CARD_SEASONS = ["2026", ...HISTORICAL_SEASONS];
+
 interface RawWeekStat {
   pts_ppr?: number;
   pos_rank_ppr?: number;
@@ -424,6 +427,8 @@ export interface WeeklyStatLine {
   recRzTgt: number | null;
   targetSharePct: number | null;
   rushSharePct: number | null;
+  // true = a Sleeper PROJECTION for an upcoming week (every stat here is a projected value), not a result.
+  projected?: boolean;
 }
 
 // One real week's full stat payload (~500KB) is too large to keep in
@@ -510,4 +515,90 @@ export async function getPlayerGameLog(playerId: string, season: string): Promis
     });
   }
   return lines;
+}
+
+
+// ---- Sleeper weekly PROJECTIONS for upcoming weeks (player card, current season) ----
+// Sleeper serves one ~600KB projections file per week with every player in it. We fetch the requested weeks
+// concurrently ONCE per page session and keep only the compact per-player stat lines for players with a real
+// projection (≈1,000 per week) in memory — nothing is written to localStorage (it's already near its quota
+// with the player dump and season totals).
+interface RawProj {
+  pts_ppr?: number;
+  pass_att?: number;
+  pass_yd?: number;
+  pass_td?: number;
+  pass_int?: number;
+  rush_att?: number;
+  rush_yd?: number;
+  rush_td?: number;
+  rec_tgt?: number;
+  rec?: number;
+  rec_yd?: number;
+  rec_td?: number;
+}
+
+const projWeekMemo = new Map<string, Promise<Record<string, WeeklyStatLine>>>();
+
+function projectedWeek(season: string, week: number): Promise<Record<string, WeeklyStatLine>> {
+  const key = `${season}:${week}`;
+  let p = projWeekMemo.get(key);
+  if (!p) {
+    p = jget<Record<string, RawProj | null>>(`${S}/projections/nfl/regular/${season}/${week}`)
+      .then((raw) => {
+        const out: Record<string, WeeklyStatLine> = {};
+        for (const id in raw) {
+          const r = raw[id];
+          if (!r || !(r.pts_ppr && r.pts_ppr > 0)) continue; // no real projection (bye week, inactive, K/DEF noise)
+          out[id] = {
+            week,
+            pts: r.pts_ppr,
+            posRank: null,
+            snapPct: null,
+            passAtt: r.pass_att ?? null,
+            passYd: r.pass_yd ?? null,
+            passTd: r.pass_td ?? null,
+            passInt: r.pass_int ?? null,
+            passRzAtt: null,
+            rushAtt: r.rush_att ?? null,
+            rushYd: r.rush_yd ?? null,
+            rushTd: r.rush_td ?? null,
+            rushRzAtt: null,
+            recTgt: r.rec_tgt ?? null,
+            rec: r.rec ?? null,
+            recYd: r.rec_yd ?? null,
+            recTd: r.rec_td ?? null,
+            recYpt: null,
+            recRzTgt: null,
+            targetSharePct: null,
+            rushSharePct: null,
+            projected: true,
+          };
+        }
+        return out;
+      })
+      .catch((e) => {
+        projWeekMemo.delete(key); // don't cache a failure
+        throw e;
+      });
+    projWeekMemo.set(key, p);
+  }
+  return p;
+}
+
+// Projected stat lines for one player, weeks `fromWeek`..18, keyed by week. A week with no real projection
+// (bye, out) is simply absent. Never throws on a single missing week.
+export async function getPlayerProjectedWeeks(
+  playerId: string,
+  season: string,
+  fromWeek: number
+): Promise<Record<number, WeeklyStatLine>> {
+  const weeks = Array.from({ length: Math.max(0, SEASON_WEEKS - fromWeek + 1) }, (_, i) => fromWeek + i);
+  const results = await Promise.all(weeks.map((w) => projectedWeek(season, w).catch(() => ({}) as Record<string, WeeklyStatLine>)));
+  const out: Record<number, WeeklyStatLine> = {};
+  results.forEach((byId, i) => {
+    const line = byId[playerId];
+    if (line) out[weeks[i]] = line;
+  });
+  return out;
 }
