@@ -152,6 +152,8 @@ export interface DropSignals {
   // Hard exclude for "Fix my lineups" — never proposed as a starter, full
   // stop (stronger than `avoid`, which still starts him as a last resort).
   neverStart?: ReadonlySet<string>;
+  // "Flex first" order (index 0 = most wanted in FLEX) — tie-break only.
+  flexFirstOrder?: string[];
   // Free-text memory the owner attached to a player, if any — surfaced as
   // an extra rationale line where a player comes up in a real proposal.
   // Purely informational; never parsed or acted on.

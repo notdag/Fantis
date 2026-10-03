@@ -161,6 +161,7 @@ export default function BulkOptimize({
 
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
   const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
+  const flexFirstIndex = useMemo(() => new Map(prefs.flexFirst.map((id, i) => [id, i])), [prefs.flexFirst]);
   const neverStartSet = useMemo(() => new Set(prefs.neverStart), [prefs.neverStart]);
 
   const { rows, lockedCount, unavailableCount } = useMemo(() => {
@@ -206,6 +207,7 @@ export default function BulkOptimize({
           priorityRank: (id) => priorityIndex.get(id),
           avoid: (id) => avoidSet.has(id),
           neverStart: (id) => neverStartSet.has(id),
+          flexFirst: (id) => flexFirstIndex.get(id),
           rankOrder: mode === "rankings" ? (id) => ranks?.get(id)?.order : undefined,
           gameDay: lockEarlyFlex ? gameDay : undefined,
         });
@@ -222,7 +224,7 @@ export default function BulkOptimize({
     }
     out.sort((a, b) => a.week - b.week || b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
+  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
@@ -232,7 +234,7 @@ export default function BulkOptimize({
     if (!id) return "";
     const inj = pmap?.[id]?.inj;
     const health = inj === "Questionable" ? " (Q)" : inj === "Doubtful" ? " (D)" : "";
-    return `${priorityIndex.has(id) ? " ★" : neverStartSet.has(id) ? " ⛔" : avoidSet.has(id) ? " ⊘" : ""}${health}`;
+    return `${priorityIndex.has(id) ? " ★" : neverStartSet.has(id) ? " ⛔" : avoidSet.has(id) ? " ⊘" : flexFirstIndex.has(id) ? " ⇄" : ""}${health}`;
   };
   // Show both sides of every swap with the numbers behind it (your ranking
   // and Sleeper's projection), so it's clear why each move is proposed.
@@ -394,7 +396,7 @@ export default function BulkOptimize({
             {prefs.priority.length + prefs.avoid.length + prefs.neverStart.length > 0 ? (
               <>
                 Following your player preferences ({prefs.priority.length} priority, {prefs.avoid.length}{" "}
-                avoid, {prefs.neverStart.length} never start): ★ = priority, ⊘ = avoid, ⛔ = never start.{" "}
+                avoid, {prefs.neverStart.length} never start): ★ = priority, ⊘ = avoid, ⛔ = never start, ⇄ = flex first.{" "}
                 {prefsDirty && <span style={{ color: "var(--amber)" }}>Unsaved edits are included. </span>}
               </>
             ) : (

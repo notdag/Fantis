@@ -1646,6 +1646,10 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           priorityRank: (id: string) => prio.get(id),
           avoid: (id: string) => env.signals.avoid.has(id),
           neverStart: (id: string) => !!env.signals.neverStart?.has(id),
+          flexFirst: (id: string) => {
+            const i = env.signals.flexFirstOrder?.indexOf(id) ?? -1;
+            return i < 0 ? undefined : i;
+          },
         };
         const res = optimizeLineup({
           ...base,

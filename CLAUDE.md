@@ -2636,3 +2636,17 @@ New `adaptivePosRanks` (`lib/topPlayersWatch.ts`) re-numbers each position count
 (same Out/IR/PUP/Sus/COV/NA/DNR + bye check as before), so the window slides: the next healthy player takes the spot,
 and injured players are never watched. Priority-list players are unchanged (still reported as unavailable if hurt).
 Tests: `npx tsx scripts/testTopPlayersWatch.ts` (5). The Optimize tool itself already excluded Out/IR from every lineup.
+
+### "Flex first" list for the lineup tools (2026-10; requested explicitly by the owner)
+
+"an easier way to categorize them all for the flex spots ... whichever is easiest to rank and adapt." Of the three options
+offered, picked the one that reuses the existing My players lists: a fifth, **ordered** list, **Flex first**
+(Lineups → My players → "+ Flex first", reorder with ↑/↓), stored as `PlayerPreference.kind = "flex_first"` (no schema change —
+`kind` is a free string). `lineupOptimizer`'s new `flexFirst` input nudges a listed player into a FLEX-type slot and out of his
+true slot (freeing it for someone else); list order decides who wins when several want FLEX.
+- **Tie-break only**: bigger than the day-of-week nudge, far below any real projection gap (a clearly better player still
+  starts), and the hard Thu/Fri/Sat RB/WR-out-of-FLEX rule still wins. Rank window capped at 20 so the total swing stays tiny;
+  the per-step size (0.0006) is deliberately > the stay-put bonus or adjacent list positions would never resolve — an earlier
+  step of 1e-6 failed its own test for exactly that reason.
+- Same exclusivity as the other lists (one list per player; priority wins). Wired into Optimize (`⇄` marker) and chat "Fix my lineups".
+- Tests: `npx tsx scripts/testFlexFirst.ts` (6); lineup optimizer (21), command center (433 + 84) unchanged. Not clicked through in a browser (admin gate).

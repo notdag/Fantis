@@ -18,6 +18,7 @@ export async function GET() {
     avoid: rows.filter((r) => r.kind === "avoid").map((r) => r.playerId),
     irRelease: rows.filter((r) => r.kind === "ir_release").map((r) => r.playerId),
     neverStart: rows.filter((r) => r.kind === "never_start").map((r) => r.playerId),
+    flexFirst: rows.filter((r) => r.kind === "flex_first").map((r) => r.playerId),
   });
 }
 
@@ -25,7 +26,7 @@ export async function GET() {
 // ordered lists, same "full replace" approach as the curated-player save).
 export async function PUT(req: Request) {
   if (!(await authorized())) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
-  const body = (await req.json().catch(() => null)) as { priority?: unknown; avoid?: unknown; irRelease?: unknown; neverStart?: unknown } | null;
+  const body = (await req.json().catch(() => null)) as { priority?: unknown; avoid?: unknown; irRelease?: unknown; neverStart?: unknown; flexFirst?: unknown } | null;
   const clean = (v: unknown): string[] | null => {
     if (!Array.isArray(v)) return null;
     const out: string[] = [];
@@ -39,7 +40,8 @@ export async function PUT(req: Request) {
   const avoid = clean(body?.avoid ?? []);
   const irRelease = clean(body?.irRelease ?? []);
   const neverStart = clean(body?.neverStart ?? []);
-  if (!priority || !avoid || !irRelease || !neverStart) return NextResponse.json({ error: "Invalid lists." }, { status: 400 });
+  const flexFirst = clean(body?.flexFirst ?? []);
+  if (!priority || !avoid || !irRelease || !neverStart || !flexFirst) return NextResponse.json({ error: "Invalid lists." }, { status: 400 });
 
   // A player can only be in one list at a time (playerId is the primary
   // key) — priority wins over everything else (a protected player is never
@@ -48,6 +50,7 @@ export async function PUT(req: Request) {
   const avoidOnly = avoid.filter((id) => !priority.includes(id));
   const irReleaseOnly = irRelease.filter((id) => !priority.includes(id) && !avoidOnly.includes(id));
   const neverStartOnly = neverStart.filter((id) => !priority.includes(id) && !avoidOnly.includes(id) && !irReleaseOnly.includes(id));
+  const flexFirstOnly = flexFirst.filter((id) => !priority.includes(id) && !avoidOnly.includes(id) && !irReleaseOnly.includes(id) && !neverStartOnly.includes(id));
   await db.$transaction([
     db.playerPreference.deleteMany({}),
     db.playerPreference.createMany({
@@ -56,8 +59,9 @@ export async function PUT(req: Request) {
         ...avoidOnly.map((playerId) => ({ playerId, kind: "avoid", rank: 0 })),
         ...irReleaseOnly.map((playerId, rank) => ({ playerId, kind: "ir_release", rank })),
         ...neverStartOnly.map((playerId) => ({ playerId, kind: "never_start", rank: 0 })),
+        ...flexFirstOnly.map((playerId, rank) => ({ playerId, kind: "flex_first", rank })),
       ],
     }),
   ]);
-  return NextResponse.json({ ok: true, priority: priority.length, avoid: avoidOnly.length, irRelease: irReleaseOnly.length, neverStart: neverStartOnly.length });
+  return NextResponse.json({ ok: true, priority: priority.length, avoid: avoidOnly.length, irRelease: irReleaseOnly.length, neverStart: neverStartOnly.length, flexFirst: flexFirstOnly.length });
 }

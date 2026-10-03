@@ -91,14 +91,26 @@ export default function PlayerPreferences({
   const nameOf = (id: string) => pmap?.[id]?.n ?? id;
   const posOf = (id: string) => pmap?.[id]?.p;
 
-  const addPriority = (id: string) =>
-    onChange({ priority: [...prefs.priority.filter((x) => x !== id), id], avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: prefs.neverStart.filter((x) => x !== id) });
-  const addAvoid = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: [...prefs.avoid.filter((x) => x !== id), id], irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: prefs.neverStart.filter((x) => x !== id) });
-  const addIrRelease = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: [...prefs.irRelease.filter((x) => x !== id), id], neverStart: prefs.neverStart.filter((x) => x !== id) });
-  const addNeverStart = (id: string) =>
-    onChange({ priority: prefs.priority.filter((x) => x !== id), avoid: prefs.avoid.filter((x) => x !== id), irRelease: prefs.irRelease.filter((x) => x !== id), neverStart: [...prefs.neverStart.filter((x) => x !== id), id] });
+  // A player lives on exactly one list (the table's playerId is its primary
+  // key), so adding him to one removes him from the rest.
+  const assign = (id: string, list: "priority" | "avoid" | "irRelease" | "neverStart" | "flexFirst") => {
+    const next: PlayerPrefs = { ...prefs };
+    for (const k of ["priority", "avoid", "irRelease", "neverStart", "flexFirst"] as const) next[k] = prefs[k].filter((x) => x !== id);
+    next[list] = [...next[list], id];
+    onChange(next);
+  };
+  const addPriority = (id: string) => assign(id, "priority");
+  const addAvoid = (id: string) => assign(id, "avoid");
+  const addIrRelease = (id: string) => assign(id, "irRelease");
+  const addNeverStart = (id: string) => assign(id, "neverStart");
+  const addFlexFirst = (id: string) => assign(id, "flexFirst");
+  const moveFlexFirst = (i: number, delta: number) => {
+    const next = [...prefs.flexFirst];
+    const j = i + delta;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange({ ...prefs, flexFirst: next });
+  };
   const move = (i: number, delta: number) => {
     const next = [...prefs.priority];
     const j = i + delta;
@@ -175,6 +187,7 @@ export default function PlayerPreferences({
               <span className="portmeta">{p.t}</span>
               <button className="btn ghost sm" onClick={() => { addPriority(p.id); setQuery(""); }}>+ Priority</button>
               <button className="btn ghost sm" onClick={() => { addAvoid(p.id); setQuery(""); }}>+ Avoid</button>
+              <button className="btn ghost sm" onClick={() => { addFlexFirst(p.id); setQuery(""); }}>+ Flex first</button>
               <button className="btn ghost sm" onClick={() => { addIrRelease(p.id); setQuery(""); }}>+ IR Release</button>
               <button className="btn ghost sm" onClick={() => { addNeverStart(p.id); setQuery(""); }}>+ Never Start</button>
             </TableRow>
@@ -213,6 +226,33 @@ export default function PlayerPreferences({
               row(
                 id,
                 <button className="btn ghost sm" onClick={() => onChange({ ...prefs, avoid: prefs.avoid.filter((x) => x !== id) })}>Remove</button>
+              )
+            )}
+          </DataTable>
+        )}
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <SectionHead level={3} title="Flex first (put these in FLEX before their own slot)" right={`${prefs.flexFirst.length}`} style={{ marginBottom: 8 }} />
+        <p className="hint" style={{ margin: "0 0 8px" }}>
+          Optimize prefers these players in a FLEX / superflex slot, leaving their own position
+          slot for someone else — top of the list wins when several want FLEX. It&rsquo;s a
+          tie-break: a clearly better projection still starts, and a Thu/Fri/Sat RB/WR is still
+          kept out of FLEX.
+        </p>
+        {prefs.flexFirst.length === 0 ? (
+          <p className="hint">Nobody yet — search above and click &ldquo;+ Flex first&rdquo;.</p>
+        ) : (
+          <DataTable>
+            {prefs.flexFirst.map((id, i) =>
+              row(
+                id,
+                <>
+                  <button className="btn ghost sm" disabled={i === 0} onClick={() => moveFlexFirst(i, -1)} aria-label="Move up">↑</button>
+                  <button className="btn ghost sm" disabled={i === prefs.flexFirst.length - 1} onClick={() => moveFlexFirst(i, 1)} aria-label="Move down">↓</button>
+                  <button className="btn ghost sm" onClick={() => onChange({ ...prefs, flexFirst: prefs.flexFirst.filter((x) => x !== id) })}>Remove</button>
+                </>,
+                `${i + 1}.`
               )
             )}
           </DataTable>

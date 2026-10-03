@@ -45,6 +45,13 @@ export interface OptimizeInput {
   // track) gets no nudge and no restriction. Passing this also turns on the
   // RB/WR-in-FLEX rule below — omit it entirely to leave slot choice purely
   // to points/rank, with no day awareness at all.
+  // The owner's "Flex first" list: index in that list (0 = most wanted in
+  // FLEX), undefined = not listed. A tie-break only — a listed player is
+  // nudged into a FLEX-type slot (and out of his true slot, which then goes
+  // to someone else) when the projections leave the choice close. Bigger than
+  // the day-of-week nudge, but still far below any real point difference, and
+  // the hard Thu/Fri/Sat RB/WR-out-of-FLEX rule below still wins over it.
+  flexFirst?: (id: string) => number | undefined;
   gameDay?: (id: string) => "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined;
 }
 
@@ -123,6 +130,10 @@ const DAY_TRUE_SLOT_BIAS: Record<string, number> = { THU: 0.0025, FRI: 0.002, SA
 // score in his own true slot). Scoped to RB/WR only, matching what was
 // asked for — a Thursday TE or QB in a flex-eligible slot is unaffected.
 // Only takes effect when the caller supplies real `gameDay` data.
+const FLEX_FIRST_BONUS = 0.003;
+// Swapping two flex-first players flips both signs (2x the step), so 2x the step must beat both slots' STAY_PUT_BONUS (2 x 0.0005); window capped so the total stays far below any real point gap.
+const FLEX_FIRST_RANK_STEP = 0.0006;
+const FLEX_FIRST_RANK_WINDOW = 20;
 const EARLY_DAYS = new Set(["THU", "FRI", "SAT"]);
 const BIG = 1e9;
 
@@ -243,7 +254,9 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
           const trueSlot = input.priorityRank?.(id) !== undefined && pos === slotCodes[slotIdx] ? PRIORITY_TRUE_SLOT_BONUS : 0;
           const bias = day ? (DAY_TRUE_SLOT_BIAS[day] ?? 0) : 0;
           const dayBonus = isFlexSlot ? -bias : bias;
-          row[c] = BIG - (weight(id) + trueSlot + dayBonus + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
+          const ff = input.flexFirst?.(id);
+          const flexBonus = ff === undefined ? 0 : (isFlexSlot ? 1 : -1) * (FLEX_FIRST_BONUS + (FLEX_FIRST_RANK_WINDOW - Math.min(ff, FLEX_FIRST_RANK_WINDOW)) * FLEX_FIRST_RANK_STEP);
+          row[c] = BIG - (weight(id) + trueSlot + dayBonus + flexBonus + (current[slotIdx] === id ? STAY_PUT_BONUS : 0));
         }
       }
       for (let c = pool.length; c < cols; c++) row[c] = BIG; // empty filler, weight 0

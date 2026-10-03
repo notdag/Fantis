@@ -14,15 +14,19 @@ export interface PlayerPrefs {
   // this is a real standing rule ("move X away from my lineup"), enforced
   // directly by the optimizer, not just a preference it weighs.
   neverStart: string[];
+  // Ordered "put these in FLEX first" list (index 0 = most wanted there).
+  // A tie-break in the optimizer, not a hard rule — see lineupOptimizer's
+  // flexFirst. A player can only be on one list, so priority wins.
+  flexFirst: string[];
 }
 
-export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [], irRelease: [], neverStart: [] };
+export const EMPTY_PREFS: PlayerPrefs = { priority: [], avoid: [], irRelease: [], neverStart: [], flexFirst: [] };
 
 export async function loadPrefs(): Promise<PlayerPrefs> {
   const res = await fetch("/api/manager/preferences");
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || "Couldn't load your player preferences.");
-  return { priority: body.priority ?? [], avoid: body.avoid ?? [], irRelease: body.irRelease ?? [], neverStart: body.neverStart ?? [] };
+  return { priority: body.priority ?? [], avoid: body.avoid ?? [], irRelease: body.irRelease ?? [], neverStart: body.neverStart ?? [], flexFirst: body.flexFirst ?? [] };
 }
 
 export async function savePrefs(prefs: PlayerPrefs): Promise<void> {
