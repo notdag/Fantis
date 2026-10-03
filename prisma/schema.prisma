@@ -126,6 +126,21 @@ model PlayerPreference {
   updatedAt DateTime @updatedAt
 }
 
+// Outside-source ranks the owner imports from their own CSV (e.g. Flock expert
+// rank and Mason Dodd rank) and wants shown next to their own rankings on the
+// /admin tier board. Display-only — never reorders anything. One row per
+// player; key = normalised name + "|" + position (see lib/refRanks.ts), so it
+// survives Sleeper id changes and matches the board, which is keyed by name.
+// An import replaces the whole table (same full-replace approach as RankedPlayer).
+model ReferenceRank {
+  key       String   @id
+  name      String
+  pos       String
+  expert    Int?
+  mason     Int?
+  updatedAt DateTime @updatedAt
+}
+
 // Free-text memory the owner can attach to any player — "he's dealing with
 // a nagging injury", "never trust his Thursday snap counts", etc. Purely
 // informational context surfaced back in chat rationale (never parsed or

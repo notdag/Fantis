@@ -3,7 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
 import { usePlayerMap } from "@/lib/usePlayerMap";
-import { clearRefRanks, refRankKey, saveRefRanks, useRefRanks, type RefRank } from "@/lib/refRanks";
+import {
+  clearLegacyRefRanks,
+  deleteRefRanks,
+  putRefRanks,
+  readLegacyRefRanks,
+  refRankKey,
+  refRanksFromRows,
+  type RefRankRow,
+  type RefRanks,
+} from "@/lib/refRanks";
 import {
   currentProjectionWeek,
   getProjections,
@@ -144,12 +153,15 @@ export default function TierBoard({
   initialPlayers,
   exposure,
   exposureLeagues,
+  initialRefRanks,
 }: {
   initialPlayers: Player[];
   // Sleeper player_id → how many of the owner's in-season, non-best-ball
   // leagues roster him (computed server-side from the synced Roster table).
   exposure: Record<string, number>;
   exposureLeagues: number;
+  // Expert / Mason reference ranks from the owner's imported CSV (stored in the database).
+  initialRefRanks: RefRanks;
 }) {
   const [board, setBoard] = useState<Board>(() => groupByTier(initialPlayers));
   const [savedBoard, setSavedBoard] = useState<Board>(board);
@@ -501,7 +513,33 @@ export default function TierBoard({
   const [importReorder, setImportReorder] = useState<boolean | null>(null); // null = default for the shape
   const [importTiers, setImportTiers] = useState(false);
   const [importSaveRefs, setImportSaveRefs] = useState(true);
-  const refRanks = useRefRanks();
+  const [refRanks, setRefRanks] = useState<RefRanks>(initialRefRanks);
+  // One-time: ranks uploaded by an earlier version were kept only in this
+  // browser. If the database has none yet, move them over so nothing is lost.
+  useEffect(() => {
+    if (initialRefRanks.count > 0) return;
+    const legacy = readLegacyRefRanks();
+    if (legacy.length === 0) return;
+    putRefRanks(legacy)
+      .then(() => {
+        setRefRanks(refRanksFromRows(legacy.map((r) => ({ ...r, updatedAt: new Date() }))));
+        clearLegacyRefRanks();
+      })
+      .catch(() => {});
+  }, [initialRefRanks.count]);
+  const saveRefsToDb = (rows: RefRankRow[]) => {
+    setRefRanks(refRanksFromRows(rows.map((r) => ({ ...r, updatedAt: new Date() }))));
+    putRefRanks(rows).catch((e: unknown) =>
+      setSaveMsg({
+        text: `Couldn't save the reference ranks to the database (${e instanceof Error ? e.message : "error"}) — they're showing for this visit only.`,
+        error: true,
+      })
+    );
+  };
+  const clearRefs = () => {
+    setRefRanks(refRanksFromRows([]));
+    deleteRefRanks().catch(() => setSaveMsg({ text: "Couldn't clear the saved reference ranks.", error: true }));
+  };
   const table = useMemo(() => (importText.trim() ? parseRankTable(importText) : null), [importText]);
   const reorder = importReorder ?? !table; // plain list: reorder by default; table: display-only by default
   const importMatches = useMemo<(PastedMatch | TableMatch)[]>(() => {
@@ -524,16 +562,14 @@ export default function TierBoard({
   }, [table, importMatches, flat]);
   // Saves Expert / Mason reference ranks for every matched row; returns how many players got one.
   const persistRefs = (matches: TableMatch[]): number => {
-    const refs: Record<string, RefRank> = {};
-    let n = 0;
+    const rows: RefRankRow[] = [];
     for (const m of matches) {
       if ((m.status !== "board" && m.status !== "add") || !m.name || !m.pos) continue;
       if (m.row.expert == null && m.row.mason == null) continue;
-      refs[refRankKey(looseKey(m.name), m.pos)] = { expert: m.row.expert, mason: m.row.mason };
-      n++;
+      rows.push({ key: refRankKey(looseKey(m.name), m.pos), name: m.name, pos: m.pos, expert: m.row.expert ?? null, mason: m.row.mason ?? null });
     }
-    if (n > 0) saveRefRanks(refs);
-    return n;
+    if (rows.length > 0) saveRefsToDb(rows);
+    return rows.length;
   };
   const onCsvFile = async (file: File | undefined) => {
     if (!file) return;
@@ -1106,8 +1142,8 @@ export default function TierBoard({
       {refRanks.count > 0 && (
         <p className="hint" style={{ margin: "0 0 8px" }}>
           Showing <b>E</b> (Expert) and <b>M</b> (Mason) reference ranks for {refRanks.count} players, imported{" "}
-          {refRanks.at ? new Date(refRanks.at).toLocaleDateString() : ""} (this browser only).{" "}
-          <button type="button" className="link" onClick={() => clearRefRanks()}>Clear</button>
+          {refRanks.at ? new Date(refRanks.at).toLocaleDateString() : ""} (saved to your account — shows on every device).{" "}
+          <button type="button" className="link" onClick={clearRefs}>Clear</button>
         </p>
       )}
       <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap", gap: 8 }}>

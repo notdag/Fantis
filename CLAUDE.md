@@ -2747,3 +2747,13 @@ for me to upload a CSV." The **Import list** panel now has **Upload CSV…** (re
 - **Persistence is still browser-local** (`localStorage`, `lib/refRanks.ts`): it survives reloads in that browser but does not follow the owner to another device/browser. Making it durable everywhere needs a new
   DB table = a migration on the shared Postgres, which needs the owner's explicit OK (see the harness gate noted under "League favorites/pins").
 - Tests: `npx tsx scripts/testRankTable.ts` (27). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).
+
+### Reference ranks now saved in the database (2026-10; requested explicitly by the owner — "if i upload it once, please make sure it's saved and flows")
+
+The Expert / Mason reference ranks from the CSV import were browser-local. Moved to Postgres with the owner's explicit OK for the migration: new **additive** table `ReferenceRank`
+(`key` PK = normalised name + "|" + POS, `name`, `pos`, `expert?`, `mason?`, `updatedAt`) — migration `20261002120000_add_reference_rank` (CREATE TABLE only; applied with `prisma migrate deploy`
+after `migrate status` showed it as the only pending migration). `GET/PUT/DELETE /api/admin/reference-ranks` (admin cookie; PUT is a full replace in one transaction, validates ints 0–5000, ≤3000 rows).
+`app/admin/page.tsx` loads the rows server-side and passes `initialRefRanks`, so an upload shows on every device/browser immediately, with no re-upload. Upload saves them straight away (Apply only governs
+board changes). **One-time migration of earlier uploads**: if the DB is empty and this browser still has the old localStorage data, the board copies it into the database and clears the local copy.
+If the database write fails, the board says so and shows the ranks for that visit only (never silently "saved"). `lib/refRanks.ts` is now types + API helpers (the localStorage store is gone).
+Round-trip checked against the real table with a probe row (written, read back through `refRanksFromRows`, deleted; table left empty). `tsc`/`eslint` clean. Not clicked through in a browser (admin gate).

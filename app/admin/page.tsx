@@ -6,6 +6,7 @@ import { isBestBall } from "@/lib/manager";
 import AdminLogin from "@/components/AdminLogin";
 import TierBoard from "@/components/TierBoard";
 import type { Player } from "@/lib/types";
+import { refRanksFromRows } from "@/lib/refRanks";
 
 // Not linked from the main nav and not indexable — reachable only if you
 // know the URL, same spirit as the passphrase gate below.
@@ -51,6 +52,9 @@ export default async function AdminPage() {
     }
   }
 
+  // Imported Expert / Mason reference ranks (display-only, shown next to the owner's own ranks).
+  const refRanks = authed ? refRanksFromRows(await db.referenceRank.findMany()) : refRanksFromRows([]);
+
   return (
     <div className="fantis">
       <div className="wrap">
@@ -61,7 +65,7 @@ export default async function AdminPage() {
             <span style={{ color: "var(--dim)", fontSize: 12, marginLeft: 6 }}>admin</span>
           </div>
         </nav>
-        {authed ? <TierBoard initialPlayers={initialPlayers} exposure={exposure} exposureLeagues={exposureLeagues} /> : <AdminLogin />}
+        {authed ? <TierBoard initialPlayers={initialPlayers} exposure={exposure} exposureLeagues={exposureLeagues} initialRefRanks={refRanks} /> : <AdminLogin />}
       </div>
     </div>
   );

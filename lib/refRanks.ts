@@ -3,22 +3,21 @@
 // next to their own rankings on the /admin tier board. Display-only — they
 // never reorder or re-tier anything by themselves.
 //
-// Stored in the browser's localStorage, not the database: a table would be a
-// migration on the shared Postgres (gated), and these are the owner's own
-// imported reference numbers. Consequence: per browser/device; re-import on a
-// new one. Same external-store shape as lib/leagueFavorites.ts.
-import { useSyncExternalStore } from "react";
+// Persisted in Postgres (`ReferenceRank`, via /api/admin/reference-ranks) so an
+// upload is saved once and shows on every device/browser. (An earlier version
+// kept them in localStorage; `readLegacyRefRanks` lets the board move any such
+// data into the database once.)
 
-const KEY = "fantis_ref_ranks_v1";
+const LEGACY_KEY = "fantis_ref_ranks_v1";
 
 export interface RefRank {
   expert?: number;
   mason?: number;
 }
 export interface RefRanks {
-  at: string | null; // when imported
+  at: string | null; // most recent import
   count: number;
-  ranks: Record<string, RefRank>; // key = refRankKey(name, pos)
+  ranks: Record<string, RefRank>; // key = refRankKey(looseName, pos)
 }
 
 export const EMPTY_REF_RANKS: RefRanks = { at: null, count: 0, ranks: {} };
@@ -27,65 +26,64 @@ export function refRankKey(looseName: string, pos: string): string {
   return `${looseName}|${pos}`;
 }
 
-let cachedRaw: string | null | undefined;
-let cached: RefRanks = EMPTY_REF_RANKS;
-const listeners = new Set<() => void>();
-
-function read(): RefRanks {
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(KEY);
-  } catch {
-    return EMPTY_REF_RANKS;
-  }
-  if (raw === cachedRaw) return cached; // stable reference between reads
-  cachedRaw = raw;
-  try {
-    const v = raw ? (JSON.parse(raw) as RefRanks) : null;
-    cached =
-      v && typeof v === "object" && v.ranks && typeof v.ranks === "object"
-        ? { at: typeof v.at === "string" ? v.at : null, count: Object.keys(v.ranks).length, ranks: v.ranks }
-        : EMPTY_REF_RANKS;
-  } catch {
-    cached = EMPTY_REF_RANKS;
-  }
-  return cached;
+// Row shape the API stores / returns.
+export interface RefRankRow {
+  key: string;
+  name: string;
+  pos: string;
+  expert: number | null;
+  mason: number | null;
+  updatedAt?: string | Date;
 }
 
-function notify() {
-  for (const l of listeners) l();
-}
-
-export function saveRefRanks(ranks: Record<string, RefRank>): void {
-  try {
-    window.localStorage.setItem(KEY, JSON.stringify({ at: new Date().toISOString(), ranks }));
-  } catch {
-    // quota/blocked: nothing to persist; the UI simply won't show them next load
+export function refRanksFromRows(rows: RefRankRow[]): RefRanks {
+  const ranks: Record<string, RefRank> = {};
+  let latest = 0;
+  for (const r of rows) {
+    ranks[r.key] = { expert: r.expert ?? undefined, mason: r.mason ?? undefined };
+    if (r.updatedAt) latest = Math.max(latest, new Date(r.updatedAt).getTime());
   }
-  notify();
+  return { at: latest ? new Date(latest).toISOString() : null, count: rows.length, ranks };
 }
 
-export function clearRefRanks(): void {
+export async function putRefRanks(rows: RefRankRow[]): Promise<void> {
+  const res = await fetch("/api/admin/reference-ranks", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rows: rows.map(({ key, name, pos, expert, mason }) => ({ key, name, pos, expert, mason })) }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || "Couldn't save the reference ranks.");
+  }
+}
+
+export async function deleteRefRanks(): Promise<void> {
+  const res = await fetch("/api/admin/reference-ranks", { method: "DELETE" });
+  if (!res.ok) throw new Error("Couldn't clear the reference ranks.");
+}
+
+// Pre-database versions stored these in localStorage. Returns them as rows
+// (name is the normalised name from the key) so they can be moved over once.
+export function readLegacyRefRanks(): RefRankRow[] {
   try {
-    window.localStorage.removeItem(KEY);
+    const raw = window.localStorage.getItem(LEGACY_KEY);
+    if (!raw) return [];
+    const v = JSON.parse(raw) as { ranks?: Record<string, RefRank> };
+    return Object.entries(v.ranks ?? {}).flatMap(([key, r]) => {
+      const [name, pos] = key.split("|");
+      if (!name || !pos) return [];
+      return [{ key, name, pos, expert: r.expert ?? null, mason: r.mason ?? null }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function clearLegacyRefRanks(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_KEY);
   } catch {
     // ignore
   }
-  notify();
-}
-
-function subscribe(cb: () => void) {
-  listeners.add(cb);
-  const onStorage = (e: StorageEvent) => {
-    if (e.key === KEY) cb();
-  };
-  window.addEventListener("storage", onStorage);
-  return () => {
-    listeners.delete(cb);
-    window.removeEventListener("storage", onStorage);
-  };
-}
-
-export function useRefRanks(): RefRanks {
-  return useSyncExternalStore(subscribe, read, () => EMPTY_REF_RANKS);
 }
