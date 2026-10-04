@@ -110,19 +110,52 @@ export default function ManagerHeader({
     setMounted(true);
   }, []);
 
+  // A full sync reads every league from Sleeper and takes about a minute, so the button shows a running timer and,
+  // when it ends, says exactly what happened (success, partial failure, or why it failed) instead of staying silent.
   const [syncing, setSyncing] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [syncMsg, setSyncMsg] = useState<{ text: string; tone: "ok" | "warn" | "err" } | null>(null);
   const syncNow = async () => {
     if (syncing) return;
     setSyncing(true);
+    setSyncMsg(null);
+    setElapsed(0);
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
     try {
-      await fetch("/api/manager/sync", {
+      const res = await fetch("/api/manager/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      router.refresh();
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        leaguesSeen?: number;
+        leaguesOk?: number;
+        leaguesFailed?: number;
+      };
+      const secs = Math.round((Date.now() - started) / 1000);
+      if (!res.ok) {
+        setSyncMsg({
+          text:
+            res.status === 401
+              ? "Sync failed: your admin session expired — reload the page and sign in again."
+              : `Sync failed (${res.status}${body.error ? `: ${body.error}` : ""}). Nothing was lost — try again.`,
+          tone: "err",
+        });
+      } else if ((body.leaguesFailed ?? 0) > 0) {
+        setSyncMsg({ text: `Synced ${body.leaguesOk}/${body.leaguesSeen} leagues in ${secs}s — ${body.leaguesFailed} failed (they keep their last good data).`, tone: "warn" });
+        router.refresh();
+      } else {
+        setSyncMsg({ text: `✓ Synced ${body.leaguesOk ?? body.leaguesSeen ?? 0} leagues in ${secs}s`, tone: "ok" });
+        router.refresh();
+      }
+    } catch {
+      setSyncMsg({ text: "Couldn't reach the server (network or timeout). Nothing was lost — try again.", tone: "err" });
     } finally {
+      clearInterval(timer);
       setSyncing(false);
+      setTimeout(() => setSyncMsg(null), 15000);
     }
   };
 
@@ -158,8 +191,22 @@ export default function ManagerHeader({
         <span className="hint" style={{ margin: 0 }}>
           {mounted ? `synced ${formatRelative(lastSyncedAt)}` : ""}
         </span>
-        <button className="btn ghost sm" onClick={syncNow} disabled={syncing}>
-          {syncing ? "Syncing…" : "Refresh"}
+        {syncMsg && (
+          <span
+            className="hint"
+            role="status"
+            style={{ margin: 0, color: syncMsg.tone === "ok" ? "var(--mint)" : syncMsg.tone === "warn" ? "var(--amber)" : "var(--red)" }}
+          >
+            {syncMsg.text}
+          </span>
+        )}
+        <button
+          className="btn ghost sm"
+          onClick={syncNow}
+          disabled={syncing}
+          title="Re-reads every league from Sleeper (about a minute). The Lineups tools already read rosters live, so you only need this for the other pages."
+        >
+          {syncing ? `Syncing… ${elapsed}s` : "Refresh"}
         </button>
       </div>
     </header>

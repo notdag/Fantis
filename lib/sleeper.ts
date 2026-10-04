@@ -86,19 +86,30 @@ export const getTrendingAdds = (lookbackHours = 24, limit = 25) =>
 export const getTrendingDrops = (lookbackHours = 24, limit = 25) =>
   jget<TrendingPlayer[]>(`${S}/players/nfl/trending/drop?lookback_hours=${lookbackHours}&limit=${limit}`);
 
-const PLAYERS_CACHE_KEY = "fantis_players_nfl_v3";
+const PLAYERS_CACHE_KEY = "fantis_players_nfl_v4";
+const PLAYERS_CACHE_KEY_OLD = "fantis_players_nfl_v3";
 
-// Sleeper's full player dump is several MB; cache it in localStorage for the day.
-// Resolved map kept in memory so a later caller doesn't re-parse the ~2.4MB
-// localStorage copy (or refetch) every time a component mounts.
+// Sleeper's full player dump (names, teams, INJURY STATUS) is several MB. It used to be cached for the whole UTC
+// calendar day, which on a game day meant injury designations could be many hours old. It is now cached for an hour,
+// and the Lineups tools offer an on-demand refresh (refreshPlayers) with a 2-minute floor so a button mash can't
+// hammer Sleeper (they ask integrators not to poll this endpoint aggressively).
+export const PLAYERS_TTL_MS = 60 * 60 * 1000;
+const PLAYERS_REFRESH_FLOOR_MS = 2 * 60 * 1000;
 let playersMemo: Promise<PlayerMap> | null = null;
+let playersMemoAt = 0; // when the in-memory copy was (re)loaded
+let playersFetchedAt = 0; // when the data itself was last pulled from Sleeper (survives reloads via the cache)
+
+export function playersUpdatedAt(): number | null {
+  return playersFetchedAt || null;
+}
 
 export function getPlayers(): Promise<PlayerMap> {
   // Browser only: server-side callers (the sync) must always get a fresh
   // dump — a warm serverless instance would otherwise serve stale injuries.
-  if (typeof window === "undefined") return loadPlayers();
-  if (!playersMemo) {
-    playersMemo = loadPlayers().catch((e) => {
+  if (typeof window === "undefined") return loadPlayers(true);
+  if (!playersMemo || Date.now() - playersMemoAt > PLAYERS_TTL_MS) {
+    playersMemoAt = Date.now();
+    playersMemo = loadPlayers(false).catch((e) => {
       playersMemo = null; // don't cache a failure
       throw e;
     });
@@ -106,13 +117,35 @@ export function getPlayers(): Promise<PlayerMap> {
   return playersMemo;
 }
 
-async function loadPlayers(): Promise<PlayerMap> {
-  if (typeof window !== "undefined") {
+// Force a fresh pull from Sleeper (ignoring the cache), but not more than once every 2 minutes. Returns the map plus
+// whether a new copy was actually fetched, so the UI can say "already up to date" instead of pretending.
+export async function refreshPlayers(): Promise<{ map: PlayerMap; refreshed: boolean; at: number }> {
+  if (typeof window === "undefined") return { map: await loadPlayers(true), refreshed: true, at: Date.now() };
+  if (playersMemo && playersFetchedAt && Date.now() - playersFetchedAt < PLAYERS_REFRESH_FLOOR_MS) {
+    return { map: await playersMemo, refreshed: false, at: playersFetchedAt };
+  }
+  const previous = playersMemo;
+  playersMemoAt = Date.now();
+  playersMemo = loadPlayers(true);
+  try {
+    const map = await playersMemo;
+    return { map, refreshed: true, at: playersFetchedAt };
+  } catch (e) {
+    playersMemo = previous; // a failed refresh must not throw away the data we already have
+    throw e;
+  }
+}
+
+async function loadPlayers(force = false): Promise<PlayerMap> {
+  if (typeof window !== "undefined" && !force) {
     try {
       const cached = window.localStorage.getItem(PLAYERS_CACHE_KEY);
       if (cached) {
-        const d = JSON.parse(cached) as { day: string; map: PlayerMap };
-        if (d.day === today()) return d.map;
+        const d = JSON.parse(cached) as { at?: number; map: PlayerMap };
+        if (d.at && Date.now() - d.at < PLAYERS_TTL_MS) {
+          playersFetchedAt = d.at;
+          return d.map;
+        }
       }
     } catch {
       // ignore cache read errors
@@ -144,15 +177,14 @@ async function loadPlayers(): Promise<PlayerMap> {
 
   if (typeof window !== "undefined") {
     try {
-      window.localStorage.setItem(
-        PLAYERS_CACHE_KEY,
-        JSON.stringify({ day: today(), map })
-      );
+      window.localStorage.removeItem(PLAYERS_CACHE_KEY_OLD); // free the old day-keyed copy (~2.4MB)
+      window.localStorage.setItem(PLAYERS_CACHE_KEY, JSON.stringify({ at: Date.now(), map }));
     } catch {
       // ignore cache write errors (e.g. quota exceeded)
     }
   }
 
+  playersFetchedAt = Date.now();
   return map;
 }
 

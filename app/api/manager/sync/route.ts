@@ -63,6 +63,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, partial: true, leaguesRefreshed: refreshed });
   }
 
+  // A sync whose request was cut off (closed tab, timeout) never gets to write its result and would sit as "running"
+  // forever. Anything still "running" after 6 minutes (the route's own limit is 5) can only be an interrupted run.
+  await db.syncRun.updateMany({
+    where: { status: "running", startedAt: { lt: new Date(Date.now() - 6 * 60_000) } },
+    data: {
+      status: "failed",
+      finishedAt: new Date(),
+      errors: [{ message: "Interrupted: the request ended before the sync finished." }] as Prisma.InputJsonValue,
+    },
+  });
+
   const run = await db.syncRun.create({
     data: { accountId: scopedAccountId, status: "running" },
   });

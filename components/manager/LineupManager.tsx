@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { useLiveRosters } from "@/lib/useLiveRosters";
+import { mergeLive } from "@/lib/liveRosters";
+import LiveStatusBar from "./LiveStatusBar";
 import { posChipStyle } from "@/lib/players";
 import { activateFromIR, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
 import { isBestBall, type ManagedLeague, type ManagedRoster } from "@/lib/manager";
@@ -247,9 +250,21 @@ export default function LineupManager({
     () => allLeagues.filter((l) => isBestBall(l.league.settings)).length,
     [allLeagues]
   );
+  // Current rosters straight from Sleeper (not the stored sync), overlaid onto the stored ones. A league whose live
+  // read fails simply keeps its stored roster — and every send is re-checked against live data anyway.
+  const liveTargets = useMemo(
+    () =>
+      allLeagues
+        .filter((l) => l.roster && l.league.status === "in_season")
+        .map((l) => ({ leagueId: l.league.id, rosterId: l.roster!.rosterId })),
+    [allLeagues]
+  );
+  const liveRosters = useLiveRosters(liveTargets);
+  const liveAll = useMemo(() => mergeLive(allLeagues, liveRosters.live), [allLeagues, liveRosters.live]);
+  const leagueNames = useMemo(() => Object.fromEntries(allLeagues.map((l) => [l.league.id, l.league.name])), [allLeagues]);
   const leagues = useMemo(
-    () => (hideBestBall ? allLeagues.filter((l) => !isBestBall(l.league.settings)) : allLeagues),
-    [allLeagues, hideBestBall]
+    () => (hideBestBall ? liveAll.filter((l) => !isBestBall(l.league.settings)) : liveAll),
+    [liveAll, hideBestBall]
   );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -262,7 +277,7 @@ export default function LineupManager({
     setTab(t);
     setVisited((prev) => (prev.has(t) ? prev : new Set(prev).add(t)));
   };
-  const { pmap } = usePlayerMap();
+  const { pmap, refresh: refreshInjuries, refreshing: refreshingInjuries, updatedAt: injuriesAt } = usePlayerMap();
 
   // The owner's saved priority/avoid lists, loaded once and shared by the
   // "My players" editor and the Optimize tab. `prefs` is the working copy;
@@ -297,6 +312,13 @@ export default function LineupManager({
           right="set starters, IR and adds across every league, in one place"
         />
         <ConnectWriteAccess onTokenReady={setToken} />
+        <LiveStatusBar
+          live={liveRosters}
+          leagueNames={leagueNames}
+          injuriesAt={injuriesAt}
+          refreshing={refreshingInjuries}
+          onRefreshInjuries={refreshInjuries}
+        />
         <TopPlayersWatch leagues={leagues} pmap={pmap} prefs={prefs} currentWeek={currentWeek} season={season} onFix={() => go("optimize")} />
         <div className="field" style={{ marginBottom: 16 }}>
           <button className={`chip-filter ${tab === "lineups" ? "on" : ""}`} onClick={() => go("lineups")}>
@@ -336,6 +358,7 @@ export default function LineupManager({
             prefs={prefs}
             prefsDirty={JSON.stringify(prefs) !== savedJson}
             onEditPrefs={() => go("players")}
+            onSent={liveRosters.reload}
           />
           </div>
         )}
@@ -380,7 +403,7 @@ export default function LineupManager({
           <SectionHead level={2} title="Needs attention" right={`${needsAttention.length} leagues`} />
           <DataTable>
             {needsAttention.map((item) => (
-              <LeagueRow key={item.league.id} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
+              <LeagueRow key={`${item.league.id}:${liveRosters.loadedAt ?? 0}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
             ))}
           </DataTable>
         </section>
@@ -399,7 +422,7 @@ export default function LineupManager({
         {showAll && (
           <DataTable>
             {rest.map((item) => (
-              <LeagueRow key={item.league.id} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
+              <LeagueRow key={`${item.league.id}:${liveRosters.loadedAt ?? 0}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
             ))}
           </DataTable>
         )}

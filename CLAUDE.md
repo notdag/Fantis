@@ -2875,3 +2875,21 @@ Two gaps on `/manager/lineups` → Optimize: in "rankings" mode players in the s
   Real-data check on the 210 live leagues (week 4): **8,130 legal manual picks across every slot → 0 invalid lineups**; FLEX slots offered ~8.8 legal options on average, 733 slots had a same-tier alternative. Mode comparison (projected change / leagues
   lower): exact rankings −126.9 / 105, tiers-then-projection **+126.8 / 40**, projections only +520.0 / 0. All existing suites unchanged (21, 6, 433, 84). `tsc`/`eslint` clean. Not clicked through in a browser (`/manager` is behind the passphrase + Sleeper
   connection), and the actual Sleeper send is still the never-exercised-live path — send one league first.
+
+### Refresh / sync: live rosters, injury refresh, stale-send guard, honest Refresh button (2026-10; requested explicitly by the owner — "the refresh /sync doesn't work well, make sure it's real time with no errors")
+
+Investigated with real data first. The stored full sync itself was NOT failing — the last 25 runs were all `success` (242/242 leagues, 0 errors) — but each takes **~60s with no progress**, the header Refresh button ignored failures, the Lineups tools computed
+from the **stored snapshot** (so a drop/add/lineup edit made in the Sleeper app was invisible and could be overwritten), the Sleeper player dump (injury designations) was cached by UTC calendar day (hours stale on a game day), and a cut-off
+sync left a `running` row forever. Fixes:
+- **Live rosters on Lineups** (`lib/liveRosters.ts`, `lib/useLiveRosters.ts`, `components/manager/LiveStatusBar.tsx`): the owner's roster in every in-season league is read **straight from Sleeper's public API** (bounded concurrency 8, up to 3 attempts with backoff, never retries a 404)
+  and overlaid onto the stored rosters (`mergeLive`); on open, on "Reload rosters", after any send, and automatically when the tab becomes visible again after 3+ minutes. A league whose live read fails keeps its stored roster and is named in a visible warning with Retry.
+  **Real-data check: 237 leagues read live in 4.0 s, 0 failures** (vs ~60 s for the full sync).
+- **Stale-send guard** (`BulkOptimize.start`): right before each `setStarters`, the roster is re-read from Sleeper and compared (`rosterChanged`: players/IR as sets, starters slot-by-slot) with the one the proposal was built from. If anything changed (drop, add, IR move,
+  lineup edit in the Sleeper app) or the read fails, **nothing is sent for that league** and the row shows why ("Roster changed on Sleeper since this page loaded … Press Reload rosters"); other leagues continue.
+- **Injuries**: the player-dump cache is now **1 hour** (was the UTC day; key `fantis_players_nfl_v4`, old v3 copy removed) and **"Refresh injuries"** pulls a fresh copy on demand (`refreshPlayers`, **2-minute floor** between pulls so a button mash can't hammer Sleeper; a failed
+  refresh keeps the previous data). `usePlayerMap` now exposes `refresh`, `refreshing`, `updatedAt`; the status bar shows "Injury data: N min ago".
+- **Header Refresh button** (`ManagerHeader.tsx`): shows a running timer ("Syncing… 23s"), checks the response, and reports the outcome — "✓ Synced 242 leagues in 58s", a partial failure with counts, or the reason it failed (expired admin session, HTTP status, network). The sync route now marks any
+  `running` SyncRun older than 6 minutes as `failed` ("Interrupted…") so history can't lie. Full sync is still ~1 min by nature; the Lineups tools no longer depend on it.
+- Not covered here (follow-ups): Mass IR / Mass Add still use the stored snapshot (their sends are checked by Sleeper itself); no scheduled background sync (no cron configured — a Hobby-plan limit may apply).
+- Tests: `npx tsx scripts/testLiveRosters.ts` (13). All other suites unchanged and passing (433/84/21/19/20/6/39/31/11). `tsc` clean; the only lint errors in touched files are the two pre-existing `setState`-in-effect findings in `ManagerHeader.tsx`. Not exercised in a browser
+  (`/manager` needs the passphrase + Sleeper connection); the Sleeper send itself remains the never-run-live path — send one league first.
