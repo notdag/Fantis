@@ -191,7 +191,7 @@ export default function BulkOptimize({
   // The one-click "set the rest of the season" flow: after the lineups are computed, open the single confirm automatically.
   const [autoConfirm, setAutoConfirm] = useState(false);
   // How the one-click "Set weeks" ranks players. Highest projection by default; pick your tiers / exact rankings to follow your own order.
-  const [aheadMode, setAheadMode] = useState<"rankings" | "tiers" | "projections">("projections");
+  const [aheadMode, setAheadMode] = useState<"rankings" | "tiers" | "projections">("rankings");
   const isOutStatus = (week: number, inj: string | null | undefined) =>
     !!inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(inj) : OUT_STATUSES.has(inj));
   const unavailableForWeek = (week: number, id: string) => {
@@ -314,7 +314,13 @@ export default function BulkOptimize({
   // Players the optimizer starts although you rank someone at the same position HIGHER who sits (and is healthy). Grouped by the
   // pair so one answer settles every league; skipped once answered.
   const conflicts = useMemo(() => {
-    if (!pmap || !ranks || mode === "rankings") return [];
+    if (!pmap || !ranks) return [];
+    // Ask when it's a toss-up on YOUR board: same tier, or within a few spots of each other (then your order alone is a coin flip).
+    const CLOSE = 6;
+    const tossUp = (a: string, b: string) => {
+      const ra = ranks.get(a), rb = ranks.get(b);
+      return !!ra && !!rb && (ra.tier === rb.tier || Math.abs(ra.order - rb.order) <= CLOSE);
+    };
     const better = (a: string, b: string) => {
       const ra = ranks.get(a), rb = ranks.get(b);
       if (!ra) return false;
@@ -342,7 +348,9 @@ export default function BulkOptimize({
             return !!ko && Date.parse(ko) <= Math.max(nowMs, wd.loadedAt);
           };
           if (started(b) || started(c.in)) continue;
-          if (!better(b, c.in)) continue;
+          // Projections-only mode: ask whenever you rank the bench player higher. Your-rankings / tiers modes already follow your
+          // order, so only ask when the two are a toss-up (same tier or close).
+          if (mode === "projections" ? !(better(b, c.in) || tossUp(b, c.in)) : !tossUp(b, c.in)) continue;
           const key = c.in + ">" + b;
           if (key in calls) continue;
           const g = groups.get(key) ?? { inId: c.in, benchId: b, leagues: new Set<string>(), weeks: new Set<number>() };
@@ -494,7 +502,9 @@ export default function BulkOptimize({
   const totalGain = rows.reduce((s, r) => s + view(r).gain, 0);
   // The one-click flow opens the confirm by itself as soon as the lineups are ready.
   const aheadReady = !allWeeksLoading && !ranksPending;
-  const showConfirm = (confirming || autoConfirm) && !running && aheadReady && selectedRows.length > 0;
+  // The one-click flow waits for your answers to any close / same-tier picks before it opens the confirm; the button still works anytime.
+  const waitingOnCalls = autoConfirm && !confirming && conflicts.length > 0;
+  const showConfirm = (confirming || (autoConfirm && conflicts.length === 0)) && !running && aheadReady && selectedRows.length > 0;
   const runAhead = () => {
     // Highest Sleeper projection each week, FLEX never holding a Thu–Sat game (hard rule), early-Sunday games leaning to
     // true slots and later Sunday / Monday leaning to FLEX (tie-breaks only). Your Priority / Avoid / Never-start lists
@@ -763,7 +773,7 @@ export default function BulkOptimize({
           </button>
         </div>
         <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span className="portmeta">Rank players by:</span>
+          <span className="portmeta">Rank players by (default: your current admin rankings):</span>
           {([["projections", "Highest projection"], ["tiers", "My tiers, then projection"], ["rankings", "My exact rankings"]] as const).map(([m, label]) => (
             <button key={m} type="button" className={`chip-filter${aheadMode === m ? " on" : ""}`} disabled={running} onClick={() => setAheadMode(m)}>
               {label}
@@ -933,6 +943,12 @@ export default function BulkOptimize({
             )
           ) : (
             <>
+              {waitingOnCalls && aheadReady && (
+                <p className="hint" style={{ color: "var(--amber)" }}>
+                  ⏸ {conflicts.length} pick{conflicts.length === 1 ? " is" : "s are"} too close to call on your board — answer {conflicts.length === 1 ? "it" : "them"} in &ldquo;Your call&rdquo; below
+                  and the summary to send opens right after. (Or press &ldquo;Set {selectedRows.length} lineups&rdquo; to send as is.)
+                </p>
+              )}
               {doubtBoard.length > 0 && (
                 <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
                   <b>Questionable board — week {currentWeek}</b>
@@ -997,9 +1013,9 @@ export default function BulkOptimize({
               )}
               {conflicts.length > 0 && (
                 <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
-                  <b>Your call — {conflicts.length} player{conflicts.length === 1 ? "" : "s"} start over someone you rank higher</b>
+                  <b>Your call — {conflicts.length} close or conflicting pick{conflicts.length === 1 ? "" : "s"}</b>
                   <span className="portmeta" style={{ display: "block", marginBottom: 8 }}>
-                    The projection picked the first player, but you rank the second one higher. Choose who you prefer — one answer applies to every league and
+                    These two are in the same tier or close on your board (or the projection picked someone you rank lower), so I won&rsquo;t guess. Choose who you prefer — one answer applies to every league and
                     week shown, and the lineups below update. Not answering keeps the optimizer&rsquo;s pick.
                   </span>
                   {conflicts.map((c) => {
