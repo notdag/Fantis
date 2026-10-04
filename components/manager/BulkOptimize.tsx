@@ -171,9 +171,27 @@ export default function BulkOptimize({
   const [autoConfirm, setAutoConfirm] = useState(false);
   const isOutStatus = (week: number, inj: string | null | undefined) =>
     !!inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(inj) : OUT_STATUSES.has(inj));
+  const unavailableForWeek = (week: number, id: string) => {
+    const e = pmap?.[id];
+    if (!e) return true;
+    if (isOutStatus(week, e.inj)) return true;
+    return !!e.t && BYE_WEEKS_2026[e.t] === week;
+  };
   const ranksPending = mode !== "projections" && !ranks;
   const allWeeksLoading = weeksToShow.some((w) => !(w in weekData));
 
+  // "Your call" answers for this run: when the optimizer starts a player you rank BELOW a bench player, you pick who you
+  // prefer. Keyed "inId>benchId" (same two players decide every league at once); value = who you chose.
+  const [calls, setCalls] = useState<Record<string, string>>({});
+  const forcedStart = useMemo(() => {
+    const m = new Set<string>();
+    for (const [k, winner] of Object.entries(calls)) {
+      const [inId, benchId] = k.split(">");
+      if (winner === benchId) m.add(benchId);
+      else if (winner === inId) m.add(inId);
+    }
+    return m;
+  }, [calls]);
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
   const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
   const flexFirstIndex = useMemo(() => new Map(prefs.flexFirst.map((id, i) => [id, i])), [prefs.flexFirst]);
@@ -219,7 +237,7 @@ export default function BulkOptimize({
           points: (id) => proj[id]?.[key] ?? 0,
           unavailable: isUnavailable,
           locked: isLocked,
-          priorityRank: (id) => priorityIndex.get(id),
+          priorityRank: (id) => (forcedStart.has(id) ? 0 : priorityIndex.get(id)),
           avoid: (id) => avoidSet.has(id),
           neverStart: (id) => neverStartSet.has(id),
           flexFirst: (id) => flexFirstIndex.get(id),
@@ -249,7 +267,45 @@ export default function BulkOptimize({
     }
     out.sort((a, b) => a.week - b.week || b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex, futureHealthy, currentWeek]);
+  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, forcedStart, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex, futureHealthy, currentWeek]);
+
+  // Players the optimizer starts although you rank someone at the same position HIGHER who sits (and is healthy). Grouped by the
+  // pair so one answer settles every league; skipped once answered.
+  const conflicts = useMemo(() => {
+    if (!pmap || !ranks || mode === "rankings") return [];
+    const better = (a: string, b: string) => {
+      const ra = ranks.get(a), rb = ranks.get(b);
+      if (!ra) return false;
+      if (!rb) return true;
+      return mode === "tiers" ? ra.tier < rb.tier : ra.order < rb.order;
+    };
+    const groups = new Map<string, { inId: string; benchId: string; leagues: Set<string>; weeks: Set<number> }>();
+    for (const r of rows) {
+      const lg = leagues.find((l) => l.league.id === r.leagueId);
+      if (!lg?.roster) continue;
+      const wd = weekData[r.week];
+      if (!wd) continue;
+      const starting = new Set(r.result.starters);
+      const bench = lg.roster.players.filter((id) => !lg.roster!.reserve.includes(id) && !starting.has(id));
+      for (const c of r.result.changes) {
+        if (!c.in) continue;
+        for (const b of bench) {
+          if (pmap[b]?.p !== pmap[c.in]?.p) continue;
+          if (neverStartSet.has(b) || avoidSet.has(b) || priorityIndex.has(c.in)) continue;
+          if (unavailableForWeek(r.week, b)) continue;
+          if (!better(b, c.in)) continue;
+          const key = c.in + ">" + b;
+          if (key in calls) continue;
+          const g = groups.get(key) ?? { inId: c.in, benchId: b, leagues: new Set<string>(), weeks: new Set<number>() };
+          g.leagues.add(r.leagueId);
+          g.weeks.add(r.week);
+          groups.set(key, g);
+        }
+      }
+    }
+    return [...groups.entries()].map(([key, g]) => ({ key, ...g })).sort((a, b) => b.leagues.size - a.leagues.size).slice(0, 12);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, ranks, mode, pmap, leagues, weekData, calls, neverStartSet, avoidSet, priorityIndex, futureHealthy]);
 
   // ── Manual lineup edits: "put THIS player in my FLEX" ──
   // The optimizer proposes; any unlocked slot can be overridden from a dropdown, and every pick is checked by
@@ -680,6 +736,34 @@ export default function BulkOptimize({
             <p className="hint">Every lineup already matches your preferences and the best projections.</p>
           ) : (
             <>
+              {conflicts.length > 0 && (
+                <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
+                  <b>Your call — {conflicts.length} player{conflicts.length === 1 ? "" : "s"} start over someone you rank higher</b>
+                  <span className="portmeta" style={{ display: "block", marginBottom: 8 }}>
+                    The projection picked the first player, but you rank the second one higher. Choose who you prefer — one answer applies to every league and
+                    week shown, and the lineups below update. Not answering keeps the optimizer&rsquo;s pick.
+                  </span>
+                  {conflicts.map((c) => {
+                    const line = (id: string) => `${name(id)} (${rankLabel(id)}${ranks?.get(id) ? ` · tier ${ranks.get(id)!.tier}` : ""})`;
+                    return (
+                      <div key={c.key} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "6px 0", borderTop: "1px solid var(--line-soft)" }}>
+                        <span style={{ flex: 1, minWidth: 240 }}>
+                          <b>{line(c.inId)}</b> starts over <b>{line(c.benchId)}</b>
+                          <span className="portmeta" style={{ display: "block" }}>
+                            in {c.leagues.size} league{c.leagues.size === 1 ? "" : "s"} · who do you prefer?
+                          </span>
+                        </span>
+                        <button className="chip-filter" disabled={running} onClick={() => setCalls((p) => ({ ...p, [c.key]: c.inId }))}>
+                          Keep {name(c.inId)}
+                        </button>
+                        <button className="chip-filter" disabled={running} onClick={() => setCalls((p) => ({ ...p, [c.key]: c.benchId }))}>
+                          Start {name(c.benchId)}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <div className="field" style={{ marginBottom: 12, alignItems: "center" }}>
                 <button className="chip-filter" onClick={() => setDeselected(new Set())}>Select all</button>
                 <button className="chip-filter" onClick={() => setDeselected(new Set(rows.map((r) => r.key)))}>Select none</button>
