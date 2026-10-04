@@ -374,7 +374,12 @@ export default function BulkOptimize({
     return "higher projection";
   };
   const swapText = (r: Row) =>
-    view(r).changes.map((c) => `${c.slotCode}: ${who(r, c.out)} → ${who(r, c.in)} — ${view(r).edited ? "your pick" : reason(r, c)}`);
+    view(r).changes.map((c, _i, all) => {
+      // A player who leaves one slot and shows up in another is a slot shuffle (e.g. RB ↔ FLEX), not a bench/start change.
+      const moved = !!c.in && all.some((o) => o.out === c.in);
+      const why = view(r).edited ? "your pick" : moved ? "slot move — he's still starting, just in a different slot (kickoff-day / FLEX preference)" : reason(r, c);
+      return `${c.slotCode}: ${who(r, c.out)} → ${who(r, c.in)} — ${why}`;
+    });
 
   const toggle = (key: string) =>
     setDeselected((prev) => {
