@@ -174,6 +174,7 @@ export default function BulkOptimize({
   const unavailableForWeek = (week: number, id: string) => {
     const e = pmap?.[id];
     if (!e) return true;
+    if (week === currentWeek && doubts.has(id)) return true;
     if (isOutStatus(week, e.inj)) return true;
     return !!e.t && BYE_WEEKS_2026[e.t] === week;
   };
@@ -183,6 +184,16 @@ export default function BulkOptimize({
   // "Your call" answers for this run: when the optimizer starts a player you rank BELOW a bench player, you pick who you
   // prefer. Keyed "inId>benchId" (same two players decide every league at once); value = who you chose.
   const [calls, setCalls] = useState<Record<string, string>>({});
+  // Players YOU think won't play this week (usually Questionable/Doubtful): treated as unavailable for the current week, so the
+  // optimizer picks the best replacement from your rankings + Sleeper projections. Per-run only.
+  const [doubts, setDoubts] = useState<Set<string>>(new Set());
+  const toggleDoubt = (id: string) =>
+    setDoubts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const forcedStart = useMemo(() => {
     const m = new Set<string>();
     for (const [k, winner] of Object.entries(calls)) {
@@ -210,6 +221,7 @@ export default function BulkOptimize({
       const isUnavailable = (id: string) => {
         const e = pmap[id];
         if (!e) return true;
+        if (week === currentWeek && doubts.has(id)) return true;
         if (e.inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(e.inj) : OUT_STATUSES.has(e.inj))) return true;
         return !!e.t && BYE_WEEKS_2026[e.t] === week;
       };
@@ -267,7 +279,7 @@ export default function BulkOptimize({
     }
     out.sort((a, b) => a.week - b.week || b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, forcedStart, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex, futureHealthy, currentWeek]);
+  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, doubts, forcedStart, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex, futureHealthy, currentWeek]);
 
   // Players the optimizer starts although you rank someone at the same position HIGHER who sits (and is healthy). Grouped by the
   // pair so one answer settles every league; skipped once answered.
@@ -314,6 +326,44 @@ export default function BulkOptimize({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, ranks, mode, pmap, leagues, weekData, calls, neverStartSet, avoidSet, priorityIndex, futureHealthy]);
 
+  // The Questionable/Doubtful board: every such player on your rosters (current week, game not started), how many leagues start him, and —
+  // once you mark him "won't play" — who the optimizer starts in his place and in how many leagues.
+  const doubtBoard = useMemo(() => {
+    const wd = weekData[currentWeek];
+    if (!pmap || !wd) return [];
+    const info = new Map<string, { id: string; leagues: number; starting: number }>();
+    for (const l of leagues) {
+      if (!l.roster) continue;
+      for (const id of l.roster.players) {
+        if (l.roster.reserve.includes(id)) continue;
+        const inj = pmap[id]?.inj;
+        if (!(inj === "Questionable" || inj === "Doubtful" || doubts.has(id))) continue;
+        const t = pmap[id]?.t;
+        const ko = t ? wd.kickoffs[t] : undefined;
+        if (ko && Date.parse(ko) <= Math.max(Date.now(), wd.loadedAt)) continue;
+        if (t && BYE_WEEKS_2026[t] === currentWeek) continue;
+        const e = info.get(id) ?? { id, leagues: 0, starting: 0 };
+        e.leagues += 1;
+        if (l.roster.starters.includes(id)) e.starting += 1;
+        info.set(id, e);
+      }
+    }
+    return [...info.values()].filter((e) => e.starting > 0 || doubts.has(e.id)).sort((a, b) => b.starting - a.starting).slice(0, 40);
+  }, [leagues, pmap, weekData, currentWeek, doubts]);
+  const replacementsFor = (id: string) => {
+    const tally = new Map<string, number>();
+    let empty = 0;
+    for (const r of rows) {
+      if (r.week !== currentWeek) continue;
+      for (const c of r.result.changes) {
+        if (c.out !== id) continue;
+        if (c.in) tally.set(c.in, (tally.get(c.in) ?? 0) + 1);
+        else empty += 1;
+      }
+    }
+    return { list: [...tally.entries()].sort((a, b) => b[1] - a[1]), empty };
+  };
+
   // ── Manual lineup edits: "put THIS player in my FLEX" ──
   // The optimizer proposes; any unlocked slot can be overridden from a dropdown, and every pick is checked by
   // lib/lineupEdit.ts (healthy, not locked, not never-start, position-eligible, swap-legal). Edits are keyed by
@@ -331,6 +381,7 @@ export default function BulkOptimize({
   const unavailableFor = (week: number, id: string) => {
     const e = pmap?.[id];
     if (!e) return true;
+    if (week === currentWeek && doubts.has(id)) return true;
     if (isOutStatus(week, e.inj)) return true;
     return !!e.t && BYE_WEEKS_2026[e.t] === week;
   };
@@ -743,6 +794,42 @@ export default function BulkOptimize({
             <p className="hint">Every lineup already matches your preferences and the best projections.</p>
           ) : (
             <>
+              {doubtBoard.length > 0 && (
+                <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
+                  <b>Questionable board — week {currentWeek}</b>
+                  <span className="portmeta" style={{ display: "block", marginBottom: 8 }}>
+                    Players on your rosters listed Questionable/Doubtful whose game hasn&rsquo;t started. Tick &ldquo;won&rsquo;t play&rdquo; for anyone you think is sitting:
+                    he&rsquo;s treated as out this week and the best replacement from your rankings + Sleeper projections is started instead (shown here and in the
+                    lineups below). Untick to undo. Applies to this week only and isn&rsquo;t saved.
+                  </span>
+                  {doubtBoard.map((d) => {
+                    const on = doubts.has(d.id);
+                    const rep = on ? replacementsFor(d.id) : null;
+                    const inj = pmap?.[d.id]?.inj;
+                    const pr = weekData[currentWeek]?.proj[d.id];
+                    return (
+                      <label key={d.id} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "6px 0", borderTop: "1px solid var(--line-soft)", cursor: "pointer" }}>
+                        <input type="checkbox" checked={on} disabled={running} onChange={() => toggleDoubt(d.id)} />
+                        <span style={{ flex: 1, minWidth: 240 }}>
+                          <b>{name(d.id)}</b> ({inj ?? "—"}) · {pmap?.[d.id]?.p} {pmap?.[d.id]?.t} · {rankLabel(d.id)}
+                          {ranks?.get(d.id) ? ` · tier ${ranks.get(d.id)!.tier}` : ""} · {(pr?.pts_ppr ?? 0).toFixed(1)} proj
+                          <span className="portmeta" style={{ display: "block" }}>
+                            starting in {d.starting} of {d.leagues} league{d.leagues === 1 ? "" : "s"}
+                            {rep && (rep.list.length > 0 || rep.empty > 0) && (
+                              <>
+                                {" "}— replaced by:{" "}
+                                {rep.list.map(([id, n]) => `${name(id)} (${rankLabel(id)} · ${(weekData[currentWeek]?.proj[id]?.pts_ppr ?? 0).toFixed(1)}) ×${n}`).join(", ")}
+                                {rep.empty > 0 ? `, empty slot ×${rep.empty}` : ""}
+                              </>
+                            )}
+                            {rep && rep.list.length === 0 && rep.empty === 0 && " — no lineup change needed"}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
               {conflicts.length > 0 && (
                 <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
                   <b>Your call — {conflicts.length} player{conflicts.length === 1 ? "" : "s"} start over someone you rank higher</b>
