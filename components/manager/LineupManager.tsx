@@ -413,7 +413,7 @@ export default function LineupManager({
           <SectionHead level={2} title="Needs attention" right={`${needsAttention.length} leagues`} />
           <DataTable>
             {needsAttention.map((item) => (
-              <LeagueRow key={`${item.league.id}:${liveRosters.loadedAt ?? 0}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
+              <LeagueRow key={`${item.league.id}:${item.roster ? item.roster.players.length + item.roster.starters.join(",") + item.roster.reserve.join(",") : ""}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
             ))}
           </DataTable>
         </section>
@@ -432,7 +432,7 @@ export default function LineupManager({
         {showAll && (
           <DataTable>
             {rest.map((item) => (
-              <LeagueRow key={`${item.league.id}:${liveRosters.loadedAt ?? 0}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
+              <LeagueRow key={`${item.league.id}:${item.roster ? item.roster.players.length + item.roster.starters.join(",") + item.roster.reserve.join(",") : ""}`} item={item} pmap={pmap} token={token} currentWeek={currentWeek} />
             ))}
           </DataTable>
         )}

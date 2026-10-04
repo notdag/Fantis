@@ -257,7 +257,12 @@ export default function BulkOptimize({
   // row and discarded when the mode / week / FLEX-lock setting changes, since the proposal underneath changed.
   const leagueById = useMemo(() => new Map(leagues.map((l) => [l.league.id, l])), [leagues]);
   const editSig = `${mode}|${lockEarlyFlex}|${selectedWeek}|${futureHealthy}`;
-  const [edits, setEdits] = useState<{ sig: string; byKey: Record<string, string[]> }>({ sig: "", byKey: {} });
+  const [edits, setEdits] = useState<{ sig: string; byKey: Record<string, { starters: string[]; roster: string }> }>({ sig: "", byKey: {} });
+  const rosterSigOf = (leagueId: string) => {
+    const ro = leagueById.get(leagueId)?.roster;
+    return ro ? [...ro.players].sort().join(",") + "|" + [...ro.reserve].sort().join(",") + "|" + ro.starters.join(",") : "";
+  };
+  // An edit is only valid for the roster it was made on: if a live reload changed the roster, it is dropped.
   const editsByKey = edits.sig === editSig ? edits.byKey : {};
   const [openEdit, setOpenEdit] = useState<Set<string>>(new Set());
   const unavailableFor = (week: number, id: string) => {
@@ -287,7 +292,8 @@ export default function BulkOptimize({
   };
   // What will actually be sent for a row: the optimizer's lineup, or the owner's hand-edited one.
   const view = (r: Row) => {
-    const starters = editsByKey[r.key];
+    const edit = editsByKey[r.key];
+    const starters = edit && edit.roster === rosterSigOf(r.leagueId) ? edit.starters : undefined;
     if (!starters) {
       return { starters: r.result.starters, changes: r.result.changes, currentPoints: r.result.currentPoints, optimalPoints: r.result.optimalPoints, gain: r.result.gain, edited: false };
     }
@@ -305,7 +311,7 @@ export default function BulkOptimize({
     const ctx = ctxFor(r);
     if (!ctx) return;
     const next = applyPick(ctx, view(r).starters, slotIdx, id);
-    if (next) setEdits({ sig: editSig, byKey: { ...editsByKey, [r.key]: next } });
+    if (next) setEdits({ sig: editSig, byKey: { ...editsByKey, [r.key]: { starters: next, roster: rosterSigOf(r.leagueId) } } });
   };
   const resetEdit = (r: Row) => {
     const rest = { ...editsByKey };
