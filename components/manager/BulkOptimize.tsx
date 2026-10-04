@@ -190,6 +190,8 @@ export default function BulkOptimize({
   const [futureHealthy, setFutureHealthy] = useState(true);
   // The one-click "set the rest of the season" flow: after the lineups are computed, open the single confirm automatically.
   const [autoConfirm, setAutoConfirm] = useState(false);
+  // How the one-click "Set weeks" ranks players. Highest projection by default; pick your tiers / exact rankings to follow your own order.
+  const [aheadMode, setAheadMode] = useState<"rankings" | "tiers" | "projections">("projections");
   const isOutStatus = (week: number, inj: string | null | undefined) =>
     !!inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(inj) : OUT_STATUSES.has(inj));
   const unavailableForWeek = (week: number, id: string) => {
@@ -497,7 +499,7 @@ export default function BulkOptimize({
     // Highest Sleeper projection each week, FLEX never holding a Thu–Sat game (hard rule), early-Sunday games leaning to
     // true slots and later Sunday / Monday leaning to FLEX (tie-breaks only). Your Priority / Avoid / Never-start lists
     // still apply; nothing is sent until you confirm the summary.
-    setMode("projections");
+    setMode(aheadMode);
     setLockEarlyFlex(true);
     setHideLosing(false);
     setDeselected(new Set());
@@ -751,7 +753,7 @@ export default function BulkOptimize({
           <div style={{ flex: "1 1 360px", minWidth: 0 }}>
             <b style={{ fontSize: 15 }}>Set weeks {currentWeek + 1}–{AHEAD_LAST} in one click</b>
             <p className="hint" style={{ margin: "4px 0 0" }}>
-              Highest Sleeper projection each week. FLEX never holds a Thursday/Friday/Saturday game; early-Sunday (10 AM PT) players go in your RB/WR/TE
+              {aheadMode === "projections" ? "Highest Sleeper projection each week" : aheadMode === "tiers" ? "Your tiers first, then highest projection within a tier" : "Your exact rankings, then projection for anyone unranked"}. FLEX never holds a Thursday/Friday/Saturday game; early-Sunday (10 AM PT) players go in your RB/WR/TE
               slots, and later-Sunday / Monday players go in FLEX when it&rsquo;s a tie. Your Priority / Avoid / Never-start lists still apply. You&rsquo;ll see one summary
               to confirm, then it sends.
             </p>
@@ -759,6 +761,14 @@ export default function BulkOptimize({
           <button className="btn" onClick={runAhead} disabled={!token || running || currentWeek >= AHEAD_LAST}>
             {autoConfirm && !aheadReady ? "Preparing…" : `Set weeks ${currentWeek + 1}–${AHEAD_LAST}${onlyIds.length ? ` (${onlyIds.length} league${onlyIds.length === 1 ? "" : "s"})` : ""}`}
           </button>
+        </div>
+        <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <span className="portmeta">Rank players by:</span>
+          {([["projections", "Highest projection"], ["tiers", "My tiers, then projection"], ["rankings", "My exact rankings"]] as const).map(([m, label]) => (
+            <button key={m} type="button" className={`chip-filter${aheadMode === m ? " on" : ""}`} disabled={running} onClick={() => setAheadMode(m)}>
+              {label}
+            </button>
+          ))}
         </div>
         <div style={{ marginTop: 10 }}>
           <span className="portmeta">
@@ -1039,7 +1049,7 @@ export default function BulkOptimize({
                   summary={
                     selectedWeek === "ahead" ? (
                       <>
-                        {new Set(selectedRows.map((r) => r.leagueId)).size} leagues · {weekLabel} · highest Sleeper projection each week · FLEX never holds a
+                        {new Set(selectedRows.map((r) => r.leagueId)).size} leagues · {weekLabel} · {mode === "projections" ? "highest Sleeper projection each week" : mode === "tiers" ? "your tiers first, then projection" : "your exact rankings"} · FLEX never holds a
                         Thu/Fri/Sat game · early-Sunday (10 AM PT) players go in RB/WR/TE slots, later Sunday &amp; Monday players prefer FLEX · sent about 3 at a
                         time, so a big batch can take several minutes (a week Sleeper won&rsquo;t accept yet just shows as failed for that league).{" "}
                         {futureHealthy ? "Players listed Out/Doubtful today are treated as healthy for later weeks (IR stays benched)." : "Players listed Out today stay benched in every week."}
