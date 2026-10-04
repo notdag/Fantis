@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getProjections } from "@/lib/sleeper";
 import { getWeekKickoffs } from "@/lib/espnGames";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
-import { buildStartingSlots } from "@/lib/rosterSlots";
+import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { optimizeLineup, type OptimizeResult } from "@/lib/lineupOptimizer";
 import { applyPick, diffLineups, slotLocked, slotOptions, type EditCtx } from "@/lib/lineupEdit";
 import { TIER_LABELS } from "@/lib/players";
@@ -428,6 +428,41 @@ export default function BulkOptimize({
     return { list: [...tally.entries()].sort((a, b) => b[1] - a[1]), empty };
   };
 
+  // This week, every league where a player you rank higher is stuck on the bench because the slot he'd take is held by a starter whose
+  // game already kicked off. Independent of whether Optimize proposes anything for that league.
+  const lockedOut = useMemo(() => {
+    const wd = weekData[currentWeek];
+    if (!pmap || !ranks || !wd || Object.keys(wd.kickoffs).length === 0) return [];
+    const isLockedNow = (id: string) => {
+      const t = pmap[id]?.t;
+      const ko = t ? wd.kickoffs[t] : undefined;
+      return !!ko && Date.parse(ko) <= Math.max(nowMs, wd.loadedAt);
+    };
+    const res: { leagueId: string; leagueName: string; notes: string[] }[] = [];
+    for (const l of leagues) {
+      if (!l.roster || l.league.status !== "in_season") continue;
+      const slotCodes = buildStartingSlots(l.rosterPositions).map((s) => s.code);
+      if (slotCodes.length === 0) continue;
+      const key = scoringKey(l.league.settings);
+      const reserve = new Set(l.roster.reserve);
+      const cands = l.roster.players.filter((id) => !reserve.has(id));
+      const lineup = l.roster.starters;
+      const notes: string[] = [];
+      lineup.slice(0, slotCodes.length).forEach((occ, idx) => {
+        if (!occ || occ === "0" || !isLockedNow(occ)) return;
+        const occRank = ranks.get(occ)?.order ?? 9999;
+        const elig = eligiblePositions(slotCodes[idx]);
+        const best = cands
+          .filter((id) => !lineup.includes(id) && !isLockedNow(id) && !neverStartSet.has(id) && !unavailableForWeek(currentWeek, id) && (wd.proj[id]?.[key] ?? 0) > 0 && elig.includes(pmap[id]?.p ?? ""))
+          .filter((id) => (ranks.get(id)?.order ?? 9999) < occRank)
+          .sort((a, b) => (ranks.get(a)?.order ?? 9999) - (ranks.get(b)?.order ?? 9999))[0];
+        if (best) notes.push(`${pmap[best]?.n ?? best} (#${(ranks.get(best)?.order ?? 0) + 1}) is on your bench behind ${pmap[occ]?.n ?? occ} (#${(ranks.get(occ)?.order ?? 0) + 1}) in ${slotCodes[idx]}`);
+      });
+      if (notes.length) res.push({ leagueId: l.league.id, leagueName: l.league.name, notes });
+    }
+    return res;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leagues, pmap, ranks, weekData, currentWeek, nowMs, neverStartSet, doubts, futureHealthy]);
   const unusableWeeks = weeksToShow.filter((w) => {
     const wd = weekData[w];
     return !!wd && (Object.keys(wd.proj).length === 0 || Object.keys(wd.kickoffs).length === 0);
@@ -500,6 +535,27 @@ export default function BulkOptimize({
     const rest = { ...editsByKey };
     delete rest[r.key];
     setEdits({ sig: editSig, byKey: rest });
+  };
+
+  // "Why wasn't my better-ranked player started?" — a slot whose occupant's game already kicked off can't change, even when a
+  // bench player you rank higher could play there. Spell those out so a locked starter never looks like the tool's choice.
+  const lockedNotes = (r: Row): string[] => {
+    if (!ranks) return [];
+    const ctx = ctxFor(r);
+    if (!ctx) return [];
+    const lineup = view(r).starters;
+    const out: string[] = [];
+    lineup.slice(0, r.slotCodes.length).forEach((occ, idx) => {
+      if (!occ || occ === "0" || !slotLocked(ctx, lineup, idx)) return;
+      const occRank = ranks.get(occ)?.order ?? 9999;
+      const elig = eligiblePositions(r.slotCodes[idx]);
+      const better = ctx.candidates
+        .filter((id) => !lineup.includes(id) && !ctx.unavailable(id) && !ctx.locked(id) && !ctx.neverStart?.(id) && elig.includes(ctx.posOf(id) ?? ""))
+        .filter((id) => (ranks.get(id)?.order ?? 9999) < occRank)
+        .sort((a, b) => (ranks.get(a)?.order ?? 9999) - (ranks.get(b)?.order ?? 9999))[0];
+      if (better) out.push(`${name(better)} (${rankLabel(better)}) sits behind ${name(occ)} (${rankLabel(occ)}) in ${r.slotCodes[idx]} — ${name(occ)}'s game already started, so that slot is locked and can't be changed.`);
+    });
+    return out.slice(0, 3);
   };
 
   const finished = (r: Row) => status[r.key]?.kind === "done";
@@ -948,6 +1004,24 @@ export default function BulkOptimize({
             )
           ) : (
             <>
+              {lockedOut.length > 0 && (
+                <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "10px 14px" }}>
+                  <b>🔒 Locked out by games that already started — {lockedOut.length} league{lockedOut.length === 1 ? "" : "s"} (week {currentWeek})</b>
+                  <span className="portmeta" style={{ display: "block", marginBottom: 6 }}>
+                    A player you rank higher is on the bench, but the slot he&rsquo;d fill is held by a starter whose game has kicked off. Sleeper locks that slot, so
+                    neither this tool nor you can change it now — this is not a ranking mistake.
+                  </span>
+                  {lockedOut.slice(0, 25).map((x) => (
+                    <div key={x.leagueId} style={{ padding: "3px 0", borderTop: "1px solid var(--line-soft)" }}>
+                      <b>{x.leagueName}</b>
+                      {x.notes.map((n, i) => (
+                        <span key={i} className="portmeta" style={{ display: "block" }}>{n}</span>
+                      ))}
+                    </div>
+                  ))}
+                  {lockedOut.length > 25 && <span className="portmeta">…and {lockedOut.length - 25} more</span>}
+                </div>
+              )}
               {waitingOnCalls && aheadReady && (
                 <p className="hint" style={{ color: "var(--amber)" }}>
                   ⏸ {conflicts.length} pick{conflicts.length === 1 ? " is" : "s are"} too close to call on your board — answer {conflicts.length === 1 ? "it" : "them"} in &ldquo;Your call&rdquo; below
@@ -1170,6 +1244,10 @@ export default function BulkOptimize({
                         {swapText(r).map((t, i) => (
                           <span key={i} className="portmeta" style={{ display: "block", fontWeight: 400 }}>{t}</span>
                         ))}
+                        {r.week === currentWeek &&
+                          lockedNotes(r).map((t, i) => (
+                            <span key={"lk" + i} className="portmeta" style={{ display: "block", fontWeight: 400, color: "var(--amber)" }}>🔒 {t}</span>
+                          ))}
                         {view(r).changes.length === 0 && (
                           <span className="portmeta" style={{ display: "block", fontWeight: 400 }}>No changes — matches what&rsquo;s on Sleeper now.</span>
                         )}
