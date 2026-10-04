@@ -52,7 +52,9 @@ export interface OptimizeInput {
   // the day-of-week nudge, but still far below any real point difference, and
   // the hard Thu/Fri/Sat RB/WR-out-of-FLEX rule below still wins over it.
   flexFirst?: (id: string) => number | undefined;
-  gameDay?: (id: string) => "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined;
+  // SUN_EARLY / SUN_LATE split Sunday (before / after noon Pacific — see lib/kickoffSlot.ts); plain "SUN" is still
+  // accepted and means "no preference".
+  gameDay?: (id: string) => "THU" | "FRI" | "SAT" | "SUN" | "SUN_EARLY" | "SUN_LATE" | "MON" | undefined;
 }
 
 export interface LineupChange {
@@ -120,15 +122,18 @@ const PRIORITY_TRUE_SLOT_BONUS = 0.001;
 // moves an already-set lineup when the swap is a real day-of-week fix, but
 // still far smaller than any real point difference; this only ever settles
 // a choice the projections themselves leave close.
-const DAY_TRUE_SLOT_BIAS: Record<string, number> = { THU: 0.0025, FRI: 0.002, SAT: 0.0015, SUN: 0, MON: -0.002 };
+// Sunday is split: the early (10 AM PT) games lean toward a true RB/WR/TE slot and the later Sunday games (1 PM PT, Sunday
+// night) lean toward FLEX, because FLEX is best kept for the decision that locks last. Order: Thu > Fri > Sat > Sun early >
+// (plain Sun, 0) > Sun late > Mon. Still tie-breaks only (the largest is 0.0025; a real projection gap is orders larger).
+const DAY_TRUE_SLOT_BIAS: Record<string, number> = { THU: 0.0025, FRI: 0.002, SAT: 0.0015, SUN_EARLY: 0.0012, SUN: 0, SUN_LATE: -0.0012, MON: -0.002 };
 // Real hard rule, not a nudge: once a game has a real Thu/Fri/Sat kickoff,
-// an RB/WR playing it can never be assigned to a FLEX-type slot (FLEX,
-// WR/RB flex, WR/TE flex, superflex) — only Sunday/Monday RB/WR ever occupy
+// an RB/WR/TE playing it can never be assigned to a FLEX-type slot (FLEX,
+// WR/RB flex, WR/TE flex, superflex) — only Sunday/Monday RB/WR/TE ever occupy
 // FLEX. The point is roster-lock strategy, not scoring: those early games
 // lock before Sunday's, so a FLEX slot filled by one of them is committed
 // days before it needs to be, for no scoring benefit (the same points would
-// score in his own true slot). Scoped to RB/WR only, matching what was
-// asked for — a Thursday TE or QB in a flex-eligible slot is unaffected.
+// score in his own true slot). Covers RB/WR/TE (the owner: "flexs should never
+// have Thu–Sat games"); a QB is exempt so a 2-QB league's superflex isn't starved.
 // Only takes effect when the caller supplies real `gameDay` data.
 const FLEX_FIRST_BONUS = 0.003;
 // Swapping two flex-first players flips both signs (2x the step), so 2x the step must beat both slots' STAY_PUT_BONUS (2 x 0.0005); window capped so the total stays far below any real point gap.
@@ -231,6 +236,15 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     }
   });
 
+  // The hard roster-lock rule, in one place: an RB/WR/TE whose game is Thu/Fri/Sat must not sit in a FLEX-type slot.
+  // Used to forbid assignments, to refuse to restore an old occupant, and to recognise a CURRENT lineup that already breaks it.
+  const flexRuleBreaks = (id: string, slotIdx: number): boolean => {
+    if (isEmpty(id)) return false;
+    const pos = posOf(id);
+    const day = input.gameDay?.(id);
+    return eligiblePositions(slotCodes[slotIdx]).length > 1 && (pos === "RB" || pos === "WR" || pos === "TE") && !!day && EARLY_DAYS.has(day);
+  };
+
   const freeSlots = slotCodes.map((_, i) => i).filter((i) => !fixed.has(i));
   const pool = candidates.filter((id) => !frozen.has(id) && !locked(id) && !unavailable(id) && !input.neverStart?.(id) && posOf(id));
 
@@ -247,7 +261,7 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
         const id = pool[c];
         const pos = posOf(id)!;
         const day = input.gameDay?.(id);
-        const earlyFlexBlocked = isFlexSlot && (pos === "RB" || pos === "WR") && !!day && EARLY_DAYS.has(day);
+        const earlyFlexBlocked = flexRuleBreaks(id, slotIdx);
         if (!eligible.has(pos) || earlyFlexBlocked) {
           row[c] = BIG * 10; // not allowed in this slot
         } else {
@@ -277,7 +291,7 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
     // most needs to hold.
     const placed = new Set(result.filter((id) => !isEmpty(id)));
     freeSlots.forEach((slotIdx) => {
-      if (result[slotIdx] === EMPTY && !isEmpty(current[slotIdx]) && !placed.has(current[slotIdx]) && !input.neverStart?.(current[slotIdx])) {
+      if (result[slotIdx] === EMPTY && !isEmpty(current[slotIdx]) && !placed.has(current[slotIdx]) && !input.neverStart?.(current[slotIdx]) && !flexRuleBreaks(current[slotIdx], slotIdx)) {
         result[slotIdx] = current[slotIdx];
         placed.add(current[slotIdx]);
       }
@@ -302,7 +316,10 @@ export function optimizeLineup(input: OptimizeInput): OptimizeResult {
   // `gain` is real projected points and can be negative when a preference
   // deliberately starts someone with a lower projection.
   const score = (ids: string[]) => ids.reduce((sum, id) => sum + weight(id), 0);
-  if (score(result) < score(current) - 1e-6) {
+  // Exception: when the CURRENT lineup itself breaks the hard flex rule (a Thursday player sitting in FLEX, typically carried
+  // over from this week), it is not a lineup worth protecting — the rule wins even though the compliant lineup scores lower.
+  const currentBreaksFlexRule = current.some((id, i) => !fixed.has(i) && flexRuleBreaks(id, i));
+  if (!currentBreaksFlexRule && score(result) < score(current) - 1e-6) {
     return { starters: current, currentPoints, optimalPoints: currentPoints, gain: 0, changes: [] };
   }
   return { starters: result, currentPoints, optimalPoints, gain: optimalPoints - currentPoints, changes };

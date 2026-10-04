@@ -111,12 +111,10 @@ async function main() {
     ok(res.starters[flexSlot] === "wrHigh", "a Sunday player fills FLEX normally, on points alone", res.starters[flexSlot]);
   }
 
-  // ---------- 5. TE and QB are explicitly OUT of scope for the hard block —
-  // a Thursday TE/QB is still allowed in a flex-eligible slot, matching the
-  // request (RB/WR only). The true TE/QB slot is locked (game already
-  // started) so the early-week player's ONLY path into the lineup is the
-  // flex slot — proving he's allowed there, not just occasionally preferred
-  // there by the (position-unrestricted) day tie-break.
+  // ---------- 5. The hard block covers RB/WR/TE (the owner: "flexs should never have
+  // Thu–Sat games"); a QB is deliberately exempt so a 2-QB league's superflex is
+  // never starved. The true TE/QB slot is locked (game already started) so the
+  // Thursday player's ONLY path into the lineup would be the flex slot.
   {
     const slots = ["TE", "REC_FLEX"]; // REC_FLEX = WR/TE
     const players: Player[] = [
@@ -126,7 +124,7 @@ async function main() {
     ];
     const res = run(slots, ["teBest", "0"], players, { lockedIds: new Set(["teBest"]) });
     const flexSlot = slots.indexOf("REC_FLEX");
-    ok(res.starters[flexSlot] === "teThuBest", "a Thursday TE is allowed in a flex-eligible slot — the hard rule is RB/WR only", res.starters[flexSlot]);
+    ok(res.starters[flexSlot] === "wr1", "a Thursday TE is NOT allowed in a flex slot — the lower-projected Sunday WR takes it instead", res.starters[flexSlot]);
   }
   {
     const slots = ["QB", "SUPER_FLEX"];
@@ -137,7 +135,7 @@ async function main() {
     ];
     const res = run(slots, ["qbBest", "0"], players, { lockedIds: new Set(["qbBest"]) });
     const flexSlot = slots.indexOf("SUPER_FLEX");
-    ok(res.starters[flexSlot] === "qbThuBest", "a Thursday QB is allowed in superflex — the hard rule is RB/WR only", res.starters[flexSlot]);
+    ok(res.starters[flexSlot] === "qbThuBest", "a Thursday QB is still allowed in superflex — QBs are exempt from the flex block", res.starters[flexSlot]);
   }
 
   // ---------- 6. Tie-break ordering: among genuinely equal-projection RB/WR
@@ -215,6 +213,43 @@ async function main() {
     ok(res.changes.length === 1 && res.changes[0].in === "wrBench", "only the genuinely empty FLEX slot gets filled — no pointless churn", JSON.stringify(res.changes));
   }
 
+  // ---------- 9b. A CURRENT lineup that already breaks the flex rule (Thursday player in FLEX, e.g. carried over from this
+  // week) is NOT protected by the "never worse" net — the rule wins even though the compliant lineup projects lower.
+  {
+    const slots = ["RB", "FLEX"];
+    const players: Player[] = [
+      { id: "rb1", pos: "RB", pts: 10, day: "SUN_EARLY" as never },
+      { id: "rbThuBig", pos: "RB", pts: 25, day: "THU" },
+      { id: "wrSun", pos: "WR", pts: 6, day: "SUN_LATE" as never },
+    ];
+    // rb1 is locked in the RB slot (his game started), so the Thursday RB's only way in is FLEX — and that is what the rule forbids
+    const res = run(slots, ["rb1", "rbThuBig"], players, { lockedIds: new Set(["rb1"]) });
+    ok(res.starters[1] === "wrSun", "a Thursday RB already in FLEX is moved out even though the Sunday WR projects far lower", res.starters.join());
+    ok(res.changes.some((c) => c.slotCode === "FLEX" && c.out === "rbThuBig" && c.in === "wrSun"), "…and the change is reported as that swap", JSON.stringify(res.changes));
+    ok(res.gain < 0, "the (honest) projected cost is shown as negative gain, not hidden", String(res.gain));
+  }
+  {
+    // nobody else eligible: the FLEX goes EMPTY rather than keeping the Thursday player (never silently breaks the rule)
+    const slots = ["RB", "FLEX"];
+    const players: Player[] = [
+      { id: "rb1", pos: "RB", pts: 10, day: "SUN_EARLY" as never },
+      { id: "rbThuBig", pos: "RB", pts: 25, day: "THU" },
+    ];
+    const res = run(slots, ["rb1", "rbThuBig"], players, { lockedIds: new Set(["rb1"]) });
+    ok(res.starters[1] === "0", "no compliant player available → FLEX is left empty, not given to the Thursday game", res.starters.join());
+  }
+  {
+    // a LOCKED (already-played) Thursday player in FLEX can't be moved — never touched
+    const slots = ["RB", "FLEX"];
+    const players: Player[] = [
+      { id: "rb1", pos: "RB", pts: 10, day: "SUN_EARLY" as never },
+      { id: "rbThuBig", pos: "RB", pts: 25, day: "THU" },
+      { id: "wrSun", pos: "WR", pts: 6, day: "SUN_LATE" as never },
+    ];
+    const res = run(slots, ["rb1", "rbThuBig"], players, { lockedIds: new Set(["rbThuBig"]) });
+    ok(res.starters[1] === "rbThuBig", "a locked slot is never touched, even when it breaks the rule", res.starters.join());
+  }
+
   // ---------- 10. neverStart is a genuine hard exclude — never proposed as
   // a starter even as the only real candidate for an otherwise-empty slot;
   // the slot is left empty rather than starting him.
@@ -247,6 +282,34 @@ async function main() {
     ];
     const res = run(slots, ["wrBanned"], players, { gameDay: false, neverStartIds: new Set(["wrBanned"]) });
     ok(res.starters[0] === "wrOk", "a real, unbanned replacement takes the slot instead of leaving it empty", res.starters[0]);
+  }
+
+  // ---------- 8. Early vs late Sunday: with identical projections the 10 AM PT game takes the TRUE slot and the later
+  // Sunday game takes FLEX; Monday also prefers FLEX; a real projection edge still wins over the preference.
+  {
+    const slots = ["WR", "FLEX"];
+    const early: Player[] = [
+      { id: "early", pos: "WR", pts: 12, day: "SUN_EARLY" as never },
+      { id: "late", pos: "WR", pts: 12, day: "SUN_LATE" as never },
+    ];
+    // start them in the "wrong" slots so only the preference can move them
+    let res = run(slots, ["late", "early"], early);
+    ok(res.starters[0] === "early" && res.starters[1] === "late", "equal projections: early-Sunday player takes the WR slot, late-Sunday player takes FLEX", res.starters.join());
+    res = run(slots, ["early", "late"], early);
+    ok(res.changes.length === 0, "already early→WR / late→FLEX: nothing to change");
+    const mon: Player[] = [
+      { id: "early", pos: "WR", pts: 12, day: "SUN_EARLY" as never },
+      { id: "mon", pos: "WR", pts: 12, day: "MON" },
+    ];
+    res = run(slots, ["mon", "early"], mon);
+    ok(res.starters[0] === "early" && res.starters[1] === "mon", "equal projections: Monday player prefers FLEX over an early-Sunday player", res.starters.join());
+    const edge: Player[] = [
+      { id: "early", pos: "WR", pts: 12, day: "SUN_EARLY" as never },
+      { id: "lateBig", pos: "WR", pts: 15, day: "SUN_LATE" as never },
+      { id: "benchEarly", pos: "WR", pts: 11.9, day: "SUN_EARLY" as never },
+    ];
+    res = run(slots, ["early", "benchEarly"], edge);
+    ok(res.starters.includes("lateBig") && !res.starters.includes("benchEarly"), "a real projection edge (3 pts) still beats the early-Sunday preference", res.starters.join());
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

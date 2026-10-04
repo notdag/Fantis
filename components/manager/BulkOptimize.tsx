@@ -11,6 +11,7 @@ import { TIER_LABELS } from "@/lib/players";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
 import { preflightRosters } from "@/lib/liveRosters";
+import { kickoffSlot, kickoffSlotLabel } from "@/lib/kickoffSlot";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
 import { scoringKey } from "@/lib/scoringKey";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -29,20 +30,16 @@ const OUT_STATUSES = new Set(["Out", "IR", "PUP", "Sus", "COV", "NA", "DNR"]);
 // ceiling for "which week", including "All weeks".
 const LAST_WEEK = 18;
 
-// Real kickoff day of week, from the same ISO kickoff time used for lock
-// checks — not a guess. Tue/Wed (no real NFL games) fall through to
-// undefined, same as a missing kickoff.
-function dayOfWeek(iso: string | undefined): "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined {
-  if (!iso) return undefined;
-  switch (new Date(iso).getDay()) {
-    case 0: return "SUN";
-    case 1: return "MON";
-    case 4: return "THU";
-    case 5: return "FRI";
-    case 6: return "SAT";
-    default: return undefined;
-  }
-}
+// Real kickoff window (Thu / Fri / Sat / Sun early / Sun late / Mon), judged in Pacific time from the same ISO kickoff
+// times used for lock checks — see lib/kickoffSlot.ts. (It used to use the browser's own time zone.)
+const dayOfWeek = kickoffSlot;
+
+// Long-term designations that keep a player out of LATER weeks' lineups. "Out" / "COV" are this week's status and
+// are assumed over by a later week (toggle below), so they're not in here.
+const LONG_TERM_OUT = new Set(["IR", "PUP", "Sus", "NA", "DNR"]);
+
+// "Set ahead" covers the rest of the regular season. Week 18 is deliberately excluded (most leagues' playoffs end by 17).
+const AHEAD_LAST = 17;
 
 interface WeekData {
   proj: ProjectionMap;
@@ -88,9 +85,14 @@ export default function BulkOptimize({
   // week of the season (currentWeek..18) at once — e.g. setting lineups a
   // week or more ahead of time from this week's projections, to revisit
   // closer to game time as they firm up.
-  const [selectedWeek, setSelectedWeek] = useState<number | "all">(currentWeek);
+  const [selectedWeek, setSelectedWeek] = useState<number | "all" | "ahead">(currentWeek);
   const weeksToShow = useMemo(
-    () => (selectedWeek === "all" ? Array.from({ length: Math.max(0, LAST_WEEK - currentWeek + 1) }, (_, i) => currentWeek + i) : [selectedWeek]),
+    () =>
+      selectedWeek === "all"
+        ? Array.from({ length: Math.max(0, LAST_WEEK - currentWeek + 1) }, (_, i) => currentWeek + i)
+        : selectedWeek === "ahead"
+          ? Array.from({ length: Math.max(0, AHEAD_LAST - currentWeek) }, (_, i) => currentWeek + 1 + i)
+          : [selectedWeek],
     [selectedWeek, currentWeek]
   );
 
@@ -162,6 +164,13 @@ export default function BulkOptimize({
   // reverts to a pure points/rank optimizer with no day awareness, to
   // compare side by side.
   const [lockEarlyFlex, setLockEarlyFlex] = useState(true);
+  // For weeks AFTER the current one, a player listed Out/COV today is assumed to be back (only IR/PUP/Sus/NA/DNR keep him
+  // out) — otherwise one short injury would bench him for the whole rest of the season. Visible, and switchable.
+  const [futureHealthy, setFutureHealthy] = useState(true);
+  // The one-click "set the rest of the season" flow: after the lineups are computed, open the single confirm automatically.
+  const [autoConfirm, setAutoConfirm] = useState(false);
+  const isOutStatus = (week: number, inj: string | null | undefined) =>
+    !!inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(inj) : OUT_STATUSES.has(inj));
   const ranksPending = mode !== "projections" && !ranks;
   const allWeeksLoading = weeksToShow.some((w) => !(w in weekData));
 
@@ -183,7 +192,7 @@ export default function BulkOptimize({
       const isUnavailable = (id: string) => {
         const e = pmap[id];
         if (!e) return true;
-        if (e.inj && OUT_STATUSES.has(e.inj)) return true;
+        if (e.inj && (week > currentWeek && futureHealthy ? LONG_TERM_OUT.has(e.inj) : OUT_STATUSES.has(e.inj))) return true;
         return !!e.t && BYE_WEEKS_2026[e.t] === week;
       };
       const isLocked = (id: string) => {
@@ -240,21 +249,21 @@ export default function BulkOptimize({
     }
     out.sort((a, b) => a.week - b.week || b.result.gain - a.result.gain);
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
-  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
+  }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex, futureHealthy, currentWeek]);
 
   // ── Manual lineup edits: "put THIS player in my FLEX" ──
   // The optimizer proposes; any unlocked slot can be overridden from a dropdown, and every pick is checked by
   // lib/lineupEdit.ts (healthy, not locked, not never-start, position-eligible, swap-legal). Edits are keyed by
   // row and discarded when the mode / week / FLEX-lock setting changes, since the proposal underneath changed.
   const leagueById = useMemo(() => new Map(leagues.map((l) => [l.league.id, l])), [leagues]);
-  const editSig = `${mode}|${lockEarlyFlex}|${selectedWeek}`;
+  const editSig = `${mode}|${lockEarlyFlex}|${selectedWeek}|${futureHealthy}`;
   const [edits, setEdits] = useState<{ sig: string; byKey: Record<string, string[]> }>({ sig: "", byKey: {} });
   const editsByKey = edits.sig === editSig ? edits.byKey : {};
   const [openEdit, setOpenEdit] = useState<Set<string>>(new Set());
   const unavailableFor = (week: number, id: string) => {
     const e = pmap?.[id];
     if (!e) return true;
-    if (e.inj && OUT_STATUSES.has(e.inj)) return true;
+    if (isOutStatus(week, e.inj)) return true;
     return !!e.t && BYE_WEEKS_2026[e.t] === week;
   };
   const lockedFor = (week: number, id: string) => {
@@ -307,6 +316,20 @@ export default function BulkOptimize({
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r) && view(r).changes.length > 0);
   const totalGain = rows.reduce((s, r) => s + view(r).gain, 0);
+  // The one-click flow opens the confirm by itself as soon as the lineups are ready.
+  const aheadReady = !allWeeksLoading && !ranksPending;
+  const showConfirm = (confirming || autoConfirm) && !running && aheadReady && selectedRows.length > 0;
+  const runAhead = () => {
+    // Highest Sleeper projection each week, FLEX never holding a Thu–Sat game (hard rule), early-Sunday games leaning to
+    // true slots and later Sunday / Monday leaning to FLEX (tie-breaks only). Your Priority / Avoid / Never-start lists
+    // still apply; nothing is sent until you confirm the summary.
+    setMode("projections");
+    setLockEarlyFlex(true);
+    setHideLosing(false);
+    setDeselected(new Set());
+    setSelectedWeek("ahead");
+    setAutoConfirm(true);
+  };
   const name = (id: string | null) => (id ? pmap?.[id]?.n ?? id : "empty");
   const flag = (id: string | null) => {
     if (!id) return "";
@@ -358,6 +381,7 @@ export default function BulkOptimize({
   const start = async () => {
     if (!token) return;
     setConfirming(false);
+    setAutoConfirm(false);
     setRunning(true);
     setSummary("");
     abortRef.current = { aborted: false };
@@ -425,7 +449,7 @@ export default function BulkOptimize({
       const rk = ranks?.get(id);
       const tierTxt = rk ? `Tier ${TIER_LABELS[rk.tier - 1] ?? rk.tier}` : "unranked";
       const day = dayOfWeek(weekData[r.week]?.kickoffs[pmap?.[id]?.t ?? ""]);
-      const dayTxt = day === "THU" || day === "FRI" || day === "SAT" ? ` · ${day}` : "";
+      const dayTxt = day ? ` · ${kickoffSlotLabel(day)}` : "";
       return `${name(id)}${flag(id)} · ${tierTxt} · ${projOf(id).toFixed(1)}${dayTxt}`;
     };
     const tierRank = (id: string) => ranks?.get(id)?.tier ?? 99;
@@ -500,22 +524,49 @@ export default function BulkOptimize({
     );
   }
 
-  const weekLabel = selectedWeek === "all" ? `weeks ${currentWeek}–${LAST_WEEK}` : `week ${selectedWeek}`;
+  const weekLabel =
+    selectedWeek === "all" ? `weeks ${currentWeek}–${LAST_WEEK}` : selectedWeek === "ahead" ? `weeks ${currentWeek + 1}–${AHEAD_LAST}` : `week ${selectedWeek}`;
 
   return (
     <>
+      <div className="card sync" style={{ maxWidth: "none", margin: "0 0 14px", padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 360px", minWidth: 0 }}>
+            <b style={{ fontSize: 15 }}>Set weeks {currentWeek + 1}–{AHEAD_LAST} in one click</b>
+            <p className="hint" style={{ margin: "4px 0 0" }}>
+              Highest Sleeper projection each week. FLEX never holds a Thursday/Friday/Saturday game; early-Sunday (10 AM PT) players go in your RB/WR/TE
+              slots, and later-Sunday / Monday players go in FLEX when it&rsquo;s a tie. Your Priority / Avoid / Never-start lists still apply. You&rsquo;ll see one summary
+              to confirm, then it sends.
+            </p>
+          </div>
+          <button className="btn" onClick={runAhead} disabled={!token || running || currentWeek >= AHEAD_LAST}>
+            {autoConfirm && !aheadReady ? "Preparing…" : `Set weeks ${currentWeek + 1}–${AHEAD_LAST}`}
+          </button>
+        </div>
+        {!token && <p className="hint" style={{ margin: "8px 0 0", color: "var(--red)" }}>Connect write access above first.</p>}
+      </div>
       <div className="field" style={{ margin: "0 0 12px", alignItems: "center" }}>
         <span className="portmeta">Week</span>
         <select
           className="select sm"
           value={String(selectedWeek)}
-          onChange={(e) => setSelectedWeek(e.target.value === "all" ? "all" : Number(e.target.value))}
+          onChange={(e) => setSelectedWeek(e.target.value === "all" ? "all" : e.target.value === "ahead" ? "ahead" : Number(e.target.value))}
         >
           {Array.from({ length: LAST_WEEK - currentWeek + 1 }, (_, i) => currentWeek + i).map((w) => (
             <option key={w} value={w}>Week {w}{w === currentWeek ? " (current)" : ""}</option>
           ))}
+          <option value="ahead">Weeks {currentWeek + 1}–{AHEAD_LAST} (set ahead)</option>
           <option value="all">All weeks ({currentWeek}–{LAST_WEEK})</option>
         </select>
+        {selectedWeek !== currentWeek && (
+          <button
+            className={`chip-filter ${futureHealthy ? "on" : ""}`}
+            onClick={() => setFutureHealthy((v) => !v)}
+            title="A player listed Out today is probably not out for every later week. On: only IR/PUP/Sus/NA/DNR keep a player out of later weeks."
+          >
+            {futureHealthy ? "Later weeks: Out/Doubtful count as healthy" : "Later weeks: Out players stay benched"}
+          </button>
+        )}
         <button
           className={`chip-filter ${lockEarlyFlex ? "on" : ""}`}
           onClick={() => setLockEarlyFlex((v) => !v)}
@@ -621,7 +672,7 @@ export default function BulkOptimize({
               </div>
               {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above first.</p>}
 
-              {confirming && (
+              {showConfirm && (
                 <BulkConfirm
                   title={`Set ${selectedRows.length} lineups (${selectedRows.reduce((s, r) => s + view(r).gain, 0) >= 0 ? "+" : ""}${selectedRows.reduce((s, r) => s + view(r).gain, 0).toFixed(1)} projected points)`}
                   lines={selectedRows.map((r) => (
@@ -629,9 +680,32 @@ export default function BulkOptimize({
                       {r.leagueName}: {swapText(r).join("; ")}
                     </span>
                   ))}
+                  summary={
+                    selectedWeek === "ahead" ? (
+                      <>
+                        {new Set(selectedRows.map((r) => r.leagueId)).size} leagues · {weekLabel} · highest Sleeper projection each week · FLEX never holds a
+                        Thu/Fri/Sat game · early-Sunday (10 AM PT) players go in RB/WR/TE slots, later Sunday &amp; Monday players prefer FLEX · sent about 3 at a
+                        time, so a big batch can take several minutes (a week Sleeper won&rsquo;t accept yet just shows as failed for that league).{" "}
+                        {futureHealthy ? "Players listed Out/Doubtful today are treated as healthy for later weeks (IR stays benched)." : "Players listed Out today stay benched in every week."}
+                        {(() => {
+                          // The flex rule is absolute: if a roster has nobody eligible without a Thu–Sat game, the slot goes empty.
+                          const empties = selectedRows.filter((r) => view(r).starters.slice(0, r.slotCodes.length).includes("0")).length;
+                          return empties > 0 ? (
+                            <b style={{ color: "var(--amber)", display: "block", marginTop: 4 }}>
+                              ⚠ {empties} lineup{empties === 1 ? "" : "s"} leave a slot EMPTY because no eligible player there avoids a Thu/Fri/Sat game (or all are out/on bye). Open
+                              Choose players on those rows to fill them by hand if you&rsquo;d rather.
+                            </b>
+                          ) : null;
+                        })()}
+                      </>
+                    ) : undefined
+                  }
                   confirmLabel={`Send ${selectedRows.length} lineups to Sleeper`}
                   onConfirm={start}
-                  onCancel={() => setConfirming(false)}
+                  onCancel={() => {
+                    setConfirming(false);
+                    setAutoConfirm(false);
+                  }}
                 />
               )}
               {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
@@ -653,7 +727,7 @@ export default function BulkOptimize({
                         onChange={() => toggle(r.key)}
                       />
                       <span className="tname" style={{ flex: 1 }}>
-                        {selectedWeek === "all" ? `Week ${r.week} · ${r.leagueName}` : r.leagueName}
+                        {selectedWeek === "all" || selectedWeek === "ahead" ? `Week ${r.week} · ${r.leagueName}` : r.leagueName}
                         {swapText(r).map((t, i) => (
                           <span key={i} className="portmeta" style={{ display: "block", fontWeight: 400 }}>{t}</span>
                         ))}

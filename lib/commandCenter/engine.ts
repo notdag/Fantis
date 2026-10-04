@@ -4,6 +4,7 @@
 // in lib/commandCenter, and an instruction that sounds like a change
 // ("add him", "drop Player A everywhere") is answered with a refusal and a
 // PREVIEW of what a later phase could propose.
+import { kickoffSlot } from "../kickoffSlot";
 import { buildActivateIrPlan, buildIrPlan, irAllowed, irSlots, SEVERITY, type DropRank, type PlanLeague } from "../bulkPlan";
 import { classifyPlayer, positionEligible, rosterPositions, activeCount } from "./classify";
 import { analyzeDrops } from "./drops";
@@ -1612,18 +1613,9 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       // those RB/WRs floating in FLEX — lib/lineupOptimizer.ts hard-forbids
       // it); Monday locks last (keep him in the flexible slot till the
       // latest possible decision).
-      const gameDay = (id: string): "THU" | "FRI" | "SAT" | "SUN" | "MON" | undefined => {
+      const gameDay = (id: string) => {
         const team = env.pmap[id]?.t;
-        const ko = team ? kickoffs[team] : undefined;
-        if (!ko) return undefined;
-        switch (new Date(ko).getDay()) {
-          case 0: return "SUN";
-          case 1: return "MON";
-          case 4: return "THU";
-          case 5: return "FRI";
-          case 6: return "SAT";
-          default: return undefined;
-        }
+        return kickoffSlot(team ? kickoffs[team] : undefined);
       };
       const found: { draft: ProposalDraft; league: string; gain: number; reslotOnly: boolean }[] = [];
       for (const snap of snaps) {
