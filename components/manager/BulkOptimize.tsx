@@ -60,7 +60,7 @@ interface Row {
 
 
 export default function BulkOptimize({
-  leagues,
+  leagues: allLeagues,
   pmap,
   token,
   currentWeek,
@@ -85,6 +85,15 @@ export default function BulkOptimize({
   // week of the season (currentWeek..18) at once — e.g. setting lineups a
   // week or more ahead of time from this week's projections, to revisit
   // closer to game time as they firm up.
+  // Optionally limit everything below (Set weeks, the table, the boards, what is sent) to a few leagues you pick.
+  const [onlyIds, setOnlyIds] = useState<string[]>([]);
+  const [leagueQuery, setLeagueQuery] = useState("");
+  const leagues = useMemo(() => (onlyIds.length === 0 ? allLeagues : allLeagues.filter((l) => onlyIds.includes(l.league.id))), [allLeagues, onlyIds]);
+  const leagueMatches = useMemo(() => {
+    const q = leagueQuery.trim().toLowerCase();
+    if (!q) return [];
+    return allLeagues.filter((l) => l.roster && !onlyIds.includes(l.league.id) && l.league.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [allLeagues, leagueQuery, onlyIds]);
   const [selectedWeek, setSelectedWeek] = useState<number | "all" | "ahead">(currentWeek);
   const weeksToShow = useMemo(
     () =>
@@ -710,8 +719,51 @@ export default function BulkOptimize({
             </p>
           </div>
           <button className="btn" onClick={runAhead} disabled={!token || running || currentWeek >= AHEAD_LAST}>
-            {autoConfirm && !aheadReady ? "Preparing…" : `Set weeks ${currentWeek + 1}–${AHEAD_LAST}`}
+            {autoConfirm && !aheadReady ? "Preparing…" : `Set weeks ${currentWeek + 1}–${AHEAD_LAST}${onlyIds.length ? ` (${onlyIds.length} league${onlyIds.length === 1 ? "" : "s"})` : ""}`}
           </button>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <span className="portmeta">
+            Leagues: <b>{onlyIds.length === 0 ? `all ${allLeagues.length}` : `only the ${onlyIds.length} you picked`}</b> — to fix just a few, search and add them:
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+            <input
+              className="input"
+              style={{ maxWidth: 280 }}
+              placeholder="Search a league to add…"
+              value={leagueQuery}
+              disabled={running}
+              onChange={(e) => setLeagueQuery(e.target.value)}
+              aria-label="Search leagues to limit Optimize to"
+            />
+            {onlyIds.map((id) => (
+              <button key={id} type="button" className="chip-filter on" disabled={running} onClick={() => setOnlyIds((p) => p.filter((x) => x !== id))} title="Remove from the selection">
+                {allLeagues.find((l) => l.league.id === id)?.league.name ?? id} ✕
+              </button>
+            ))}
+            {onlyIds.length > 0 && (
+              <button type="button" className="chip-filter" disabled={running} onClick={() => setOnlyIds([])}>
+                All leagues
+              </button>
+            )}
+          </div>
+          {leagueMatches.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {leagueMatches.map((l) => (
+                <button
+                  key={l.league.id}
+                  type="button"
+                  className="chip-filter"
+                  onClick={() => {
+                    setOnlyIds((p) => [...p, l.league.id]);
+                    setLeagueQuery("");
+                  }}
+                >
+                  + {l.league.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {!token && <p className="hint" style={{ margin: "8px 0 0", color: "var(--red)" }}>Connect write access above first.</p>}
       </div>
