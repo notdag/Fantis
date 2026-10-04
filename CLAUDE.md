@@ -2859,3 +2859,19 @@ The card (`components/PlayerCard.tsx`) was hard-wired to 2025 back to 2020. Now:
   Adj PPG / Rec % / RZ labels follow the selected season ('26). **Career** gets a 2026 row (games played so far only; no projections mixed into history).
 - Verified in the dev server on Chris Olave: 2026 default; weeks 1–3 real (28.2, 22.6, 19.7), weeks 4–18 projected, week 8 bye bar absent, 17 log rows (3 real + 14 projected), Career 2026 = 3 GP / 70.5 / 23.5 (matches the chart);
   2025 log unchanged (17 rows, no projected rows). `tsc` clean; PlayerCard lint findings identical to the committed baseline.
+
+### Optimize: "My tiers, then projection" mode + per-league "Choose players" editor (2026-10; requested explicitly by the owner — "some people are on the same tier in my rankings, when optimizing is there an easy way for me to choose the flex etc")
+
+Two gaps on `/manager/lineups` → Optimize: in "rankings" mode players in the same tier were separated only by their exact list position (projections never broke the tie), and there was no way to hand-pick a slot before sending.
+- **New third mode, "My tiers, then projection"** (`mode === "tiers"` in `components/manager/BulkOptimize.tsx`): only the owner's TIER decides who's preferred; players sharing a tier are split by Sleeper's projection. Implemented by feeding the optimizer
+  `rankOrder = (tier − 1) × 100` (one tier step ≫ any projection gap, so tiers never cross; same tier ⇒ equal band ⇒ points decide). The old mode is relabelled **"My exact rankings"**; "Projections only" is unchanged. **The default is still "My exact rankings"**
+  (not changed unasked). Swap reasons read "better tier" / "same tier — higher projection".
+- **"Choose players ▾" on every league row**: a dropdown per unlocked slot listing only players who can legally go there, each labelled `name · Tier X · projection (· THU/FRI/SAT)` and sorted best tier → highest projection, so tier-mates are easy to tell apart.
+  Picking a player already starting elsewhere SWAPS the two (refused if the displaced player can't take the other slot). Pure, tested logic in `lib/lineupEdit.ts` (`applyPick`, `slotOptions`, `slotLocked`, `diffLineups`): never an Out/IR/bye player, never a locked
+  (game-started) player or slot, never a never-start player, never an ineligible position, never a player off the roster / on IR. The row's swaps, projected change, the confirm total and what is actually SENT (`setStarters`) all come from the edited lineup
+  ("your pick", "edited by you" + Reset); a row edited back to the current lineup is excluded from the send. Edits are discarded when mode / week / FLEX-lock changes (the proposal underneath changed). Manual picks are NOT blocked by the Thu–Sat-out-of-FLEX
+  rule (it's the owner's explicit choice) — the option label shows THU/FRI/SAT so it's visible.
+- Tests: `npx tsx scripts/testLineupEdit.ts` (19: swaps, every refusal, locked slots, option lists, diff, plus the tier-mode ordering — better tier wins despite lower projection; same tier → higher projection; strict order contrast).
+  Real-data check on the 210 live leagues (week 4): **8,130 legal manual picks across every slot → 0 invalid lineups**; FLEX slots offered ~8.8 legal options on average, 733 slots had a same-tier alternative. Mode comparison (projected change / leagues
+  lower): exact rankings −126.9 / 105, tiers-then-projection **+126.8 / 40**, projections only +520.0 / 0. All existing suites unchanged (21, 6, 433, 84). `tsc`/`eslint` clean. Not clicked through in a browser (`/manager` is behind the passphrase + Sleeper
+  connection), and the actual Sleeper send is still the never-exercised-live path — send one league first.

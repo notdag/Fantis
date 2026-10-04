@@ -6,6 +6,8 @@ import { getWeekKickoffs } from "@/lib/espnGames";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
 import { buildStartingSlots } from "@/lib/rosterSlots";
 import { optimizeLineup, type OptimizeResult } from "@/lib/lineupOptimizer";
+import { applyPick, diffLineups, slotLocked, slotOptions, type EditCtx } from "@/lib/lineupEdit";
+import { TIER_LABELS } from "@/lib/players";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
@@ -143,7 +145,7 @@ export default function BulkOptimize({
   // "rankings": your /admin order decides who starts (projections only order
   // players you haven't ranked); "projections": pure best projection. The
   // My players priority/avoid lists apply in both.
-  const [mode, setMode] = useState<"rankings" | "projections">("rankings");
+  const [mode, setMode] = useState<"rankings" | "tiers" | "projections">("rankings");
   const ranks = useCuratedRanks();
   // Hides lineup changes whose net projection goes DOWN (a ranking or priority
   // is being followed at a projected cost). Off by default so nothing is
@@ -156,7 +158,7 @@ export default function BulkOptimize({
   // reverts to a pure points/rank optimizer with no day awareness, to
   // compare side by side.
   const [lockEarlyFlex, setLockEarlyFlex] = useState(true);
-  const ranksPending = mode === "rankings" && !ranks;
+  const ranksPending = mode !== "projections" && !ranks;
   const allWeeksLoading = weeksToShow.some((w) => !(w in weekData));
 
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
@@ -208,7 +210,17 @@ export default function BulkOptimize({
           avoid: (id) => avoidSet.has(id),
           neverStart: (id) => neverStartSet.has(id),
           flexFirst: (id) => flexFirstIndex.get(id),
-          rankOrder: mode === "rankings" ? (id) => ranks?.get(id)?.order : undefined,
+          // "rankings" = your exact list order; "tiers" = only your TIER decides, so players in the same tier are split by
+          // projection (a tier step is 100 positions, far larger than any projection gap, so tiers never cross).
+          rankOrder:
+            mode === "rankings"
+              ? (id) => ranks?.get(id)?.order
+              : mode === "tiers"
+                ? (id) => {
+                    const t = ranks?.get(id)?.tier;
+                    return t ? (t - 1) * 100 : undefined;
+                  }
+                : undefined,
           gameDay: lockEarlyFlex ? gameDay : undefined,
         });
         for (const id of candidates) {
@@ -226,9 +238,71 @@ export default function BulkOptimize({
     return { rows: out, lockedCount: locked, unavailableCount: unavailable };
   }, [leagues, pmap, weekData, weeksToShow, allWeeksLoading, priorityIndex, avoidSet, neverStartSet, flexFirstIndex, mode, ranks, ranksPending, hideLosing, lockEarlyFlex]);
 
+  // ── Manual lineup edits: "put THIS player in my FLEX" ──
+  // The optimizer proposes; any unlocked slot can be overridden from a dropdown, and every pick is checked by
+  // lib/lineupEdit.ts (healthy, not locked, not never-start, position-eligible, swap-legal). Edits are keyed by
+  // row and discarded when the mode / week / FLEX-lock setting changes, since the proposal underneath changed.
+  const leagueById = useMemo(() => new Map(leagues.map((l) => [l.league.id, l])), [leagues]);
+  const editSig = `${mode}|${lockEarlyFlex}|${selectedWeek}`;
+  const [edits, setEdits] = useState<{ sig: string; byKey: Record<string, string[]> }>({ sig: "", byKey: {} });
+  const editsByKey = edits.sig === editSig ? edits.byKey : {};
+  const [openEdit, setOpenEdit] = useState<Set<string>>(new Set());
+  const unavailableFor = (week: number, id: string) => {
+    const e = pmap?.[id];
+    if (!e) return true;
+    if (e.inj && OUT_STATUSES.has(e.inj)) return true;
+    return !!e.t && BYE_WEEKS_2026[e.t] === week;
+  };
+  const lockedFor = (week: number, id: string) => {
+    const wd = weekData[week];
+    const team = pmap?.[id]?.t;
+    const ko = team && wd ? wd.kickoffs[team] : undefined;
+    return !!ko && !!wd && Date.parse(ko) <= wd.loadedAt;
+  };
+  const ctxFor = (r: Row): EditCtx | null => {
+    const l = leagueById.get(r.leagueId);
+    if (!l?.roster || !pmap) return null;
+    const reserve = new Set(l.roster.reserve);
+    return {
+      slotCodes: r.slotCodes,
+      candidates: l.roster.players.filter((id) => !reserve.has(id)),
+      posOf: (id) => pmap[id]?.p ?? null,
+      unavailable: (id) => unavailableFor(r.week, id),
+      locked: (id) => lockedFor(r.week, id),
+      neverStart: (id) => neverStartSet.has(id),
+    };
+  };
+  // What will actually be sent for a row: the optimizer's lineup, or the owner's hand-edited one.
+  const view = (r: Row) => {
+    const starters = editsByKey[r.key];
+    if (!starters) {
+      return { starters: r.result.starters, changes: r.result.changes, currentPoints: r.result.currentPoints, optimalPoints: r.result.optimalPoints, gain: r.result.gain, edited: false };
+    }
+    const current = leagueById.get(r.leagueId)?.roster?.starters ?? [];
+    const pts = (ids: string[]) =>
+      ids.slice(0, r.slotCodes.length).reduce(
+        (sum, id) => sum + (!id || id === "0" || unavailableFor(r.week, id) ? 0 : weekData[r.week]?.proj[id]?.[r.scoring] ?? 0),
+        0
+      );
+    const cur = pts(current);
+    const opt = pts(starters);
+    return { starters, changes: diffLineups(r.slotCodes, current, starters), currentPoints: cur, optimalPoints: opt, gain: opt - cur, edited: true };
+  };
+  const pickSlot = (r: Row, slotIdx: number, id: string) => {
+    const ctx = ctxFor(r);
+    if (!ctx) return;
+    const next = applyPick(ctx, view(r).starters, slotIdx, id);
+    if (next) setEdits({ sig: editSig, byKey: { ...editsByKey, [r.key]: next } });
+  };
+  const resetEdit = (r: Row) => {
+    const rest = { ...editsByKey };
+    delete rest[r.key];
+    setEdits({ sig: editSig, byKey: rest });
+  };
+
   const finished = (r: Row) => status[r.key]?.kind === "done";
-  const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r));
-  const totalGain = rows.reduce((s, r) => s + r.result.gain, 0);
+  const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r) && view(r).changes.length > 0);
+  const totalGain = rows.reduce((s, r) => s + view(r).gain, 0);
   const name = (id: string | null) => (id ? pmap?.[id]?.n ?? id : "empty");
   const flag = (id: string | null) => {
     if (!id) return "";
@@ -253,6 +327,12 @@ export default function BulkOptimize({
     if (c.out && ((outInj && OUT_STATUSES.has(outInj)) || (outTeam && BYE_WEEKS_2026[outTeam] === r.week))) {
       return "replacing an unavailable player";
     }
+    if (mode === "tiers" && c.in) {
+      const ti = ranks?.get(c.in)?.tier;
+      const to = c.out ? ranks?.get(c.out)?.tier : undefined;
+      if (ti !== undefined && (to === undefined || ti < to)) return "better tier";
+      return "same tier — higher projection";
+    }
     if (mode === "rankings" && c.in) {
       const ri = ranks?.get(c.in)?.order;
       const ro = c.out ? ranks?.get(c.out)?.order : undefined;
@@ -261,7 +341,7 @@ export default function BulkOptimize({
     return "higher projection";
   };
   const swapText = (r: Row) =>
-    r.result.changes.map((c) => `${c.slotCode}: ${who(r, c.out)} → ${who(r, c.in)} — ${reason(r, c)}`);
+    view(r).changes.map((c) => `${c.slotCode}: ${who(r, c.out)} → ${who(r, c.in)} — ${view(r).edited ? "your pick" : reason(r, c)}`);
 
   const toggle = (key: string) =>
     setDeselected((prev) => {
@@ -283,10 +363,11 @@ export default function BulkOptimize({
         await setStarters(token, {
           leagueId: r.leagueId,
           rosterId: r.rosterId,
-          starters: r.result.starters,
+          starters: view(r).starters,
           week: r.week,
         });
-        return `${r.result.changes.length} swap${r.result.changes.length === 1 ? "" : "s"}`;
+        const n = view(r).changes.length;
+        return `${n} swap${n === 1 ? "" : "s"}`;
       },
     }));
     const doneKeys: string[] = [];
@@ -306,6 +387,83 @@ export default function BulkOptimize({
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
         (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
+    );
+  };
+
+  // The per-league editor: every unlocked slot gets a dropdown of the players who can legally go there, each shown
+  // with tier · projection (· THU/FRI/SAT when his game locks early) so tier-mates are easy to tell apart.
+  const renderEditor = (r: Row) => {
+    const ctx = ctxFor(r);
+    if (!ctx || finished(r)) return null;
+    const v = view(r);
+    const open = openEdit.has(r.key);
+    const projOf = (id: string) => weekData[r.week]?.proj[id]?.[r.scoring] ?? 0;
+    const optionLabel = (id: string) => {
+      const rk = ranks?.get(id);
+      const tierTxt = rk ? `Tier ${TIER_LABELS[rk.tier - 1] ?? rk.tier}` : "unranked";
+      const day = dayOfWeek(weekData[r.week]?.kickoffs[pmap?.[id]?.t ?? ""]);
+      const dayTxt = day === "THU" || day === "FRI" || day === "SAT" ? ` · ${day}` : "";
+      return `${name(id)}${flag(id)} · ${tierTxt} · ${projOf(id).toFixed(1)}${dayTxt}`;
+    };
+    const tierRank = (id: string) => ranks?.get(id)?.tier ?? 99;
+    return (
+      <span style={{ display: "block", marginTop: 4, fontWeight: 400 }}>
+        <button
+          type="button"
+          className="linklike"
+          style={{ fontSize: 12.5 }}
+          onClick={() =>
+            setOpenEdit((prev) => {
+              const next = new Set(prev);
+              if (next.has(r.key)) next.delete(r.key);
+              else next.add(r.key);
+              return next;
+            })
+          }
+        >
+          {open ? "Hide lineup ▴" : "Choose players ▾"}
+        </button>
+        {v.edited && (
+          <>
+            <span className="portmeta" style={{ color: "var(--amber)", marginLeft: 8 }}>edited by you</span>{" "}
+            <button type="button" className="linklike" style={{ fontSize: 12.5 }} onClick={() => resetEdit(r)}>
+              Reset
+            </button>
+          </>
+        )}
+        {open && (
+          <span style={{ display: "grid", gap: 6, marginTop: 8 }}>
+            {r.slotCodes.map((code, i) => {
+              const cur = v.starters[i];
+              const locked = slotLocked(ctx, v.starters, i);
+              const opts = slotOptions(ctx, v.starters, i).sort((a, b) => tierRank(a) - tierRank(b) || projOf(b) - projOf(a));
+              return (
+                <label key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="portmeta" style={{ width: 52, flex: "none" }}>{code}</span>
+                  {locked ? (
+                    <span className="portmeta">{name(cur)} — game started, locked</span>
+                  ) : (
+                    <select
+                      className="select sm"
+                      style={{ flex: 1, minWidth: 0 }}
+                      value={cur && cur !== "0" ? cur : "0"}
+                      disabled={running}
+                      onChange={(e) => pickSlot(r, i, e.target.value)}
+                    >
+                      {(!cur || cur === "0") && <option value="0">(empty)</option>}
+                      {opts.map((id) => (
+                        <option key={id} value={id}>
+                          {optionLabel(id)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </label>
+              );
+            })}
+          </span>
+        )}
+      </span>
     );
   };
 
@@ -359,8 +517,11 @@ export default function BulkOptimize({
           </StatCardGrid>
           <p className="hint" style={{ margin: "8px 0 12px" }}>
             {mode === "rankings"
-              ? "Starts your highest-ranked healthy players (your /admin order); anyone you haven't ranked is ordered by Sleeper's projection and sits below ranked players."
-              : "Starts the highest Sleeper projection at each slot, ignoring your /admin rankings."}{" "}
+              ? "Starts your highest-ranked healthy players (your exact /admin order); anyone you haven't ranked is ordered by Sleeper's projection and sits below ranked players."
+              : mode === "tiers"
+                ? "Starts players from your best tiers first; when several players share a tier, the higher Sleeper projection decides. Anyone you haven't ranked sits below ranked players."
+                : "Starts the highest Sleeper projection at each slot, ignoring your /admin rankings."}{" "}
+            Want a different player (say, who takes FLEX)? Open <b>Choose players</b> on any league and pick — every option is checked against injuries, locked games and slot rules.{" "}
             Projections are Sleeper&rsquo;s {weekLabel} numbers for each league&rsquo;s PPR / half /
             standard scoring (custom scoring like TE premium is approximated). Players whose game has
             started are locked in place; injured (Out/IR) and bye-week players are skipped. Each swap
@@ -377,8 +538,19 @@ export default function BulkOptimize({
           </p>
           <div className="field" style={{ margin: "0 0 12px", alignItems: "center" }}>
             <span className="portmeta">Choose by</span>
-            <button className={`chip-filter ${mode === "rankings" ? "on" : ""}`} onClick={() => setMode("rankings")}>
-              My rankings
+            <button
+              className={`chip-filter ${mode === "tiers" ? "on" : ""}`}
+              onClick={() => setMode("tiers")}
+              title="Your tiers decide who's preferred; players in the same tier are split by projection"
+            >
+              My tiers, then projection
+            </button>
+            <button
+              className={`chip-filter ${mode === "rankings" ? "on" : ""}`}
+              onClick={() => setMode("rankings")}
+              title="Your exact list order decides, even between players in the same tier"
+            >
+              My exact rankings
             </button>
             <button className={`chip-filter ${mode === "projections" ? "on" : ""}`} onClick={() => setMode("projections")}>
               Projections only
@@ -428,7 +600,7 @@ export default function BulkOptimize({
 
               {confirming && (
                 <BulkConfirm
-                  title={`Set ${selectedRows.length} lineups (+${selectedRows.reduce((s, r) => s + r.result.gain, 0).toFixed(1)} projected points)`}
+                  title={`Set ${selectedRows.length} lineups (${selectedRows.reduce((s, r) => s + view(r).gain, 0) >= 0 ? "+" : ""}${selectedRows.reduce((s, r) => s + view(r).gain, 0).toFixed(1)} projected points)`}
                   lines={selectedRows.map((r) => (
                     <span key={r.key}>
                       {r.leagueName}: {swapText(r).join("; ")}
@@ -462,11 +634,15 @@ export default function BulkOptimize({
                         {swapText(r).map((t, i) => (
                           <span key={i} className="portmeta" style={{ display: "block", fontWeight: 400 }}>{t}</span>
                         ))}
+                        {view(r).changes.length === 0 && (
+                          <span className="portmeta" style={{ display: "block", fontWeight: 400 }}>No changes — matches what&rsquo;s on Sleeper now.</span>
+                        )}
+                        {renderEditor(r)}
                       </span>
                       <span className="portmeta" style={{ minWidth: 130 }}>
-                        {r.result.currentPoints.toFixed(1)} → {r.result.optimalPoints.toFixed(1)}{" "}
-                        <span style={{ color: r.result.gain < -0.05 ? "var(--amber)" : "var(--mint)" }}>
-                          {r.result.gain >= 0 ? "+" : ""}{r.result.gain.toFixed(1)}
+                        {view(r).currentPoints.toFixed(1)} → {view(r).optimalPoints.toFixed(1)}{" "}
+                        <span style={{ color: view(r).gain < -0.05 ? "var(--amber)" : "var(--mint)" }}>
+                          {view(r).gain >= 0 ? "+" : ""}{view(r).gain.toFixed(1)}
                         </span>
                       </span>
                       <StatusCell status={status[r.key]} />
