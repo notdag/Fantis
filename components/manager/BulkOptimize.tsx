@@ -194,15 +194,18 @@ export default function BulkOptimize({
       else next.add(id);
       return next;
     });
+  // For a "won't play" player you can also pick the replacement yourself (otherwise the optimizer's recommendation is used).
+  const [replaceWith, setReplaceWith] = useState<Record<string, string>>({});
   const forcedStart = useMemo(() => {
     const m = new Set<string>();
+    for (const [d, rid] of Object.entries(replaceWith)) if (rid && doubts.has(d)) m.add(rid);
     for (const [k, winner] of Object.entries(calls)) {
       const [inId, benchId] = k.split(">");
       if (winner === benchId) m.add(benchId);
       else if (winner === inId) m.add(inId);
     }
     return m;
-  }, [calls]);
+  }, [calls, replaceWith, doubts]);
   const priorityIndex = useMemo(() => new Map(prefs.priority.map((id, i) => [id, i])), [prefs.priority]);
   const avoidSet = useMemo(() => new Set(prefs.avoid), [prefs.avoid]);
   const flexFirstIndex = useMemo(() => new Map(prefs.flexFirst.map((id, i) => [id, i])), [prefs.flexFirst]);
@@ -350,6 +353,27 @@ export default function BulkOptimize({
     }
     return [...info.values()].filter((e) => e.starting > 0 || doubts.has(e.id)).sort((a, b) => b.starting - a.starting).slice(0, 40);
   }, [leagues, pmap, weekData, currentWeek, doubts]);
+  // Candidate replacements for each doubted player: healthy bench players at his position across the leagues that start him.
+  const replacementOptions = useMemo(() => {
+    const out = new Map<string, { id: string; n: number }[]>();
+    if (!pmap) return out;
+    for (const d of doubtBoard) {
+      const tally = new Map<string, number>();
+      for (const l of leagues) {
+        if (!l.roster || !l.roster.starters.includes(d.id)) continue;
+        for (const id of l.roster.players) {
+          if (id === d.id || l.roster.reserve.includes(id) || l.roster.starters.includes(id)) continue;
+          if (pmap[id]?.p !== pmap[d.id]?.p) continue;
+          if (neverStartSet.has(id) || doubts.has(id) || unavailableForWeek(currentWeek, id)) continue;
+          tally.set(id, (tally.get(id) ?? 0) + 1);
+        }
+      }
+      const rankOf = (id: string) => ranks?.get(id)?.order ?? 9999;
+      out.set(d.id, [...tally.entries()].map(([id, n]) => ({ id, n })).sort((a, b) => rankOf(a.id) - rankOf(b.id) || b.n - a.n).slice(0, 10));
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doubtBoard, leagues, pmap, ranks, neverStartSet, doubts]);
   const replacementsFor = (id: string) => {
     const tally = new Map<string, number>();
     let empty = 0;
@@ -834,6 +858,23 @@ export default function BulkOptimize({
                             {rep && rep.list.length === 0 && rep.empty === 0 && " — no lineup change needed"}
                           </span>
                         </span>
+                        {on && (replacementOptions.get(d.id)?.length ?? 0) > 0 && (
+                          <select
+                            value={replaceWith[d.id] ?? ""}
+                            disabled={running}
+                            onChange={(e) => setReplaceWith((p) => ({ ...p, [d.id]: e.target.value }))}
+                            style={{ maxWidth: 320 }}
+                            aria-label={`Replacement for ${name(d.id)}`}
+                          >
+                            <option value="">Recommended — best per league</option>
+                            {replacementOptions.get(d.id)!.map((o) => (
+                              <option key={o.id} value={o.id}>
+                                Start {name(o.id)} ({rankLabel(o.id)}
+                                {ranks?.get(o.id) ? ` · tier ${ranks.get(o.id)!.tier}` : ""} · {(weekData[currentWeek]?.proj[o.id]?.pts_ppr ?? 0).toFixed(1)}) — on {o.n} bench{o.n === 1 ? "" : "es"}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     );
                   })}
