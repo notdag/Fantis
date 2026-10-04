@@ -277,7 +277,9 @@ export default function BulkOptimize({
           candidates,
           posOf: (id) => pmap[id]?.p ?? null,
           points: (id) => proj[id]?.[key] ?? 0,
-          unavailable: isUnavailable,
+          // A player projected 0 (inactive / no projection) is never swapped in — and one already starting is replaced if anyone
+          // else can play. (Sleeper projects 0 for players it expects to miss the game.)
+          unavailable: (id) => isUnavailable(id) || (proj[id]?.[key] ?? 0) <= 0,
           locked: isLocked,
           priorityRank: (id) => (forcedStart.has(id) ? 0 : priorityIndex.get(id)),
           avoid: (id) => avoidSet.has(id),
@@ -370,6 +372,9 @@ export default function BulkOptimize({
     const wd = weekData[currentWeek];
     if (!pmap || !wd) return [];
     const info = new Map<string, { id: string; leagues: number; starting: number }>();
+    // Who the proposed lineups start this week, so a Questionable/Doubtful player the optimizer is ABOUT to start shows up too.
+    const proposed = new Map<string, Set<string>>();
+    for (const r of rows) if (r.week === currentWeek) proposed.set(r.leagueId, new Set(r.result.starters));
     for (const l of leagues) {
       if (!l.roster) continue;
       for (const id of l.roster.players) {
@@ -382,12 +387,12 @@ export default function BulkOptimize({
         if (t && BYE_WEEKS_2026[t] === currentWeek) continue;
         const e = info.get(id) ?? { id, leagues: 0, starting: 0 };
         e.leagues += 1;
-        if (l.roster.starters.includes(id)) e.starting += 1;
+        if (l.roster.starters.includes(id) || proposed.get(l.league.id)?.has(id)) e.starting += 1;
         info.set(id, e);
       }
     }
     return [...info.values()].filter((e) => e.starting > 0 || doubts.has(e.id)).sort((a, b) => b.starting - a.starting).slice(0, 40);
-  }, [leagues, pmap, weekData, currentWeek, doubts, nowMs]);
+  }, [leagues, pmap, weekData, currentWeek, doubts, nowMs, rows]);
   // Candidate replacements for each doubted player: healthy bench players at his position across the leagues that start him.
   const replacementOptions = useMemo(() => {
     const out = new Map<string, { id: string; n: number }[]>();
@@ -463,7 +468,7 @@ export default function BulkOptimize({
       slotCodes: r.slotCodes,
       candidates: l.roster.players.filter((id) => !reserve.has(id)),
       posOf: (id) => pmap[id]?.p ?? null,
-      unavailable: (id) => unavailableFor(r.week, id),
+      unavailable: (id) => unavailableFor(r.week, id) || (weekData[r.week]?.proj[id]?.[r.scoring] ?? 0) <= 0,
       locked: (id) => lockedFor(r.week, id),
       neverStart: (id) => neverStartSet.has(id),
     };

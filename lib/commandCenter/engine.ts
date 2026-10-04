@@ -1662,7 +1662,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           candidates: me.players.filter((id) => !off.has(id)),
           posOf: (id: string) => env.pmap[id]?.p ?? null,
           points: (id: string) => proj[id]?.[key] ?? 0,
-          unavailable: isUnavailable,
+          unavailable: (id: string) => isUnavailable(id) || (proj[id]?.[key] ?? 0) <= 0, // projected 0 → never swapped in
           rankOrder: lineupRankOrder,
           locked: isLocked,
           priorityRank: (id: string) => prio.get(id),
@@ -1894,7 +1894,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
             candidates: me.players.filter((id) => !off.has(id)),
             posOf: (id) => env.pmap[id]?.p ?? null,
             points: (id) => wd.proj[id]?.[key] ?? 0,
-            unavailable: isUnavailable,
+            unavailable: (id) => isUnavailable(id) || (wd.proj[id]?.[key] ?? 0) <= 0, // projected 0 → never swapped in
             locked: () => false, // later weeks: nothing has kicked off
             priorityRank: (id) => prio.get(id),
             avoid: (id) => env.signals.avoid.has(id),

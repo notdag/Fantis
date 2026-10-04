@@ -2127,6 +2127,13 @@ async function main() {
     const sitUnknown = await handleCommand("I think Zzzz Nobodyson won't play, fix my lineups", newSession(), mk());
     ok(draftsOf(sitUnknown.blocks).length === 0, "an unknown name never drafts anything");
 
+    // A player projected 0 is never swapped in
+    const zeroEnv = makeEnv(fxL, pmL, undefined, undefined, { projections: { q: { pts_ppr: 20 }, r1: { pts_ppr: 15 }, r2: { pts_ppr: 0 } }, week: 3 });
+    zeroEnv.permission = "LIVE";
+    zeroEnv.kickoffs = async () => ({ DAL: fut });
+    const zero = await handleCommand("I think Hurt RB won't play, fix my lineups", newSession(), zeroEnv);
+    ok(draftsOf(zero.blocks).length === 0, "a bench player projected 0 is never swapped in, even to replace someone sitting", JSON.stringify(draftsOf(zero.blocks)[0]?.params));
+
     // Tiers mode: your tier beats projection (same shape as the Optimize tab)
     const tierEnv = mk();
     tierEnv.curatedTier = (id) => (id === "r2" ? 1 : id === "r1" ? 3 : undefined);
