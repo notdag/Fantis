@@ -726,6 +726,27 @@ export default function BulkOptimize({
                   }}
                 />
               )}
+              {(running || (summary && Object.keys(status).length > 0)) && (() => {
+                const sts = rows.map((r) => status[r.key]).filter(Boolean);
+                const total = sts.length;
+                if (total === 0) return null;
+                const ok = sts.filter((x) => x.kind === "done").length;
+                const bad = sts.filter((x) => x.kind === "failed").length;
+                const doneAll = !running;
+                return (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    style={{ position: "fixed", right: 16, bottom: 16, zIndex: 60, background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 10, padding: "12px 16px", minWidth: 150, textAlign: "center" }}
+                  >
+                    <div style={{ fontSize: 28, fontWeight: 700, color: doneAll ? (bad ? "var(--amber)" : "var(--mint)") : "var(--amber)", fontVariantNumeric: "tabular-nums" }}>
+                      {ok} / {total}
+                    </div>
+                    <div className="portmeta">{doneAll ? "lineups sent — finished" : "lineups sent — running"}</div>
+                    {bad > 0 && <div className="portmeta" style={{ color: "var(--red)" }}>{bad} failed</div>}
+                  </div>
+                );
+              })()}
               {running && (() => {
                 const sts = rows.map((r) => status[r.key]).filter(Boolean);
                 const total = sts.length;
