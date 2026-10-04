@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { buildIrPlan, type IrRow, type PlanLeague } from "@/lib/bulkPlan";
 import { runBulk, errorMessage, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { preflightRosters } from "@/lib/liveRosters";
 import { addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
@@ -175,9 +176,28 @@ export default function BulkIR({
     setSummary("");
     abortRef.current = { aborted: false };
 
+    // Pre-flight: re-read every affected roster from Sleeper first and set aside any league that changed since this plan was
+    // built (so a drop/IR move you made in the Sleeper app is never undone or collided with). A row that has to clear a
+    // starter's lineup slot also depends on the current lineup, so for those the starters must match too.
+    setSummary("Checking every roster against Sleeper first…");
+    const pre = await preflightRosters(
+      selectedRows.map((r) => {
+        const lg = planLeagues.find((l) => l.leagueId === r.leagueId);
+        return {
+          leagueId: r.leagueId,
+          rosterId: r.rosterId,
+          base: lg ? { starters: lg.starters, players: lg.players, reserve: lg.reserve } : null,
+          strictStarters: !!r.inStarters,
+        };
+      })
+    );
+    setSummary("");
+
     const tasks: BulkTask[] = selectedRows.map((r) => ({
       key: r.key,
       run: async () => {
+        const blocked = pre[r.leagueId]?.blocked;
+        if (blocked) throw new Error(blocked);
         const drop = r.needsDrop ? dropFor(r) : null;
         if (drop) {
           await addDropFreeAgent(token, { leagueId: r.leagueId, rosterId: r.rosterId, dropPlayerId: drop });

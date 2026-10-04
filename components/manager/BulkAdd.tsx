@@ -8,6 +8,7 @@ import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { getTrendingAdds } from "@/lib/sleeper";
 import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
+import { preflightRosters } from "@/lib/liveRosters";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -44,6 +45,7 @@ export default function BulkAdd({
   token,
   prefs,
   claimsByLeague,
+  liveRostered,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
@@ -55,12 +57,28 @@ export default function BulkAdd({
   // only in a separate collective list, since a claim only matters when
   // you can tell which specific row/league it belongs to.
   claimsByLeague?: Map<string, Claim[]>;
+  // Everyone rostered by ANY team in each league, read live from Sleeper (the Lineups page supplies this). When present
+  // it overrides the stored availability for those leagues, so "is he still free?" reflects right now, not the last sync.
+  liveRostered?: Record<string, ReadonlySet<string>>;
 }) {
   const rank = useDropRank(pmap);
   const isPriority = useMemo(() => new Set(prefs.priority), [prefs.priority]);
   const [query, setQuery] = useState("");
   const [targets, setTargets] = useState<Target[]>([]);
   const [rosteredByTarget, setRosteredByTarget] = useState<Record<string, Set<string>> | null>(null);
+  // Stored availability, corrected by the live reads where we have them (a league without a live read keeps the stored answer).
+  const rosteredEff = useMemo(() => {
+    if (!rosteredByTarget) return null;
+    if (!liveRostered) return rosteredByTarget;
+    const out: Record<string, Set<string>> = {};
+    for (const [pid, leagueIds] of Object.entries(rosteredByTarget)) {
+      const s = new Set<string>();
+      for (const lid of leagueIds) if (!liveRostered[lid]) s.add(lid);
+      for (const [lid, all] of Object.entries(liveRostered)) if (all.has(pid)) s.add(lid);
+      out[pid] = s;
+    }
+    return out;
+  }, [rosteredByTarget, liveRostered]);
   const [loadingAvail, setLoadingAvail] = useState(false);
   const [availError, setAvailError] = useState("");
 
@@ -199,11 +217,11 @@ export default function BulkAdd({
   );
 
   const { rows, budgetWarnings } = useMemo<{ rows: MultiAddRow[]; budgetWarnings: LeagueBudgetWarning[] }>(() => {
-    if (targets.length === 0 || !rosteredByTarget) return { rows: [], budgetWarnings: [] };
+    if (targets.length === 0 || !rosteredEff) return { rows: [], budgetWarnings: [] };
     return buildMultiAddPlan(
       targets.map((t) => t.id),
       planLeagues,
-      rosteredByTarget,
+      rosteredEff,
       rank,
       (leagueId, targetId, bidMin) => {
         const pos = pmap?.[targetId]?.p ?? "";
@@ -211,24 +229,24 @@ export default function BulkAdd({
       },
       (id) => isPriority.has(id)
     );
-  }, [targets, rosteredByTarget, planLeagues, rank, faabStats, pmap, isPriority]);
+  }, [targets, rosteredEff, planLeagues, rank, faabStats, pmap, isPriority]);
 
   // League x target grid — only leagues where at least one target is either
   // addable or already rostered by you/someone else are worth a row.
   const gridLeagues = useMemo(() => {
-    if (targets.length === 0 || !rosteredByTarget) return [];
+    if (targets.length === 0 || !rosteredEff) return [];
     const rowByKey = new Map(rows.map((r) => [r.key, r]));
     return planLeagues
       .map((lg) => {
         const cells = targets.map((t) => {
-          const already = rosteredByTarget[t.id]?.has(lg.leagueId);
+          const already = rosteredEff[t.id]?.has(lg.leagueId);
           const r = rowByKey.get(`${lg.leagueId}:${t.id}`);
           return { target: t, already, row: r };
         });
         return { leagueId: lg.leagueId, leagueName: lg.leagueName, cells };
       })
       .filter((l) => l.cells.some((c) => c.row || c.already));
-  }, [targets, rosteredByTarget, rows, planLeagues]);
+  }, [targets, rosteredEff, rows, planLeagues]);
 
   const dropFor = (r: MultiAddRow) => (r.key in dropOverride ? dropOverride[r.key] : r.dropId);
   const bidFor = (r: MultiAddRow) => {
@@ -293,9 +311,31 @@ export default function BulkAdd({
     setSummary("");
     abortRef.current = { aborted: false };
 
+    // Pre-flight: before anything is sent, re-read every affected league from Sleeper and set aside any whose roster changed
+    // since this plan was built, and any league where the player has since been taken by another team. The same read gives
+    // us everyone's roster, so "is he still free?" is checked against right now. One check per league.
+    setSummary("Checking every roster against Sleeper first…");
+    const pre = await preflightRosters(
+      selectedRows.map((r) => {
+        const lg = planLeagues.find((l) => l.leagueId === r.leagueId);
+        return {
+          leagueId: r.leagueId,
+          rosterId: r.rosterId,
+          base: lg ? { starters: lg.starters, players: lg.players, reserve: lg.reserve } : null,
+          strictStarters: false,
+        };
+      })
+    );
+    setSummary("");
+
     const tasks: BulkTask[] = selectedRows.map((r) => ({
       key: r.key,
       run: async () => {
+        const blocked = pre[r.leagueId]?.blocked;
+        if (blocked) throw new Error(blocked);
+        if (pre[r.leagueId]?.fresh?.allRostered?.includes(r.targetId)) {
+          throw new Error(`${nameOf(pmap, r.targetId)} was added by another team in this league since this page loaded — nothing was sent. Reload and review.`);
+        }
         const drop = r.full ? dropFor(r) ?? undefined : undefined;
         try {
           await addDropFreeAgent(token, { leagueId: r.leagueId, rosterId: r.rosterId, addPlayerId: r.targetId, dropPlayerId: drop });

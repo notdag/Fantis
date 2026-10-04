@@ -261,6 +261,16 @@ export default function LineupManager({
   );
   const liveRosters = useLiveRosters(liveTargets);
   const liveAll = useMemo(() => mergeLive(allLeagues, liveRosters.live), [allLeagues, liveRosters.live]);
+  // Everyone rostered in each league, from the same live reads — Mass Add's availability grid uses it.
+  const liveRostered = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(liveRosters.live)
+          .filter(([, v]) => v.allRostered)
+          .map(([id, v]) => [id, new Set(v.allRostered)])
+      ) as Record<string, ReadonlySet<string>>,
+    [liveRosters.live]
+  );
   const leagueNames = useMemo(() => Object.fromEntries(allLeagues.map((l) => [l.league.id, l.league.name])), [allLeagues]);
   const leagues = useMemo(
     () => (hideBestBall ? liveAll.filter((l) => !isBestBall(l.league.settings)) : liveAll),
@@ -375,7 +385,7 @@ export default function LineupManager({
         )}
         {visited.has("add") && (
           <div hidden={tab !== "add"}>
-            <BulkAdd leagues={leagues} pmap={pmap} token={token} prefs={prefs} />
+            <BulkAdd leagues={leagues} pmap={pmap} token={token} prefs={prefs} liveRostered={liveRostered} />
           </div>
         )}
         {tab === "lineups" && (

@@ -10,7 +10,7 @@ import { applyPick, diffLineups, slotLocked, slotOptions, type EditCtx } from "@
 import { TIER_LABELS } from "@/lib/players";
 import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
-import { fetchLiveRoster, rosterChanged } from "@/lib/liveRosters";
+import { preflightRosters } from "@/lib/liveRosters";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
 import { scoringKey } from "@/lib/scoringKey";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -361,18 +361,27 @@ export default function BulkOptimize({
     setRunning(true);
     setSummary("");
     abortRef.current = { aborted: false };
+    // Pre-flight: before anything is sent, re-read every affected roster from Sleeper and set aside any league that changed
+    // since the proposal was built (a drop, add, IR move, or a lineup edit made in the Sleeper app) — one check per league.
+    // Only the CURRENT week's lineup depends on the current starters; future-week lineups just need the same players.
+    setSummary("Checking every roster against Sleeper first…");
+    const pre = await preflightRosters(
+      selectedRows.map((r) => {
+        const b = leagueById.get(r.leagueId)?.roster;
+        return {
+          leagueId: r.leagueId,
+          rosterId: r.rosterId,
+          base: b ? { starters: b.starters, players: b.players, reserve: b.reserve } : null,
+          strictStarters: r.week === currentWeek,
+        };
+      })
+    );
+    setSummary("");
     const tasks: BulkTask[] = selectedRows.map((r) => ({
       key: r.key,
       run: async () => {
-        // Stale-data guard: re-read this roster from Sleeper RIGHT NOW and refuse to send if anything changed since
-        // the proposal was computed (a drop, add, IR move, or a lineup edit made in the Sleeper app). Otherwise a
-        // lineup built from old data could undo your change or be rejected — nothing is sent for this league.
-        const base = leagueById.get(r.leagueId)?.roster;
-        const fresh = await fetchLiveRoster(r.leagueId, r.rosterId);
-        if (!fresh) throw new Error("Couldn't read this roster from Sleeper just now, so nothing was sent. Retry in a moment.");
-        if (base && rosterChanged({ starters: base.starters, players: base.players, reserve: base.reserve }, fresh)) {
-          throw new Error("Roster changed on Sleeper since this page loaded (a drop, add, IR move or lineup edit) — nothing was sent. Press Reload rosters and review.");
-        }
+        const blocked = pre[r.leagueId]?.blocked;
+        if (blocked) throw new Error(blocked);
         await setStarters(token, {
           leagueId: r.leagueId,
           rosterId: r.rosterId,
