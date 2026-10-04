@@ -394,7 +394,8 @@ export default function BulkOptimize({
     // Pre-flight: before anything is sent, re-read every affected roster from Sleeper and set aside any league that changed
     // since the proposal was built (a drop, add, IR move, or a lineup edit made in the Sleeper app) — one check per league.
     // Only the CURRENT week's lineup depends on the current starters; future-week lineups just need the same players.
-    setSummary("Checking every roster against Sleeper first…");
+    setSummary("");
+    setStatus({});
     const pre = await preflightRosters(
       selectedRows.map((r) => {
         const b = leagueById.get(r.leagueId)?.roster;
@@ -725,6 +726,31 @@ export default function BulkOptimize({
                   }}
                 />
               )}
+              {running && (() => {
+                const sts = rows.map((r) => status[r.key]).filter(Boolean);
+                const total = sts.length;
+                const ok = sts.filter((x) => x.kind === "done").length;
+                const bad = sts.filter((x) => x.kind === "failed").length;
+                const now = sts.filter((x) => x.kind === "running").length;
+                const finishedN = ok + bad + sts.filter((x) => x.kind === "skipped").length;
+                return (
+                  <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "10px 14px" }}>
+                    <b style={{ color: "var(--amber)" }}>
+                      {total === 0 ? "Starting… checking every roster against Sleeper first" : `Sending lineups to Sleeper… ${finishedN} of ${total} finished`}
+                    </b>
+                    {total > 0 && (
+                      <span className="portmeta" style={{ display: "block" }}>
+                        {ok} sent · {bad} failed · {now} in progress · {total - finishedN - now} waiting. Keep this tab open; press Abort to stop the rest.
+                      </span>
+                    )}
+                    {total > 0 && (
+                      <div style={{ height: 4, background: "var(--line)", borderRadius: 2, marginTop: 6 }}>
+                        <div style={{ height: 4, width: `${Math.round((finishedN / total) * 100)}%`, background: "var(--amber)", borderRadius: 2 }} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
 
               <div style={{ maxHeight: 640, overflowY: "auto" }}>
