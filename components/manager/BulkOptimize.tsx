@@ -101,7 +101,7 @@ export default function BulkOptimize({
         ? Array.from({ length: Math.max(0, LAST_WEEK - currentWeek + 1) }, (_, i) => currentWeek + i)
         : selectedWeek === "ahead"
           ? Array.from({ length: Math.max(0, AHEAD_LAST - currentWeek) }, (_, i) => currentWeek + 1 + i)
-          : [selectedWeek],
+          : [Math.max(selectedWeek, currentWeek)], // a week that has since been played rolls forward to the current one
     [selectedWeek, currentWeek]
   );
 

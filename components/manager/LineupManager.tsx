@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
+import { currentProjectionWeek, getState } from "@/lib/sleeper";
 import { useLiveRosters } from "@/lib/useLiveRosters";
 import { mergeLive } from "@/lib/liveRosters";
 import LiveStatusBar from "./LiveStatusBar";
@@ -236,13 +237,38 @@ function LeagueRow({
 
 export default function LineupManager({
   leagues: allLeagues,
-  currentWeek,
+  currentWeek: serverWeek,
   season,
 }: {
   leagues: LineupLeague[];
   currentWeek: number;
   season: string;
 }) {
+  // The week rolls forward by itself: Sleeper's current week is re-read when the page opens, when you come back to the tab and every
+  // 15 minutes, so "Set weeks N–17" starts at the first week not yet played without a reload. Never goes backwards.
+  const [liveWeek, setLiveWeek] = useState(serverWeek);
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      getState()
+        .then((s) => {
+          if (alive) setLiveWeek((w) => Math.max(w, currentProjectionWeek(s)));
+        })
+        .catch(() => {});
+    };
+    check();
+    const t = setInterval(check, 15 * 60_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      alive = false;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+  const currentWeek = Math.max(serverWeek, liveWeek);
   // Best ball leagues set their own lineups, so they're hidden from every
   // tab here by default (one toggle brings them back).
   const [hideBestBall, setHideBestBall] = useState(true);
