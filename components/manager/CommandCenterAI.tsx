@@ -34,7 +34,17 @@ import { STATE_LABEL, STATE_ORDER, type AvailState, type CcLeague, type DropSign
 // examples. Requested explicitly by the owner ("restructure the questions,
 // I don't like how it's all listed").
 const EXAMPLE_GROUPS: { label: string; examples: string[] }[] = [
-  { label: "Lineups", examples: ["Fix my lineups", "Make sure Drake London starts this week"] },
+  {
+    label: "Lineups",
+    examples: [
+      "Fix my lineups",
+      "Fix my lineups using my tiers",
+      "Make sure Drake London starts this week",
+      "Who's questionable on my teams?",
+      "I think Mike Evans won't play, fix my lineups",
+      "Set my lineups for weeks 5-17",
+    ],
+  },
   { label: "Waivers & Adds", examples: ["Find my best waiver adds", "Find Antonio Williams everywhere"] },
   { label: "IR", examples: ["Move Michael Pittman off IR to my bench", "Find leagues where I have an injured player who could go on IR"] },
   { label: "Standings & Record", examples: ["Where do I stand for the playoffs?", "How many leagues am I winning this week?", "What was my overall record for week 2?"] },
@@ -207,6 +217,18 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
         permission,
         // Kickoff times, so lineup proposals never touch a game that has started.
         kickoffs: season && week ? () => getWeekKickoffs(season, week).catch(() => null) : undefined,
+        // Projections + schedule for any later week, to set lineups ahead of time.
+        weekData: season
+          ? async (w: number) => {
+              try {
+                const [proj, kickoffs] = await Promise.all([getProjections(season, w), getWeekKickoffs(season, w)]);
+                return { proj, kickoffs };
+              } catch {
+                return null;
+              }
+            }
+          : undefined,
+        curatedTier: (pid: string) => curated?.get(pid)?.tier,
         // Which games are done / in progress / still to come — fetched fresh each time it's needed.
         getGameStates: season && week ? () => getWeekGameStates(season, week).catch(() => null) : undefined,
         onProgress: setProgress,
@@ -237,12 +259,22 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
   // Saving drafts is an explicit click (never chat text). It only records proposals; nothing is sent to Sleeper.
   const saveDrafts = async (drafts: ProposalDraft[]): Promise<string> => {
     try {
-      const res = await fetch("/api/manager/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drafts }) });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) return body.error || "Couldn't save the proposals.";
+      // The server takes at most 300 per request, so a big batch (e.g. a whole season of lineups) is saved in chunks.
+      let created = 0;
+      let duplicates = 0;
+      for (let i = 0; i < drafts.length; i += 300) {
+        const res = await fetch("/api/manager/proposals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ drafts: drafts.slice(i, i + 300) }) });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (created > 0) onProposalsSaved?.();
+          return `${body.error || "Couldn't save the proposals."}${created > 0 ? ` (${created} were saved before this failed.)` : ""}`;
+        }
+        created += body.created?.length ?? 0;
+        duplicates += body.duplicates ?? 0;
+      }
       onProposalsSaved?.();
-      const dup = body.duplicates ? ` ${body.duplicates} were already queued.` : "";
-      return `Saved ${body.created?.length ?? 0} proposal${(body.created?.length ?? 0) === 1 ? "" : "s"} for review in the Proposals tab.${dup} Nothing was sent to Sleeper.`;
+      const dup = duplicates ? ` ${duplicates} were already queued.` : "";
+      return `Saved ${created} proposal${created === 1 ? "" : "s"} for review in the Proposals tab.${dup} Nothing was sent to Sleeper.`;
     } catch {
       return "Couldn't reach the server to save the proposals.";
     }

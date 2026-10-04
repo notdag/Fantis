@@ -11,11 +11,26 @@ export interface ViewFilter {
   needsDrop?: boolean; // true = only leagues that need a drop; false = only open-spot leagues
 }
 
+export type RankMode = "rankings" | "tiers" | "projections";
+
+function parseRankMode(t: string): RankMode | undefined {
+  if (/\b(by|using|with|follow(ing)?|on) my tiers?\b|\btiers? (first|then (projections?|points))\b|\bmy tiers?\b.*\bthen\b.*\bprojections?\b/.test(t)) return "tiers";
+  if (/\b(by|using|with|follow(ing)?|on) my (exact )?rankings?\b|\bexact rankings?\b/.test(t)) return "rankings";
+  if (/\b(highest|best) projections?\b|\bprojections? only\b|\bby projections?\b/.test(t)) return "projections";
+  return undefined;
+}
+
 export type MatchupVerdictFilter = "WIN" | "LOSS" | "TOSS_UP" | "WON" | "LOST" | "LEADING" | "TRAILING";
 
 export type Intent =
   | { kind: "win_projection"; verdict?: MatchupVerdictFilter; fresh: boolean }
-  | { kind: "lineup_improvements" }
+  // wontPlay: players the owner says are sitting this week ("I think Mike Evans won't play") — treated as unavailable for this
+  // one command only. rankMode: how the owner's own rankings steer it (default keeps the tiny curated tie-break).
+  | { kind: "lineup_improvements"; wontPlay?: Mention[]; rankMode?: RankMode }
+  // Lineups for LATER weeks ("set my lineups for weeks 5-17"): highest projection each week, Thu/Fri/Sat out of FLEX, early
+  // Sunday in true slots / late Sunday + Monday in FLEX. Drafts only, like every chat command.
+  | { kind: "set_weeks"; from?: number; to?: number; rankMode?: RankMode }
+  | { kind: "questionable" }
   | { kind: "weekly_sweep" }
   | { kind: "week_record"; week: number | null; relative?: "last" | "this" }
   | { kind: "activate_ir"; mentions: Mention[] }
@@ -192,6 +207,18 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     return { kind: "send_to_ir", mentions };
   }
 
+  // "I think Mike Evans won't play, fix my lineups" / "assume Zay Flowers is out" — the named players are treated as sitting this
+  // week, so the lineup tool picks the best replacement from the owner's rankings + Sleeper's projections.
+  if (
+    mentions.length > 0 &&
+    !/\b(drop|waivers?|claim)\b/.test(t) &&
+    (/\b(won'?t|will not|isn'?t|is not|aren'?t|not going to|doesn'?t|does not|can'?t)\b[^.]*\b(play|playing|suit up|be active|go)\b/.test(t) ||
+      /\b(assume|pretend|treat|mark)\b[^.]*\b(out|sitting|sits?|inactive|won'?t play)\b/.test(t) ||
+      /\b(think|expect|guess)\b[^.]*\b(sits?|sitting|misses|missing|inactive)\b/.test(t))
+  ) {
+    return { kind: "lineup_improvements", wontPlay: mentions, rankMode: parseRankMode(t) };
+  }
+
   // "Make sure <player> starts" / "start <player> in my lineups" — a forced single-
   // player override of the optimizer, distinct from lineup_improvements (which has
   // no player mention and picks the whole lineup on its own).
@@ -211,8 +238,23 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
     return { kind: "weekly_sweep" };
   }
 
+  // Later weeks: "set my lineups for weeks 5-17", "optimize the rest of the season", "set lineups ahead".
+  if (mentions.length === 0 && /\blineups?\b/.test(t) && /\b(set|optimi[sz]e|fix|fill|lock in|do|build|plan|update)\b/.test(t)) {
+    const range = t.match(/\bweeks?\s*(\d{1,2})\s*(?:-|–|to|through|thru|and)\s*(\d{1,2})\b/);
+    const single = !range ? t.match(/\bweek\s*(\d{1,2})\b/) : null;
+    const rest = /\b(rest of (the |this )?(season|year)|remaining (weeks|season)|all (my )?(future|remaining|upcoming|other) weeks|weeks? ahead|ahead of time|future weeks|upcoming weeks|whole season|all weeks)\b/.test(t);
+    if (range) return { kind: "set_weeks", from: Math.min(Number(range[1]), Number(range[2])), to: Math.max(Number(range[1]), Number(range[2])), rankMode: parseRankMode(t) };
+    if (single) return { kind: "set_weeks", from: Number(single[1]), to: Number(single[1]), rankMode: parseRankMode(t) };
+    if (rest) return { kind: "set_weeks", rankMode: parseRankMode(t) };
+  }
+
+  // "Who's questionable on my teams?" — a read-only board of Questionable/Doubtful players on my rosters.
+  if (mentions.length === 0 && /\b(questionable|doubtful)\b/.test(t) && /\b(who|which|list|show|board|any|my|players?|starters?)\b/.test(t)) {
+    return { kind: "questionable" };
+  }
+
   if (/\b(optimi[sz]e|fix|improve|upgrade|check|find)\b.*\blineups?\b|\blineup (improvements?|changes?|suggestions?|issues?)\b|\bwho should i (start|bench|sit)\b|\b(bench(ed)?|sitting) (a )?better\b/.test(t) && mentions.length === 0) {
-    return { kind: "lineup_improvements" };
+    return { kind: "lineup_improvements", rankMode: parseRankMode(t) };
   }
 
   // A follow-up drop order for the "add"/waiver scan still on screen — "drop

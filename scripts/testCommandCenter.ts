@@ -2082,6 +2082,107 @@ async function main() {
     ok(notChained.audit.intent === "execute_request", "a real drop-order list using \"then\" is never mistaken for a chain of actions", notChained.audit.intent);
   }
 
+  const draftsOf = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+  // ===== 37. Chat: won't-play, questionable board, tiers mode, lineups for later weeks =====
+  {
+    const rpL = ["QB", "RB", "BN", "BN"];
+    const pmL: PlayerMap = {
+      q: { n: "Q Back", p: "QB", t: "DAL" },
+      r1: { n: "Hurt RB", p: "RB", t: "DAL", inj: "Questionable" },
+      r2: { n: "Bench RB", p: "RB", t: "DAL" },
+    };
+    const lgL = { ...lg("1", "Sit League", rpL), settings: { roster_positions: rpL, settings: { reserve_slots: 1 } } };
+    const rosterL: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "r1", "r2"], starters: ["q", "r1"], reserve: [], taxi: [] };
+    const fxL: LeagueFx[] = [{ league: lgL, rosters: [rosterL, otherRoster([])], txns: [] }];
+    const projL: ProjectionMap = { q: { pts_ppr: 20 }, r1: { pts_ppr: 15 }, r2: { pts_ppr: 9 } };
+    const fut = new Date(NOW + 86_400_000).toISOString();
+    const past2 = new Date(NOW - 3_600_000).toISOString();
+    const mk = (ko: Record<string, string> = { DAL: fut }) => {
+      const e = makeEnv(fxL, pmL, undefined, undefined, { projections: projL, week: 3 });
+      e.permission = "LIVE";
+      e.kickoffs = async () => ko;
+      return e;
+    };
+
+    // Questionable starters are listed (not an injury that auto-benches), only while the game hasn't started
+    const qb = await handleCommand("Who's questionable on my teams?", newSession(), mk());
+    ok(qb.audit.intent === "questionable", "'who's questionable' → questionable board", qb.audit.intent);
+    ok(/Hurt RB/.test(textOf(qb.blocks)) && /starting in 1 of 1/.test(textOf(qb.blocks)), "board lists the Questionable starter with league counts", textOf(qb.blocks).slice(0, 200));
+    const qbPast = await handleCommand("Who's questionable on my teams?", newSession(), mk({ DAL: past2 }));
+    ok(/No Questionable or Doubtful players are currently starting/.test(textOf(qbPast.blocks)), "a Questionable player whose game already started is not listed");
+    ok(draftsOf(qb.blocks).length === 0, "the questionable board never drafts anything");
+
+    // "I think X won't play"
+    const plain = await handleCommand("Fix my lineups", newSession(), mk());
+    ok(draftsOf(plain.blocks).length === 0, "a Questionable player still starts by default (he projects higher)");
+    const sit = await handleCommand("I think Hurt RB won't play, fix my lineups", newSession(), mk());
+    ok(sit.audit.intent === "lineup_improvements", "won't-play phrasing → lineup_improvements", sit.audit.intent);
+    const sd = draftsOf(sit.blocks);
+    ok(sd.length === 1 && (sd[0].params as { toStarters: string[] }).toStarters.join() === "q,r2", "named player treated as sitting → best replacement drafted", JSON.stringify(sd[0]?.params));
+    ok(/Assuming these players sit/.test(textOf(sit.blocks)) && /Bench RB/.test(textOf(sit.blocks)), "says who steps in for him", textOf(sit.blocks).slice(0, 300));
+    const again = await handleCommand("Fix my lineups", newSession(), mk());
+    ok(draftsOf(again.blocks).length === 0, "the assumption does not stick to the next command");
+    const sitPast = await handleCommand("assume Hurt RB is out and fix my lineups", newSession(), mk({ DAL: past2 }));
+    ok(draftsOf(sitPast.blocks).length === 0, "started games are still frozen even when you say he's out");
+    const sitUnknown = await handleCommand("I think Zzzz Nobodyson won't play, fix my lineups", newSession(), mk());
+    ok(draftsOf(sitUnknown.blocks).length === 0, "an unknown name never drafts anything");
+
+    // Tiers mode: your tier beats projection (same shape as the Optimize tab)
+    const tierEnv = mk();
+    tierEnv.curatedTier = (id) => (id === "r2" ? 1 : id === "r1" ? 3 : undefined);
+    const tierOut = await handleCommand("Fix my lineups using my tiers", newSession(), tierEnv);
+    ok(tierOut.audit.intent === "lineup_improvements", "'using my tiers' still routes to lineup_improvements", tierOut.audit.intent);
+    const td = draftsOf(tierOut.blocks);
+    ok(td.length === 1 && (td[0].params as { toStarters: string[] }).toStarters.join() === "q,r2", "tiers mode starts the better-tier player over the higher projection", JSON.stringify(td[0]?.params));
+    const projOut = await handleCommand("Fix my lineups by projections only", newSession(), tierEnv);
+    ok(draftsOf(projOut.blocks).length === 0, "projections-only mode ignores your tiers");
+
+    // Set lineups for later weeks
+    const rpF = ["QB", "RB", "FLEX", "BN"];
+    const pmF: PlayerMap = {
+      q: { n: "Q Back", p: "QB", t: "DAL" },
+      rb1: { n: "Sunday RB", p: "RB", t: "DAL" },
+      rb2: { n: "Thursday RB", p: "RB", t: "MIA" },
+      wr: { n: "Late WR", p: "WR", t: "SF" },
+    };
+    const lgF = { ...lg("1", "Future League", rpF), settings: { roster_positions: rpF, settings: { reserve_slots: 1 } } };
+    const rosterF: RawRoster = { roster_id: 1, owner_id: ME, players: ["q", "rb1", "rb2", "wr"], starters: ["q", "rb1", "rb2"], reserve: [], taxi: [] };
+    const fxF: LeagueFx[] = [{ league: lgF, rosters: [rosterF, otherRoster([])], txns: [] }];
+    const projF: ProjectionMap = { q: { pts_ppr: 20 }, rb1: { pts_ppr: 10 }, rb2: { pts_ppr: 14 }, wr: { pts_ppr: 9 } };
+    const koWeek = { DAL: "2026-09-27T17:00:00Z", MIA: "2026-09-25T00:15:00Z", SF: "2026-09-27T20:25:00Z" }; // Sun 10am PT, Thu 5:15pm PT, Sun 1:25pm PT
+    const mkF = (weeks: Record<number, { kickoffs: Record<string, string> } | null> = { 4: { kickoffs: koWeek }, 5: { kickoffs: koWeek } }) => {
+      const e = makeEnv(fxF, pmF, undefined, undefined, { projections: projF, week: 3 });
+      e.permission = "LIVE";
+      e.kickoffs = async () => koWeek;
+      e.weekData = async (w) => (weeks[w] ? { proj: projF, kickoffs: weeks[w]!.kickoffs } : null);
+      return e;
+    };
+    const sw = await handleCommand("Set my lineups for weeks 4-5", newSession(), mkF());
+    ok(sw.audit.intent === "set_weeks", "'set my lineups for weeks 4-5' → set_weeks", sw.audit.intent);
+    const swd = draftsOf(sw.blocks);
+    ok(swd.length === 2 && swd.every((d) => d.kind === "SET_LINEUP" && (d.params as { future?: boolean }).future === true), "one future SET_LINEUP per week", String(swd.length));
+    ok(swd.map((d) => (d.params as { week: number }).week).join() === "4,5", "weeks 4 and 5 drafted in order");
+    ok(swd.every((d) => (d.params as { toStarters: string[] }).toStarters.join() === "q,rb2,rb1"), "Thursday RB is in his true slot and NEVER in FLEX; Sunday RB takes FLEX", JSON.stringify(swd.map((d) => d.params)));
+    ok(/Nothing has been changed/.test(textOf(sw.blocks)), "says nothing was changed");
+
+    const swCur = await handleCommand("Set my lineups for week 3", newSession(), mkF());
+    ok(draftsOf(swCur.blocks).length === 0 && /current week/.test(textOf(swCur.blocks)), "the current week is not set ahead (points to 'fix my lineups')", textOf(swCur.blocks).slice(0, 160));
+    const swSkip = await handleCommand("Set my lineups for weeks 4-5", newSession(), mkF({ 4: { kickoffs: koWeek }, 5: { kickoffs: {} } }));
+    ok(draftsOf(swSkip.blocks).length === 1 && /Skipped week 5/.test(textOf(swSkip.blocks)), "a week with no schedule is skipped and disclosed, never guessed", textOf(swSkip.blocks).slice(0, 300));
+    const swNone = await handleCommand("Set my lineups for weeks 4-5", newSession(), mkF({ 4: null, 5: null }));
+    ok(draftsOf(swNone.blocks).length === 0 && /couldn't load projections/.test(textOf(swNone.blocks)), "nothing loaded → nothing drafted");
+    const swRest = await handleCommand("optimize my lineups for the rest of the season", newSession(), mkF());
+    ok(swRest.audit.intent === "set_weeks", "'rest of the season' → set_weeks", swRest.audit.intent);
+    const sw18 = await handleCommand("set my lineups for weeks 17-18", newSession(), mkF({ 17: { kickoffs: koWeek }, 18: { kickoffs: koWeek } }));
+    ok(draftsOf(sw18.blocks).every((d) => (d.params as { week: number }).week <= 17), "week 18 is never drafted");
+    const swNoEnv = makeEnv(fxF, pmF, undefined, undefined, { projections: projF, week: 3 });
+    const swUnavail = await handleCommand("Set my lineups for weeks 4-5", newSession(), swNoEnv);
+    ok(draftsOf(swUnavail.blocks).length === 0 && /aren't available here/.test(textOf(swUnavail.blocks)), "no future-week data source → says so, drafts nothing");
+    // an unrelated phrase isn't swallowed
+    const still = await handleCommand("Fix my lineups", newSession(), mk());
+    ok(still.audit.intent === "lineup_improvements", "plain 'Fix my lineups' still routes the same");
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 }

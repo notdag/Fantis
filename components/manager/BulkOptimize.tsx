@@ -186,14 +186,15 @@ export default function BulkOptimize({
   const [calls, setCalls] = useState<Record<string, string>>({});
   // Players YOU think won't play this week (usually Questionable/Doubtful): treated as unavailable for the current week, so the
   // optimizer picks the best replacement from your rankings + Sleeper projections. Per-run only.
-  const [doubts, setDoubts] = useState<Set<string>>(new Set());
-  const toggleDoubt = (id: string) =>
-    setDoubts((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const [doubtIds, setDoubtIds] = useState<string[]>([]);
+  const doubts = useMemo(() => new Set(doubtIds), [doubtIds]);
+  // A ticking clock (once a minute) so "has his game started yet?" stays current while the page is open.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const toggleDoubt = (id: string) => setDoubtIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   // For a "won't play" player you can also pick the replacement yourself (otherwise the optimizer's recommendation is used).
   const [replaceWith, setReplaceWith] = useState<Record<string, string>>({});
   const forcedStart = useMemo(() => {
@@ -220,6 +221,9 @@ export default function BulkOptimize({
     for (const week of weeksToShow) {
       const wd = weekData[week];
       if (!wd) continue;
+      // Without that week's projections or schedule there is nothing safe to compute: no projections would rank everyone at
+      // 0 points, and no kickoff times would hide started games and the Thu/Fri/Sat FLEX rule. Skip the week (and say so).
+      if (Object.keys(wd.proj).length === 0 || Object.keys(wd.kickoffs).length === 0) continue;
       const { proj, kickoffs, loadedAt } = wd;
       const isUnavailable = (id: string) => {
         const e = pmap[id];
@@ -312,7 +316,7 @@ export default function BulkOptimize({
           const started = (id: string) => {
             const t = pmap[id]?.t;
             const ko = t ? wd.kickoffs[t] : undefined;
-            return !!ko && Date.parse(ko) <= Math.max(Date.now(), wd.loadedAt);
+            return !!ko && Date.parse(ko) <= Math.max(nowMs, wd.loadedAt);
           };
           if (started(b) || started(c.in)) continue;
           if (!better(b, c.in)) continue;
@@ -327,7 +331,7 @@ export default function BulkOptimize({
     }
     return [...groups.entries()].map(([key, g]) => ({ key, ...g })).sort((a, b) => b.leagues.size - a.leagues.size).slice(0, 12);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, ranks, mode, pmap, leagues, weekData, calls, neverStartSet, avoidSet, priorityIndex, futureHealthy]);
+  }, [rows, ranks, mode, pmap, leagues, weekData, calls, neverStartSet, avoidSet, priorityIndex, futureHealthy, nowMs]);
 
   // The Questionable/Doubtful board: every such player on your rosters (current week, game not started), how many leagues start him, and —
   // once you mark him "won't play" — who the optimizer starts in his place and in how many leagues.
@@ -343,7 +347,7 @@ export default function BulkOptimize({
         if (!(inj === "Questionable" || inj === "Doubtful" || doubts.has(id))) continue;
         const t = pmap[id]?.t;
         const ko = t ? wd.kickoffs[t] : undefined;
-        if (ko && Date.parse(ko) <= Math.max(Date.now(), wd.loadedAt)) continue;
+        if (ko && Date.parse(ko) <= Math.max(nowMs, wd.loadedAt)) continue;
         if (t && BYE_WEEKS_2026[t] === currentWeek) continue;
         const e = info.get(id) ?? { id, leagues: 0, starting: 0 };
         e.leagues += 1;
@@ -352,7 +356,7 @@ export default function BulkOptimize({
       }
     }
     return [...info.values()].filter((e) => e.starting > 0 || doubts.has(e.id)).sort((a, b) => b.starting - a.starting).slice(0, 40);
-  }, [leagues, pmap, weekData, currentWeek, doubts]);
+  }, [leagues, pmap, weekData, currentWeek, doubts, nowMs]);
   // Candidate replacements for each doubted player: healthy bench players at his position across the leagues that start him.
   const replacementOptions = useMemo(() => {
     const out = new Map<string, { id: string; n: number }[]>();
@@ -387,6 +391,11 @@ export default function BulkOptimize({
     }
     return { list: [...tally.entries()].sort((a, b) => b[1] - a[1]), empty };
   };
+
+  const unusableWeeks = weeksToShow.filter((w) => {
+    const wd = weekData[w];
+    return !!wd && (Object.keys(wd.proj).length === 0 || Object.keys(wd.kickoffs).length === 0);
+  });
 
   // ── Manual lineup edits: "put THIS player in my FLEX" ──
   // The optimizer proposes; any unlocked slot can be overridden from a dropdown, and every pick is checked by
@@ -815,7 +824,13 @@ export default function BulkOptimize({
           {ranksPending ? (
             <p className="hint">Loading your rankings…</p>
           ) : rows.length === 0 ? (
-            <p className="hint">Every lineup already matches your preferences and the best projections.</p>
+            unusableWeeks.length > 0 ? (
+              <p className="hint" style={{ color: "var(--amber)" }}>
+                ⚠ Nothing computed: Sleeper projections or the game schedule couldn&rsquo;t be loaded for week{unusableWeeks.length === 1 ? "" : "s"} {unusableWeeks.join(", ")}. Press Reload to retry.
+              </p>
+            ) : (
+              <p className="hint">Every lineup already matches your preferences and the best projections.</p>
+            )
           ) : (
             <>
               {doubtBoard.length > 0 && (
@@ -1005,6 +1020,12 @@ export default function BulkOptimize({
                   </div>
                 );
               })()}
+              {unusableWeeks.length > 0 && (
+                <p className="hint" style={{ color: "var(--amber)" }}>
+                  ⚠ Week{unusableWeeks.length === 1 ? "" : "s"} {unusableWeeks.join(", ")} skipped: Sleeper projections or the game schedule couldn&rsquo;t be loaded
+                  (needed to rank players, freeze started games and keep Thu–Sat players out of FLEX). Press Reload to retry.
+                </p>
+              )}
               {summary && <p className="hint" style={{ color: "var(--bone)" }}>{summary}</p>}
 
               <div style={{ maxHeight: 640, overflowY: "auto" }}>

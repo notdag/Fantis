@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getRosters, getState, getTransactions } from "@/lib/sleeper";
+import { getMatchups, getRosters, getState, getTransactions } from "@/lib/sleeper";
 import { getWeekGameStates } from "@/lib/espnGames";
 import { activateFromIR, addDropFreeAgent, claimWaiver, fetchLeagueTransactions, moveToIR, setStarters, SleeperGraphQLError } from "@/lib/sleeperWrite";
 import { getStoredToken } from "@/lib/sleeperToken";
@@ -142,6 +142,11 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
           const team = pmap?.[id]?.t;
           const g = team ? states[team] : undefined;
           return !!g && g.state !== "pre";
+        },
+        readWeekStarters: async (lg, w) => {
+          const rows = (await getMatchups(lg.id, w)) as unknown as { roster_id: number; starters: string[] | null }[];
+          const mine = rows.find((r) => r.roster_id === lg.rosterId);
+          return mine?.starters ?? null;
         },
         writers: WRITERS,
         isAuthError,

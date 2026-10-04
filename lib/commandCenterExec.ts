@@ -51,6 +51,8 @@ export interface ExecDeps {
   readSnapshot: (league: CcLeague) => Promise<LeagueSnapshot>; // FRESH read, never cached
   injuryOf: (playerId: string) => string | null;
   isLocked: (playerId: string) => boolean;
+  // My starters for one specific (later) week, read fresh from Sleeper's matchup — how a future-week lineup is verified.
+  readWeekStarters?: (league: CcLeague, week: number) => Promise<string[] | null>;
   writers: ExecWriters;
   isAuthError: (e: unknown) => boolean;
 }
@@ -252,6 +254,19 @@ async function runLineup(p: Proposal, league: CcLeague, token: string, d: ExecDe
     await d.writers.setStarters(token, { leagueId: p.leagueId, rosterId: p.rosterId, starters: a.toStarters, week: a.week });
   } catch (e) {
     return failed(d, e, "Lineup change");
+  }
+  if (a.future) {
+    // A later week's lineup lives in that week's matchup, not on the roster — verify it there, or admit we can't.
+    let got: string[] | null = null;
+    try {
+      got = d.readWeekStarters ? await d.readWeekStarters(league, a.week) : null;
+    } catch {
+      got = null;
+    }
+    if (got && got.length === a.toStarters.length && a.toStarters.every((id, i) => (got![i] || "0") === id)) {
+      return { status: "executed", message: `Week ${a.week} lineup set (${a.changes.length} change${a.changes.length === 1 ? "" : "s"}) — confirmed on Sleeper.`, sent: true };
+    }
+    return { status: "verify_failed", message: `The week ${a.week} lineup was sent, but a re-read doesn't match what was proposed (or couldn't be read). Check Sleeper.`, sent: true };
   }
   const after = await reread(league, d);
   const me = after && myRoster(after);

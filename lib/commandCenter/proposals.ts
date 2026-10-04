@@ -57,6 +57,9 @@ export interface LineupParams {
   toStarters: string[];
   changes: { slot: string; outName: string | null; inName: string | null }[];
   gain: number; // projected points gained (Sleeper's own projections)
+  // A lineup for a LATER week than the current one. Its fromStarters is only the current lineup (a baseline), so it isn't
+  // compared with the live roster; it is verified by re-reading that week's matchup instead.
+  future?: boolean;
 }
 
 // A standalone release — no add involved. Used both as a bare "drop this
@@ -148,7 +151,7 @@ export function describeProposal(d: Pick<ProposalDraft, "kind" | "params" | "lea
     case "SET_LINEUP": {
       const p = d.params as LineupParams;
       const suffix = p.gain >= 0.05 ? `(+${p.gain.toFixed(1)} projected)` : "(slot fix — no point change)";
-      return `Set lineup: ${p.changes.map((c) => `${c.inName ?? "empty"} for ${c.outName ?? "empty"} at ${c.slot}`).join("; ")} ${suffix}`;
+      return `${p.future ? `Week ${p.week} ` : ""}Set lineup: ${p.changes.map((c) => `${c.inName ?? "empty"} for ${c.outName ?? "empty"} at ${c.slot}`).join("; ")} ${suffix}`;
     }
     case "DROP": {
       const p = d.params as DropParams;
@@ -305,7 +308,7 @@ export function validateAgainstLive(p: Pick<ProposalDraft, "kind" | "params" | "
     }
     case "SET_LINEUP": {
       const a = p.params as LineupParams;
-      if (a.fromStarters.length !== me.starters.length || a.fromStarters.some((id, i) => (me.starters[i] ?? "0") !== id)) {
+      if (!a.future && (a.fromStarters.length !== me.starters.length || a.fromStarters.some((id, i) => (me.starters[i] ?? "0") !== id))) {
         return no("your lineup changed since this was proposed");
       }
       const off = new Set([...me.reserve, ...me.taxi]);
@@ -314,7 +317,7 @@ export function validateAgainstLive(p: Pick<ProposalDraft, "kind" | "params" | "
         if (!me.players.includes(id)) return no("a player in the proposed lineup is no longer on your roster");
         if (off.has(id)) return no("a player in the proposed lineup is now on IR/taxi");
       }
-      for (let i = 0; i < a.toStarters.length; i++) {
+      for (let i = 0; !a.future && i < a.toStarters.length; i++) {
         if (a.toStarters[i] !== a.fromStarters[i]) {
           const out = a.fromStarters[i];
           const inn = a.toStarters[i];
@@ -380,7 +383,7 @@ export function sanitizeDraft(x: unknown): ProposalDraft | null {
     const changes = Array.isArray(p.changes)
       ? (p.changes as Record<string, unknown>[]).slice(0, 40).map((c) => ({ slot: short(c?.slot, 20), outName: c?.outName == null ? null : short(c.outName, 80), inName: c?.inName == null ? null : short(c.inName, 80) }))
       : [];
-    params = { week, fromStarters: from, toStarters: to, changes, gain: typeof p.gain === "number" && Number.isFinite(p.gain) ? Math.round(p.gain * 10) / 10 : 0 };
+    params = { week, fromStarters: from, toStarters: to, changes, gain: typeof p.gain === "number" && Number.isFinite(p.gain) ? Math.round(p.gain * 10) / 10 : 0, ...(p.future === true ? { future: true } : {}) };
   }
   return {
     kind,

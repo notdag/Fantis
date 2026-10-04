@@ -201,6 +201,9 @@ export interface EngineEnv {
   projections?: ProjectionMap | null; // Sleeper's single-week point projections for `week`
   permission?: Permission; // the owner's chosen mode; defaults to PLANNING. The engine never executes in any mode.
   kickoffs?: () => Promise<Record<string, string> | null>; // team → kickoff ISO, to freeze started games in lineup proposals
+  // Sleeper projections + ESPN kickoffs for ANY week (used to set lineups for later weeks); null if either can't load.
+  weekData?: (week: number) => Promise<{ proj: ProjectionMap; kickoffs: Record<string, string> } | null>;
+  curatedTier?: (playerId: string) => number | undefined; // the owner's /admin tier (1 = best)
   getGameStates?: () => Promise<Record<string, GameState> | null>; // live NFL game status (ESPN), fetched fresh per question
   week?: number | null;
   onProgress?: (p: Progress) => void;
@@ -628,7 +631,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         tone: intent.kind === "unknown" ? "warn" : "info",
         text:
           (intent.kind === "unknown" ? "I didn't understand that as a read-only scan or question. " : "") +
-          `I can scan your leagues, check a player everywhere, suggest drop candidates, and summarise patterns — I can't change anything. Try: "Run my weekly sweep" (IR + priority-list adds in one pass), "Find Antonio Williams everywhere", "Only show waiver leagues", "Give me the bottom 3 drops", "Find leagues where I have an injured player who could go on IR", or "Find my best waiver adds".`,
+          `I can scan your leagues, check a player everywhere, suggest drop candidates, and summarise patterns — I can't change anything. Try: "Run my weekly sweep" (IR + priority-list adds in one pass), "Fix my lineups" (add "using my tiers" to follow your tiers), "Who's questionable on my teams?", "I think Mike Evans won't play, fix my lineups", "Set my lineups for weeks 5-17", "Find Antonio Williams everywhere", "Only show waiver leagues", "Give me the bottom 3 drops", "Find leagues where I have an injured player who could go on IR", or "Find my best waiver adds".`,
       });
       break;
     }
@@ -1585,6 +1588,20 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         blocks.push({ t: "text", tone: "warn", text: "I couldn't load kickoff times, so I can't tell which games have already started. I won't propose lineup changes without that — try again in a moment." });
         break;
       }
+      // "I think X won't play": named players are treated as sitting for THIS command only (never saved).
+      const sitting = new Map<string, string>();
+      let sittingFailed = false;
+      for (const m of intent.wontPlay ?? []) {
+        const r = resolveName(m.text, env.tools.index);
+        if (r.status === "none") {
+          blocks.push({ t: "text", tone: "warn", text: `I couldn't find a player called "${m.text}". Nothing was changed — check the spelling or give me the full name.` });
+          sittingFailed = true;
+        } else if (r.status === "ambiguous") {
+          blocks.push({ t: "text", tone: "warn", text: `${r.reason} Say the full name (for example with his team) and I'll redo it. Nothing was changed.` });
+          sittingFailed = true;
+        } else sitting.set(r.player.id, r.player.name);
+      }
+      if (sittingFailed) break;
       const { snaps, meta } = await scanAll(env, false, "Checking lineups");
       session = { ...session, meta };
       blocks.push({ t: "scanStatus", meta });
@@ -1596,6 +1613,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       };
       const OUT = new Set(["Out", "IR", "PUP", "Sus", "Doubtful"]);
       const isUnavailable = (id: string) => {
+        if (sitting.has(id)) return true;
         const e = env.pmap[id];
         if (!e) return true;
         if (e.inj && OUT.has(e.inj)) return true;
@@ -1618,6 +1636,17 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         return kickoffSlot(team ? kickoffs[team] : undefined);
       };
       const found: { draft: ProposalDraft; league: string; gain: number; reslotOnly: boolean }[] = [];
+      // How the owner's own rankings steer this command: "my tiers" / "my exact rankings" are real preference bands (like the
+      // Optimize tab's modes); "projections only" uses none; unspecified keeps the tiny curated tie-break below.
+      const lineupRankOrder: ((id: string) => number | undefined) | undefined =
+        intent.rankMode === "rankings" && curatedOrder
+          ? (id) => curatedOrder.get(id)
+          : intent.rankMode === "tiers" && env.curatedTier
+            ? (id) => {
+                const t = env.curatedTier!(id);
+                return t ? (t - 1) * 100 : undefined;
+              }
+            : undefined;
       for (const snap of snaps) {
         if (snap.status === "FAILED" || !snap.rosters) continue;
         const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId)!;
@@ -1634,6 +1663,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
           posOf: (id: string) => env.pmap[id]?.p ?? null,
           points: (id: string) => proj[id]?.[key] ?? 0,
           unavailable: isUnavailable,
+          rankOrder: lineupRankOrder,
           locked: isLocked,
           priorityRank: (id: string) => prio.get(id),
           avoid: (id: string) => env.signals.avoid.has(id),
@@ -1645,7 +1675,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         };
         const res = optimizeLineup({
           ...base,
-          rankTiebreak: curatedOrder ? (id) => curatedOrder.get(id) : undefined,
+          rankTiebreak: curatedOrder && !intent.rankMode ? (id) => curatedOrder.get(id) : undefined,
           gameDay,
         });
         if (res.changes.length === 0) continue;
@@ -1692,6 +1722,27 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         });
       }
       found.sort((a, b) => b.gain - a.gain);
+      if (sitting.size > 0) {
+        // Show who steps in for each player the owner says is sitting, across leagues.
+        const lines: string[] = [];
+        for (const [sid, sname] of sitting) {
+          const tally = new Map<string, number>();
+          let starting = 0;
+          for (const snap of snaps) {
+            const me = snap.rosters?.find((r) => r.rosterId === snap.league.rosterId);
+            if (me?.starters.includes(sid)) starting += 1;
+          }
+          for (const f of found) {
+            for (const c of (f.draft.params as { changes: { outName: string | null; inName: string | null }[] }).changes) {
+              if (c.outName && c.outName.includes(sname)) tally.set(c.inName ?? "an empty slot", (tally.get(c.inName ?? "an empty slot") ?? 0) + 1);
+            }
+          }
+          lines.push(
+            `• ${sname}: starting in ${starting} league${starting === 1 ? "" : "s"}${tally.size ? " — replaced by " + [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([n, k]) => `${n} ×${k}`).join(", ") : starting ? " — no better lineup found" : ""}`
+          );
+        }
+        blocks.push({ t: "text", tone: "info", text: "Assuming these players sit this week (only for this command, nothing saved):\n" + lines.join("\n") });
+      }
       const bestReal = found.find((f) => !f.reslotOnly);
       blocks.push({
         t: "text",
@@ -1711,6 +1762,195 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       const lb = draftsBlock(env, found.map((f) => f.draft));
       if (lb) blocks.push(lb);
       recs.push(`${found.length} leagues with a better lineup`);
+      break;
+    }
+
+    case "questionable": {
+      const week = env.week;
+      const kickoffs = env.kickoffs ? await env.kickoffs().catch(() => null) : null;
+      const { snaps, meta } = await scanAll(env, false, "Checking who is questionable");
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+      const nowMs = now();
+      const tally = new Map<string, { leagues: number; starting: number }>();
+      for (const snap of snaps) {
+        if (snap.status === "FAILED" || !snap.rosters) continue;
+        const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId);
+        if (!me) continue;
+        const off = new Set([...me.reserve, ...me.taxi]);
+        for (const id of me.players) {
+          if (off.has(id)) continue;
+          const e = env.pmap[id];
+          if (!e || !(e.inj === "Questionable" || e.inj === "Doubtful")) continue;
+          if (week != null && e.t && BYE_WEEKS_2026[e.t] === week) continue;
+          const ko = e.t && kickoffs ? kickoffs[e.t] : undefined;
+          if (ko && Date.parse(ko) <= nowMs) continue; // his game has started — no longer a question
+          const row = tally.get(id) ?? { leagues: 0, starting: 0 };
+          row.leagues += 1;
+          if (me.starters.includes(id)) row.starting += 1;
+          tally.set(id, row);
+        }
+      }
+      const list = [...tally.entries()].filter(([, v]) => v.starting > 0).sort((a, b) => b[1].starting - a[1].starting);
+      if (list.length === 0) {
+        blocks.push({ t: "text", tone: "info", text: "No Questionable or Doubtful players are currently starting on your rosters (games that have started are excluded)." });
+      } else {
+        blocks.push({
+          t: "text",
+          tone: "info",
+          text:
+            "Questionable / Doubtful players starting on your rosters (games not started):\n" +
+            list
+              .slice(0, 40)
+              .map(([id, v]) => `• ${posName(env, id)} (${env.pmap[id]?.inj}) — starting in ${v.starting} of ${v.leagues} leagues`)
+              .join("\n") +
+            "\n\nTell me who you think is sitting and I'll show the best replacement: \"I think Mike Evans won't play, fix my lineups\". Nothing has been changed.",
+        });
+      }
+      recs.push(`${list.length} questionable starters`);
+      break;
+    }
+
+    case "set_weeks": {
+      const cur = env.week;
+      if (cur == null) {
+        blocks.push({ t: "text", tone: "warn", text: "I don't know the current week yet, so I can't tell which weeks are still ahead. Try again in a moment." });
+        break;
+      }
+      if (!env.weekData) {
+        blocks.push({ t: "text", tone: "warn", text: "Future-week projections and schedules aren't available here, so I can't build lineups for later weeks. Use the Optimize tab's \"Set weeks\" button instead." });
+        break;
+      }
+      const LAST = 17; // week 18 is never included
+      const from = Math.max(intent.from ?? cur + 1, cur + 1);
+      const to = Math.min(intent.to ?? LAST, LAST);
+      if (from > to) {
+        blocks.push({
+          t: "text",
+          tone: "warn",
+          text: `Week ${cur} is the current week — say "fix my lineups" for it (that checks started games and live injuries). Setting ahead covers weeks ${cur + 1}–${LAST}${intent.to != null && intent.to > LAST ? "; week 18 is never included" : ""}.`,
+        });
+        break;
+      }
+      const wanted: number[] = [];
+      for (let w = from; w <= to; w++) wanted.push(w);
+      const loaded = await Promise.all(wanted.map(async (w) => [w, await env.weekData!(w).catch(() => null)] as const));
+      const usable = new Map<number, { proj: ProjectionMap; kickoffs: Record<string, string> }>();
+      const skippedWeeks: number[] = [];
+      for (const [w, d] of loaded) {
+        // Without that week's schedule the Thu/Fri/Sat-out-of-FLEX rule can't be applied, so the week is skipped, never guessed.
+        if (d && d.proj && Object.keys(d.proj).length > 0 && d.kickoffs && Object.keys(d.kickoffs).length > 0) usable.set(w, d);
+        else skippedWeeks.push(w);
+      }
+      if (usable.size === 0) {
+        blocks.push({ t: "text", tone: "warn", text: `I couldn't load projections and game schedules for weeks ${from}–${to}, so nothing was built. Try again in a moment.` });
+        break;
+      }
+      const { snaps, meta } = await scanAll(env, false, `Setting lineups for weeks ${from}–${to}`);
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+      const mode = intent.rankMode ?? "projections";
+      const LONG_TERM_OUT = new Set(["IR", "PUP", "Sus", "NA", "DNR"]);
+      const order = env.signals.priorityOrder ?? [...env.signals.priority];
+      const prio = new Map(order.map((id, i) => [id, i]));
+      const curatedOrder = env.curatedIds ? new Map(env.curatedIds.map((id, i) => [id, i])) : null;
+      const rankOrder: ((id: string) => number | undefined) | undefined =
+        mode === "rankings" && curatedOrder
+          ? (id) => curatedOrder.get(id)
+          : mode === "tiers" && env.curatedTier
+            ? (id) => {
+                const t = env.curatedTier!(id);
+                return t ? (t - 1) * 100 : undefined;
+              }
+            : undefined;
+      const drafts: ProposalDraft[] = [];
+      let leaguesUsed = 0;
+      let mismatched = 0;
+      let emptyLineups = 0;
+      for (const snap of snaps) {
+        if (snap.status === "FAILED" || !snap.rosters) continue;
+        const me = snap.rosters.find((r) => r.rosterId === snap.league.rosterId);
+        const rp = rosterPositions(snap.league.settings);
+        if (!me || !rp) continue;
+        const slots = buildStartingSlots(rp).map((x) => x.code);
+        if (slots.length === 0) continue;
+        if (me.starters.length !== slots.length) {
+          mismatched += 1; // the live lineup isn't the shape the league's rules imply — never guess a conversion
+          continue;
+        }
+        leaguesUsed += 1;
+        const off = new Set([...me.reserve, ...me.taxi]);
+        const key = scoringKey(snap.league.settings);
+        for (const [week, wd] of usable) {
+          const isUnavailable = (id: string) => {
+            const e = env.pmap[id];
+            if (!e) return true;
+            if (e.inj && LONG_TERM_OUT.has(e.inj)) return true; // today's Out/Doubtful/COV are assumed over for later weeks
+            return !!e.t && BYE_WEEKS_2026[e.t] === week;
+          };
+          const res = optimizeLineup({
+            slotCodes: slots,
+            starters: me.starters,
+            candidates: me.players.filter((id) => !off.has(id)),
+            posOf: (id) => env.pmap[id]?.p ?? null,
+            points: (id) => wd.proj[id]?.[key] ?? 0,
+            unavailable: isUnavailable,
+            locked: () => false, // later weeks: nothing has kicked off
+            priorityRank: (id) => prio.get(id),
+            avoid: (id) => env.signals.avoid.has(id),
+            neverStart: (id) => !!env.signals.neverStart?.has(id),
+            flexFirst: (id) => {
+              const i = env.signals.flexFirstOrder?.indexOf(id) ?? -1;
+              return i < 0 ? undefined : i;
+            },
+            rankOrder,
+            gameDay: (id) => {
+              const t = env.pmap[id]?.t;
+              return kickoffSlot(t ? wd.kickoffs[t] : undefined);
+            },
+          });
+          if (res.changes.length === 0) continue;
+          if (res.starters.slice(0, slots.length).includes("0")) emptyLineups += 1;
+          const nm = (id: string | null) => (id ? posName(env, id) : null);
+          drafts.push({
+            kind: "SET_LINEUP",
+            leagueId: snap.league.id,
+            leagueName: snap.league.name,
+            rosterId: snap.league.rosterId,
+            params: {
+              week,
+              future: true,
+              fromStarters: me.starters.map((x) => x || "0"),
+              toStarters: res.starters,
+              changes: res.changes.map((c) => ({ slot: c.slotCode, outName: nm(c.out), inName: nm(c.in) })),
+              gain: Math.round(res.gain * 10) / 10,
+            },
+            rationale: [
+              `Week ${week}: ${mode === "projections" ? "highest" : mode === "tiers" ? "your tiers first, then highest" : "your exact rankings, then"} Sleeper projection (${key})`,
+              ...res.changes.map((c) => `${c.slotCode}: ${nm(c.in) ?? "empty"} in for ${nm(c.out) ?? "empty"}`),
+              "FLEX never holds a Thursday/Friday/Saturday game; early-Sunday players lean to RB/WR/TE slots, late-Sunday and Monday players to FLEX",
+              "Players listed Out/Doubtful today are assumed back for later weeks (IR/PUP/Suspended/NA stay benched)",
+            ],
+            origin: "chat",
+            command: text,
+          });
+        }
+      }
+      const leaguesWith = new Set(drafts.map((d) => d.leagueId)).size;
+      blocks.push({
+        t: "text",
+        tone: drafts.length ? "good" : "info",
+        text: drafts.length
+          ? `${drafts.length} lineup${drafts.length === 1 ? "" : "s"} drafted across ${leaguesWith} of ${leaguesUsed} leagues for weeks ${[...usable.keys()][0]}–${[...usable.keys()][usable.size - 1]} (${mode === "projections" ? "highest Sleeper projection" : mode === "tiers" ? "your tiers, then projection" : "your exact rankings"}; Thu/Fri/Sat players never in FLEX; early Sunday in true slots, late Sunday/Monday in FLEX). Weeks are set from today's rosters and projections — re-run closer to game time if anything changes. Nothing has been changed.`
+          : `Every lineup for weeks ${[...usable.keys()][0]}–${[...usable.keys()][usable.size - 1]} already matches the best legal one.`,
+      });
+      if (skippedWeeks.length > 0) blocks.push({ t: "text", tone: "warn", text: `Skipped week${skippedWeeks.length === 1 ? "" : "s"} ${skippedWeeks.join(", ")}: couldn't load that week's projections or game schedule (needed for the Thursday–Saturday FLEX rule).` });
+      if (mismatched > 0) blocks.push({ t: "text", tone: "warn", text: `${mismatched} league${mismatched === 1 ? "" : "s"} skipped: the live lineup size doesn't match the league's roster rules, so I didn't guess.` });
+      if (emptyLineups > 0) blocks.push({ t: "text", tone: "warn", text: `${emptyLineups} drafted lineup${emptyLineups === 1 ? "" : "s"} leave a slot EMPTY because nobody eligible avoids a Thursday–Saturday game (or all are out / on bye). Review those before sending.` });
+      if (drafts.length > 300) blocks.push({ t: "text", tone: "info", text: "That's a lot of proposals — saving works in batches, and for a whole season the Lineups → Optimize \"Set weeks\" button is faster to review and send." });
+      const sb = draftsBlock(env, drafts);
+      if (sb) blocks.push(sb);
+      recs.push(`${drafts.length} future lineups`);
       break;
     }
 
@@ -2279,6 +2519,8 @@ function pushDropBlocks(blocks: Block[], env: EngineEnv, session: Session, need:
 const CHAIN_SPLIT = /\s*(?:,?\s+and then\s+|,?\s+then\s+|\bafter that,?\s+|;\s*)\s*/i;
 const CHAINABLE_KINDS = new Set([
   "lineup_improvements",
+  "set_weeks",
+  "questionable",
   "weekly_sweep",
   "ir_opps",
   "waiver_opps",

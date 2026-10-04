@@ -16,6 +16,7 @@ import {
   type Proposal,
   type ProposalDraft,
 } from "../lib/commandCenter/proposals";
+import { describeProposal as describeProposal0 } from "../lib/commandCenter/proposals";
 import { executeProposal, gate, type ExecDeps, type ExecWriters } from "../lib/commandCenterExec";
 import type { CcLeague, LeagueSnapshot, SnapRoster } from "../lib/commandCenter/types";
 
@@ -391,6 +392,42 @@ async function main() {
     }
     const exec = readFileSync(join(process.cwd(), "lib", "commandCenterExec.ts"), "utf8");
     ok(!/graphql|fetch\(/i.test(exec.replace(/\/\/.*$/gm, "")), "executor itself makes no raw requests — only injected writers");
+  }
+
+  // ============================================================ future-week lineups (set weeks ahead)
+  {
+    const lg = league();
+    const toS = [...starters.slice(0, 8), "b1"];
+    const fut: ProposalDraft = { kind: "SET_LINEUP", leagueId: "1", leagueName: "L", rosterId: 1, origin: "chat", command: "", rationale: [], params: { week: 5, future: true, fromStarters: [...starters], toStarters: toS, changes: [{ slot: "DEF", outName: "d", inName: "b1" }], gain: 3 } };
+    const clean = sanitizeDraft(fut);
+    ok(!!clean && (clean.params as { future?: boolean }).future === true && (clean.params as { week: number }).week === 5, "future flag and week survive sanitizing");
+    ok(draftKey(fut) !== draftKey({ ...fut, params: { ...(fut.params as object), week: 6 } as never }), "each week of a league is its own proposal (no dedupe across weeks)");
+    const live = (r: SnapRoster, inj: (id: string) => string | null = () => null, locked: (id: string) => boolean = () => false) => ({ snapshot: snap(lg, r), injuryOf: inj, isLocked: locked });
+    ok(validateAgainstLive(asProposal(fut), live(roster({ starters: [...starters.slice(0, 8), "b2"] }))).ok, "FUTURE: this week's lineup changing doesn't expire a later week's lineup");
+    ok(validateAgainstLive(asProposal(fut), live(roster(), () => null, () => true)).ok, "FUTURE: a game started THIS week doesn't block a later week's lineup");
+    ok(!validateAgainstLive(asProposal(fut), live(roster({ players: roster().players.filter((x) => x !== "b1") }))).ok, "FUTURE: still expires if a player left the roster");
+    ok(!validateAgainstLive(asProposal(fut), live(roster({ reserve: ["b1"] }))).ok, "FUTURE: still expires if a player is now on IR");
+    ok(describeProposal0(fut).startsWith("Week 5 "), "FUTURE: description names the week");
+
+    // executed only when the week's matchup shows the lineup
+    const f1 = fake(lg, roster());
+    const r1 = await executeProposal(asProposal(fut), f1.deps({ readWeekStarters: async () => toS }));
+    ok(r1.status === "executed" && f1.calls.lineup === 1, "FUTURE: sent once and confirmed from that week's matchup", r1.status + " " + r1.message);
+    const f2 = fake(lg, roster());
+    const r2 = await executeProposal(asProposal(fut), f2.deps({ readWeekStarters: async () => [...starters] }));
+    ok(r2.status === "verify_failed" && f2.calls.lineup === 1, "FUTURE: a matchup that doesn't match is verify_failed, never executed", r2.status);
+    const f3 = fake(lg, roster());
+    const r3 = await executeProposal(asProposal(fut), f3.deps());
+    ok(r3.status === "verify_failed", "FUTURE: no way to re-read the week → verify_failed, never claimed done", r3.status);
+    const f4 = fake(lg, roster());
+    const r4 = await executeProposal(asProposal(fut), f4.deps({ readWeekStarters: async () => { throw new Error("503"); } }));
+    ok(r4.status === "verify_failed", "FUTURE: a failed re-read is verify_failed", r4.status);
+    const f5 = fake(lg, roster(), { writeError: new Error("rejected") });
+    const r5 = await executeProposal(asProposal(fut), f5.deps({ readWeekStarters: async () => toS }));
+    ok(r5.status === "failed", "FUTURE: a rejected write fails (no verification attempted)", r5.status);
+    const f6 = fake(lg, roster());
+    const r6 = await executeProposal(asProposal(fut), f6.deps({ permission: "PLANNING", readWeekStarters: async () => toS }));
+    ok(f6.calls.lineup === 0 && r6.sent !== true, "FUTURE: Planning mode never sends");
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
