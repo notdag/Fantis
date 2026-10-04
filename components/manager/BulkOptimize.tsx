@@ -798,9 +798,9 @@ export default function BulkOptimize({
                 <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
                   <b>Questionable board — week {currentWeek}</b>
                   <span className="portmeta" style={{ display: "block", marginBottom: 8 }}>
-                    Players on your rosters listed Questionable/Doubtful whose game hasn&rsquo;t started. Tick &ldquo;won&rsquo;t play&rdquo; for anyone you think is sitting:
+                    Players on your rosters listed Questionable/Doubtful whose game hasn&rsquo;t started. Press &ldquo;Mark: won&rsquo;t play&rdquo; for anyone you think is sitting:
                     he&rsquo;s treated as out this week and the best replacement from your rankings + Sleeper projections is started instead (shown here and in the
-                    lineups below). Untick to undo. Applies to this week only and isn&rsquo;t saved.
+                    lineups below). Press it again to undo. Applies to this week only and isn&rsquo;t saved.
                   </span>
                   {doubtBoard.map((d) => {
                     const on = doubts.has(d.id);
@@ -808,8 +808,17 @@ export default function BulkOptimize({
                     const inj = pmap?.[d.id]?.inj;
                     const pr = weekData[currentWeek]?.proj[d.id];
                     return (
-                      <label key={d.id} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "6px 0", borderTop: "1px solid var(--line-soft)", cursor: "pointer" }}>
-                        <input type="checkbox" checked={on} disabled={running} onChange={() => toggleDoubt(d.id)} />
+                      <div key={d.id} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid var(--line-soft)" }}>
+                        <button
+                          type="button"
+                          className="chip-filter"
+                          disabled={running}
+                          aria-pressed={on}
+                          onClick={() => toggleDoubt(d.id)}
+                          style={{ minWidth: 150, fontWeight: 650, ...(on ? { background: "var(--red)", color: "#10131A", borderColor: "var(--red)" } : {}) }}
+                        >
+                          {on ? "✕ Won't play (undo)" : "Mark: won't play"}
+                        </button>
                         <span style={{ flex: 1, minWidth: 240 }}>
                           <b>{name(d.id)}</b> ({inj ?? "—"}) · {pmap?.[d.id]?.p} {pmap?.[d.id]?.t} · {rankLabel(d.id)}
                           {ranks?.get(d.id) ? ` · tier ${ranks.get(d.id)!.tier}` : ""} · {(pr?.pts_ppr ?? 0).toFixed(1)} proj
@@ -825,7 +834,7 @@ export default function BulkOptimize({
                             {rep && rep.list.length === 0 && rep.empty === 0 && " — no lineup change needed"}
                           </span>
                         </span>
-                      </label>
+                      </div>
                     );
                   })}
                 </div>
