@@ -410,16 +410,27 @@ export default function BulkOptimize({
     const tasks: BulkTask[] = selectedRows.map((r) => ({
       key: r.key,
       run: async () => {
-        const blocked = pre[r.leagueId]?.blocked;
-        if (blocked) throw new Error(blocked);
+        const p = pre[r.leagueId];
+        let starters = view(r).starters;
+        let note = "";
+        if (p?.blocked) {
+          // Later weeks don't depend on this week's lineup: if the roster changed (a drop / add / IR move), still send what we
+          // can — any player who is no longer active on the roster is left out of his slot instead of skipping the whole league.
+          if (r.week > currentWeek && p.fresh) {
+            const active = new Set(p.fresh.players.filter((id) => !p.fresh!.reserve.includes(id)));
+            let removed = 0;
+            starters = starters.map((id) => (id && id !== "0" && !active.has(id) ? (removed++, "0") : id));
+            if (removed > 0) note = `, ${removed} slot${removed === 1 ? "" : "s"} left empty (player no longer on roster)`;
+          } else throw new Error(p.blocked);
+        }
         await setStarters(token, {
           leagueId: r.leagueId,
           rosterId: r.rosterId,
-          starters: view(r).starters,
+          starters,
           week: r.week,
         });
         const n = view(r).changes.length;
-        return `${n} swap${n === 1 ? "" : "s"}`;
+        return `${n} swap${n === 1 ? "" : "s"}${note}`;
       },
     }));
     const doneKeys: string[] = [];
