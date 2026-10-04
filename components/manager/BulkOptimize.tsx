@@ -380,7 +380,7 @@ export default function BulkOptimize({
       for (const id of l.roster.players) {
         if (l.roster.reserve.includes(id)) continue;
         const inj = pmap[id]?.inj;
-        if (!(inj === "Questionable" || inj === "Doubtful" || doubts.has(id))) continue;
+        if (!(inj || doubts.has(id))) continue; // any injury designation — Questionable, Doubtful, Out, …
         const t = pmap[id]?.t;
         const ko = t ? wd.kickoffs[t] : undefined;
         if (ko && Date.parse(ko) <= Math.max(nowMs, wd.loadedAt)) continue;
@@ -1030,9 +1030,9 @@ export default function BulkOptimize({
               )}
               {doubtBoard.length > 0 && (
                 <div className="card" style={{ maxWidth: "none", margin: "0 0 12px", padding: "12px 14px" }}>
-                  <b>Questionable board — week {currentWeek}</b>
+                  <b>Injury board — week {currentWeek}</b>
                   <span className="portmeta" style={{ display: "block", marginBottom: 8 }}>
-                    Players on your rosters listed Questionable/Doubtful whose game hasn&rsquo;t started. Press &ldquo;Mark: won&rsquo;t play&rdquo; for anyone you think is sitting:
+                    Players on your rosters with an injury designation (Questionable, Doubtful, Out…) who are starting, or are about to be started, and whose game hasn&rsquo;t started. Players already listed Out/IR are benched automatically. Press &ldquo;Mark: won&rsquo;t play&rdquo; for anyone you think is sitting:
                     he&rsquo;s treated as out this week and the best replacement from your rankings + Sleeper projections is started instead (shown here and in the
                     lineups below). Press it again to undo. Applies to this week only and isn&rsquo;t saved.
                   </span>
@@ -1043,6 +1043,9 @@ export default function BulkOptimize({
                     const pr = weekData[currentWeek]?.proj[d.id];
                     return (
                       <div key={d.id} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", padding: "8px 0", borderTop: "1px solid var(--line-soft)" }}>
+                        {!on && inj && OUT_STATUSES.has(inj) ? (
+                          <span className="portmeta" style={{ minWidth: 150 }}>Already out — benched automatically</span>
+                        ) : (
                         <button
                           type="button"
                           className="chip-filter"
@@ -1053,6 +1056,7 @@ export default function BulkOptimize({
                         >
                           {on ? "✕ Won't play (undo)" : "Mark: won't play"}
                         </button>
+                        )}
                         <span style={{ flex: 1, minWidth: 240 }}>
                           <b>{name(d.id)}</b> ({inj ?? "—"}) · {pmap?.[d.id]?.p} {pmap?.[d.id]?.t} · {rankLabel(d.id)}
                           {ranks?.get(d.id) ? ` · tier ${ranks.get(d.id)!.tier}` : ""} · {(pr?.pts_ppr ?? 0).toFixed(1)} proj
