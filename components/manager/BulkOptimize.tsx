@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { getProjections } from "@/lib/sleeper";
 import { getWeekKickoffs } from "@/lib/espnGames";
 import { BYE_WEEKS_2026 } from "@/lib/byeWeeks";
@@ -94,6 +95,17 @@ export default function BulkOptimize({
     if (!q) return [];
     return allLeagues.filter((l) => l.roster && !onlyIds.includes(l.league.id) && l.league.name.toLowerCase().includes(q)).slice(0, 8);
   }, [allLeagues, leagueQuery, onlyIds]);
+  // Leagues whose active roster (everyone not on IR) is bigger than the league allows — Sleeper won't accept a lineup change there
+  // until a player is dropped, so the batch would fail for them. Uses the live-merged rosters.
+  const overLimit = useMemo(
+    () =>
+      allLeagues
+        .filter((l) => l.roster && l.league.status === "in_season" && l.rosterPositions.length > 0)
+        .map((l) => ({ l, over: l.roster!.players.length - l.roster!.reserve.length - l.rosterPositions.length }))
+        .filter((x) => x.over > 0)
+        .sort((a, b) => b.over - a.over),
+    [allLeagues]
+  );
   const [selectedWeek, setSelectedWeek] = useState<number | "all" | "ahead">(currentWeek);
   const weeksToShow = useMemo(
     () =>
@@ -708,6 +720,32 @@ export default function BulkOptimize({
 
   return (
     <>
+      {overLimit.length > 0 && (
+        <div className="card sync" style={{ maxWidth: "none", margin: "0 0 14px", padding: "12px 16px", borderColor: "var(--amber)" }}>
+          <b style={{ color: "var(--amber)" }}>
+            ⚠ {overLimit.length} league{overLimit.length === 1 ? "" : "s"} over the roster limit — Sleeper won&rsquo;t accept lineup changes there until you drop
+          </b>
+          <span className="portmeta" style={{ display: "block", margin: "2px 0 8px" }}>
+            Active roster (not counting IR) is bigger than the league allows. Drop or move players to IR first, then Reload rosters. Counts update live.
+          </span>
+          {overLimit.slice(0, 40).map(({ l, over }) => (
+            <div key={l.league.id} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", borderTop: "1px solid var(--line-soft)" }}>
+              <Link href={`/manager/${l.league.id}`} style={{ flex: 1 }}>
+                {l.league.name}
+              </Link>
+              <span className="portmeta">
+                {l.roster!.players.length - l.roster!.reserve.length} / {l.rosterPositions.length} — drop {over}
+              </span>
+            </div>
+          ))}
+          {overLimit.length > 40 && <span className="portmeta">…and {overLimit.length - 40} more</span>}
+          <div style={{ marginTop: 8, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="chip-filter" disabled={running} onClick={() => setOnlyIds(overLimit.map((x) => x.l.league.id))}>
+              Show only these leagues
+            </button>
+          </div>
+        </div>
+      )}
       <div className="card sync" style={{ maxWidth: "none", margin: "0 0 14px", padding: "14px 16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 360px", minWidth: 0 }}>
