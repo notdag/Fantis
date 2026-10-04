@@ -293,6 +293,13 @@ export default function BulkOptimize({
           if (pmap[b]?.p !== pmap[c.in]?.p) continue;
           if (neverStartSet.has(b) || avoidSet.has(b) || priorityIndex.has(c.in)) continue;
           if (unavailableForWeek(r.week, b)) continue;
+          // A player whose game has started or finished is already decided — never ask about him (or the player he'd replace).
+          const started = (id: string) => {
+            const t = pmap[id]?.t;
+            const ko = t ? wd.kickoffs[t] : undefined;
+            return !!ko && Date.parse(ko) <= Math.max(Date.now(), wd.loadedAt);
+          };
+          if (started(b) || started(c.in)) continue;
           if (!better(b, c.in)) continue;
           const key = c.in + ">" + b;
           if (key in calls) continue;
