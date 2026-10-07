@@ -1,6 +1,6 @@
 // Tests for the multi-target add planner. Run: npx tsx scripts/testMultiAddPlan.ts
 import { buildMultiAddPlan } from "../lib/multiAddPlan";
-import type { PlanLeague } from "../lib/bulkPlan";
+import { buildIrPlan, type PlanLeague } from "../lib/bulkPlan";
 
 let pass = 0;
 let fail = 0;
@@ -121,6 +121,20 @@ const rostered = (overrides: Record<string, string[]> = {}): Record<string, Read
   // propose — never falls back to suggesting a protected player anyway.
   const allProtected = buildMultiAddPlan(["x"], [full], rostered(), rank, noBid, () => true);
   ok(allProtected.rows[0].dropId === null && allProtected.rows[0].dropCandidates.length === 0, "when every real candidate is Priority-protected, nobody is suggested — not even as a last resort", JSON.stringify(allProtected.rows[0]));
+}
+
+// ---- full IR: who makes room (IR Release list → no-longer-eligible → lowest value; never Priority)
+{
+  const lg: PlanLeague = { leagueId: "9", leagueName: "Full IR", rosterId: 1, settings: { roster_positions: ["QB", "WR", "BN"], settings: { reserve_slots: 2 } }, starters: [], players: ["q", "w", "new", "irA", "irB"], reserve: ["irA", "irB"], faabUsed: null };
+  const inj: Record<string, string | null> = { new: "IR", irA: "IR", irB: null };
+  const val: Record<string, number> = { irA: 1, irB: 50 };
+  const rank = (id: string): [number, number] => [val[id] ?? 0, 0];
+  const base = buildIrPlan([lg], (id) => inj[id] ?? null, rank);
+  ok(base[0]?.needsDrop && base[0].dropId === "irB", "a healthy player still sitting on IR is suggested before a low-value injured one", JSON.stringify(base[0]));
+  const listed = buildIrPlan([lg], (id) => inj[id] ?? null, rank, () => false, ["irA"]);
+  ok(listed[0]?.dropId === "irA", "your IR Release list goes first", JSON.stringify(listed[0]));
+  const prot = buildIrPlan([lg], (id) => inj[id] ?? null, rank, (id) => id === "irB");
+  ok(prot[0]?.dropId === "irA", "a Priority-list IR player is skipped", JSON.stringify(prot[0]));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

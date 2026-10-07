@@ -110,7 +110,9 @@ export function buildIrPlan(
   leagues: PlanLeague[],
   injuryOf: (playerId: string) => string | null,
   rank: DropRank,
-  isPriority: (playerId: string) => boolean = () => false
+  isPriority: (playerId: string) => boolean = () => false,
+  // The owner's IR Release list (in order): those IR players are suggested to make room first.
+  releaseOrder: string[] = []
 ): IrRow[] {
   const rows: IrRow[] = [];
   const asc = byRankAsc(rank);
@@ -130,7 +132,16 @@ export function buildIrPlan(
     // Current IR players, cheapest first — the drop pool when IR is full.
     // Same rule the regular bench-drop suggestions already use: a
     // Priority-listed player is never suggested as droppable, even from IR.
-    const pool = [...lg.reserve].filter((id) => !isPriority(id)).sort(asc);
+    // Order: your IR Release list first (your order), then anyone on IR who no longer qualifies for it (healthy / not an IR
+    // status — he shouldn't be holding the slot), then the lowest value.
+    const listPos = (id: string) => {
+      const i = releaseOrder.indexOf(id);
+      return i < 0 ? Infinity : i;
+    };
+    const stale = (id: string) => (irAllowed(lg.settings, injuryOf(id)) ? 1 : 0);
+    const pool = [...lg.reserve]
+      .filter((id) => !isPriority(id))
+      .sort((a, b) => listPos(a) - listPos(b) || stale(a) - stale(b) || asc(a, b));
     const used = new Set<string>();
 
     for (const p of eligible) {

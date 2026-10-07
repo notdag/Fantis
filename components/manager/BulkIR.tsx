@@ -4,7 +4,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { buildIrPlan, type IrRow, type PlanLeague } from "@/lib/bulkPlan";
 import { runBulk, errorMessage, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { preflightRosters } from "@/lib/liveRosters";
-import { addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
+import { activateFromIR, addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -71,7 +71,7 @@ export default function BulkIR({
   // who's currently excluded.
   const [keepQuery, setKeepQuery] = useState("");
   const [keepIds, setKeepIds] = useState<Set<string>>(new Set());
-  const rawRows = useMemo(() => buildIrPlan(planLeagues, baseInjuryOf, rank, isPriority), [planLeagues, baseInjuryOf, rank, isPriority]);
+  const rawRows = useMemo(() => buildIrPlan(planLeagues, baseInjuryOf, rank, isPriority, prefs.irRelease), [planLeagues, baseInjuryOf, rank, isPriority, prefs.irRelease]);
   const keepCandidates = useMemo(() => {
     const seen = new Map<string, string>(); // playerId -> name, de-duped across leagues
     for (const r of rawRows) if (!seen.has(r.playerId)) seen.set(r.playerId, nameOf(pmap, r.playerId));
@@ -101,7 +101,17 @@ export default function BulkIR({
   // instead — filtering the OUTPUT afterward would leave that slot wrongly
   // reported as taken. Same lesson as the chat "keep X on my bench" fix.
   const injuryOf = useCallback((id: string) => (keepIds.has(id) ? null : baseInjuryOf(id)), [keepIds, baseInjuryOf]);
-  const rows = useMemo(() => buildIrPlan(planLeagues, injuryOf, rank, isPriority), [planLeagues, injuryOf, rank, isPriority]);
+  const rows = useMemo(() => buildIrPlan(planLeagues, injuryOf, rank, isPriority, prefs.irRelease), [planLeagues, injuryOf, rank, isPriority, prefs.irRelease]);
+  // Leagues with a spare active roster spot: there, a full IR is fixed by SWAPPING — the IR player comes off IR to your bench
+  // (no one is dropped) and the new player takes his IR slot. Net roster size is unchanged, so the spot stays spare.
+  const benchRoom = useMemo(() => {
+    const m = new Set<string>();
+    for (const l of leagues) {
+      if (!l.roster || l.rosterPositions.length === 0) continue;
+      if (l.roster.players.length - l.roster.reserve.length < l.rosterPositions.length) m.add(l.league.id);
+    }
+    return m;
+  }, [leagues]);
 
   // Everything is selected by default; the user un-checks. (Stored as the
   // deselected set so the default needs no effect/initialisation once the
@@ -117,12 +127,19 @@ export default function BulkIR({
   const abortRef = useRef({ aborted: false });
   const refresh = useRefreshLeagues();
 
-  const dropFor = (r: IrRow) => (r.key in dropOverride ? dropOverride[r.key] : r.dropId);
+  // A full-IR row's choice: "bench:<id>" = move that IR player to your bench (swap, no drop), "<id>" = release him.
+  const choiceFor = (r: IrRow): string | null =>
+    r.key in dropOverride ? dropOverride[r.key] : r.dropId ? (benchRoom.has(r.leagueId) ? `bench:${r.dropId}` : r.dropId) : null;
+  const dropFor = (r: IrRow) => {
+    const c = choiceFor(r);
+    return c ? c.replace(/^bench:/, "") : null;
+  };
+  const isBenchSwap = (r: IrRow) => (choiceFor(r) ?? "").startsWith("bench:");
   const finished = (r: IrRow) => status[r.key]?.kind === "done";
   const runnable = (r: IrRow) => !finished(r) && !r.noRoom && (!r.needsDrop || !!dropFor(r));
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && runnable(r));
   const leaguesAffected = new Set(rows.map((r) => r.leagueId)).size;
-  const dropCount = selectedRows.filter((r) => r.needsDrop).length;
+  const dropCount = selectedRows.filter((r) => r.needsDrop && !isBenchSwap(r)).length;
 
   // Find a specific league or player in a long batch instead of scrolling
   // to it. Filters the VIEW only — Select all/none below act on whatever's
@@ -198,13 +215,17 @@ export default function BulkIR({
       run: async () => {
         const blocked = pre[r.leagueId]?.blocked;
         if (blocked) throw new Error(blocked);
-        const drop = r.needsDrop ? dropFor(r) : null;
-        if (drop) {
+        const out = r.needsDrop ? dropFor(r) : null;
+        const toBench = !!out && isBenchSwap(r);
+        const drop = toBench ? null : out;
+        if (toBench && out) {
+          await activateFromIR(token, { leagueId: r.leagueId, rosterId: r.rosterId, playerId: out });
+        } else if (drop) {
           await addDropFreeAgent(token, { leagueId: r.leagueId, rosterId: r.rosterId, dropPlayerId: drop });
         }
         try {
           await moveToIR(token, { leagueId: r.leagueId, rosterId: r.rosterId, playerId: r.playerId });
-          return drop ? `dropped ${nameOf(pmap, drop)}` : undefined;
+          return toBench && out ? `moved ${nameOf(pmap, out)} to bench` : drop ? `dropped ${nameOf(pmap, drop)}` : undefined;
         } catch (e) {
           // A starter has to leave the lineup before Sleeper will IR him —
           // vacate that one slot and try once more.
@@ -355,7 +376,7 @@ export default function BulkIR({
               lines={selectedRows.map((r) => (
                 <span key={r.key}>
                   {r.leagueName}: {nameOf(pmap, r.playerId)} → IR
-                  {r.needsDrop && <strong> · drop {nameOf(pmap, dropFor(r))}</strong>}
+                  {r.needsDrop && <strong> · {isBenchSwap(r) ? `move ${nameOf(pmap, dropFor(r))} to bench` : `release ${nameOf(pmap, dropFor(r))}`}</strong>}
                 </span>
               ))}
               confirmLabel={`Send ${selectedRows.length} changes to Sleeper`}
@@ -411,13 +432,22 @@ export default function BulkIR({
                       ) : r.needsDrop ? (
                         <select
                           className="select sm"
-                          value={dropFor(r) ?? ""}
+                          value={choiceFor(r) ?? ""}
                           disabled={running || finished(r)}
                           onChange={(e) => setDropOverride((p) => ({ ...p, [r.key]: e.target.value || null }))}
+                          title="IR is full — choose who on IR makes room"
                         >
-                          <option value="">— pick who to drop —</option>
+                          <option value="">— IR full: pick who makes room —</option>
+                          {benchRoom.has(r.leagueId) &&
+                            r.dropCandidates.map((id) => (
+                              <option key={`b${id}`} value={`bench:${id}`}>
+                                swap: {nameOf(pmap, id)} → bench{pmap?.[id]?.inj ? ` (${pmap[id].inj})` : " (healthy)"}
+                              </option>
+                            ))}
                           {r.dropCandidates.map((id) => (
-                            <option key={id} value={id}>drop {nameOf(pmap, id)}</option>
+                            <option key={id} value={id}>
+                              release {nameOf(pmap, id)}{pmap?.[id]?.inj ? ` (${pmap[id].inj})` : " (healthy)"}
+                            </option>
                           ))}
                         </select>
                       ) : (

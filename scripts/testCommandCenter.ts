@@ -1174,10 +1174,36 @@ async function main() {
     const out = await handleCommand("Put IR Candidate on IR", newSession(), env);
     ok(out.audit.intent === "send_to_ir", "recognised as send_to_ir", out.audit.intent);
     const drafts = draftsOf(out.blocks);
-    ok(drafts.length === 1 && drafts[0].leagueName === "Send League A — open" && drafts[0].kind === "IR_MOVE", "only the open-slot league gets a real IR_MOVE proposal", JSON.stringify(drafts.map((d) => d.leagueName)));
+    const sig = drafts.map((d) => `${d.leagueName}:${d.kind}:${(d.params as { playerId: string }).playerId}`).join(" | ");
+    ok(sig === "Send League A — open:IR_MOVE:target | Send League B — full IR:DROP:irGuy | Send League B — full IR:IR_MOVE:target", "open slot → IR move; full IR (no bench room) → release the IR occupant, THEN the IR move", sig);
     const txt = textOf(out.blocks);
     ok(/is real IR-eligible in 2 league/.test(txt), "counts both leagues where he's really eligible (open + full)", txt.slice(0, 300));
-    ok(/1 have a full IR — you'd need to release someone off IR first/.test(txt), "the full-IR league is reported honestly, never silently proposed", txt.slice(0, 400));
+    ok(/1 have a full IR — each lists who to swap out/.test(txt), "the full-IR league says who to swap out", txt.slice(0, 400));
+    const dec = out.blocks.find((b): b is Extract<Block, { t: "decisions" }> => b.t === "decisions");
+    ok(!!dec && dec.rows.some((r) => r.items.some((i) => /IR is full — replace Already On IR .*release him, then move IR Candidate to IR/.test(i))), "the full-IR league names who to replace him with", JSON.stringify(dec?.rows));
+
+    // full IR but a spare bench spot → the IR player comes off IR to the bench (no drop), then the IR move
+    const rpRoom = ["QB", "WR", "BN", "BN"];
+    const lRoom = { ...lg("5", "Send League E — room", rpRoom), settings: { roster_positions: rpRoom, settings: { reserve_slots: 1 } } };
+    const rRoom: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target", "irGuy"], starters: ["fq", "bench1"], reserve: ["irGuy"], taxi: [] };
+    const outRoom = await handleCommand("Put IR Candidate on IR", newSession(), makeEnv([{ league: lRoom, rosters: [rRoom, otherRoster([])], txns: [] }], irPm));
+    const roomSig = draftsOf(outRoom.blocks).map((d) => `${d.kind}:${(d.params as { playerId: string; dropId?: string | null }).playerId}:${(d.params as { dropId?: string | null }).dropId ?? ""}`).join(" | ");
+    ok(roomSig === "ACTIVATE_IR:irGuy: | IR_MOVE:target:", "full IR with a spare bench spot → swap: IR player to bench (no drop), then the IR move", roomSig);
+
+    // an IR player on the standing IR Release list is preferred; a Priority-list IR player is never suggested
+    const pmTwo: PlayerMap = { ...irPm, irB: { n: "Second On IR", p: "WR", t: "IND", inj: "IR" } };
+    const rpTwo = ["QB", "WR", "BN", "BN"];
+    const lTwo = { ...lg("6", "Send League F — two on IR", rpTwo), settings: { roster_positions: rpTwo, settings: { reserve_slots: 2 } } };
+    const rTwo: RawRoster = { roster_id: 1, owner_id: ME, players: ["fq", "bench1", "target", "x1", "irGuy", "irB"], starters: ["fq", "bench1"], reserve: ["irGuy", "irB"], taxi: [] };
+    pmTwo.x1 = { n: "Filler", p: "WR", t: "IND" };
+    const fxTwo: LeagueFx[] = [{ league: lTwo, rosters: [rTwo, otherRoster([])], txns: [] }];
+    const sigList = signals(pmTwo, { irRelease: ["irB"] });
+    const outList = await handleCommand("Put IR Candidate on IR", newSession(), makeEnv(fxTwo, pmTwo, sigList));
+    ok(draftsOf(outList.blocks).some((d) => d.kind === "DROP" && (d.params as { playerId: string }).playerId === "irB"), "your IR Release list decides who goes first", JSON.stringify(draftsOf(outList.blocks).map((d) => d.kind + ":" + (d.params as { playerId: string }).playerId)));
+    const sigProt = signals(pmTwo, { priority: ["irGuy", "irB"] });
+    const outProt = await handleCommand("Put IR Candidate on IR", newSession(), makeEnv(fxTwo, pmTwo, sigProt));
+    ok(draftsOf(outProt.blocks).length === 0 && /everyone on IR is on your Priority list/.test(JSON.stringify(outProt.blocks)), "a Priority-list IR player is never suggested; says so instead", textOf(outProt.blocks).slice(0, 300));
+    ok((await handleCommand("move saquon barkley to IR, if it's full tell me who to replace him with", newSession(), makeEnv(fx, { ...irPm, sb: { n: "Saquon Barkley", p: "RB", t: "PHI", inj: "IR" } }))).audit.intent === "send_to_ir", "the owner's exact phrasing routes to send_to_ir");
     ok(/already on IR in 1/.test(txt), "the league where he's already on IR is disclosed separately, not conflated with the eligible count", txt.slice(0, 400));
 
     // not eligible: healthy, no qualifying status at all

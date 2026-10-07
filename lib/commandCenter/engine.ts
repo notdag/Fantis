@@ -1348,7 +1348,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       // already on IR, or not eligible under that league's own rules
       // (healthy, or a status like Questionable/Doubtful that doesn't
       // qualify) — never silently dropped, same as activate_ir/force_start.
-      type Candidate = { leagueId: string; leagueName: string; injury: string; inStarters: boolean };
+      type Candidate = { leagueId: string; leagueName: string; injury: string; inStarters: boolean; snap: LeagueSnapshot };
       const alreadyOnIrByPlayer = new Map(players.map((p) => [p.id, [] as string[]]));
       const notEligibleByPlayer = new Map(players.map((p) => [p.id, [] as string[]]));
       const candidatesByPlayer = new Map(players.map((p) => [p.id, [] as Candidate[]]));
@@ -1367,7 +1367,7 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
             notEligibleByPlayer.get(p.id)!.push(s.league.name);
             continue;
           }
-          candidatesByPlayer.get(p.id)!.push({ leagueId: s.league.id, leagueName: s.league.name, injury: inj!, inStarters: me.starters.includes(p.id) });
+          candidatesByPlayer.get(p.id)!.push({ leagueId: s.league.id, leagueName: s.league.name, injury: inj!, inStarters: me.starters.includes(p.id), snap: s });
           if (!openSlotsByLeague.has(s.league.id)) openSlotsByLeague.set(s.league.id, Math.max(0, irSlots(s.league.settings) - me.reserve.length));
         }
       }
@@ -1398,7 +1398,29 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       for (const arr of byLeague.values()) arr.sort((a, b) => (SEVERITY[a.c.injury] ?? 9) - (SEVERITY[b.c.injury] ?? 9));
       const drafts: ProposalDraft[] = [];
       const fullByPlayer = new Map(players.map((p) => [p.id, 0]));
+      const swapByPlayer = new Map(players.map((p) => [p.id, 0]));
       const decisionsByLeague = new Map<string, { leagueId: string; leagueName: string; items: string[] }>();
+      // IR full: who on IR to make room with. Never a Priority-list player. Order: your standing IR Release list (in your order),
+      // then anyone on IR who no longer qualifies for it (healthy / not an IR status), then the weakest by Fantis value.
+      const claimedIr = new Map<string, Set<string>>();
+      const pickIrOut = (s: LeagueSnapshot): { id: string; why: string; eligible: boolean } | null => {
+        const me = s.rosters?.find((r) => r.rosterId === s.league.rosterId);
+        if (!me) return null;
+        const taken = claimedIr.get(s.league.id) ?? new Set<string>();
+        const pool = me.reserve.filter((id) => !taken.has(id) && !env.signals.priority.has(id));
+        if (pool.length === 0) return null;
+        const stillEligible = (id: string) => irAllowed(s.league.settings, env.pmap[id]?.inj ?? null);
+        const fromList = (env.signals.irReleaseOrder ?? []).find((id) => pool.includes(id));
+        if (fromList) return { id: fromList, why: "on your IR Release list", eligible: stillEligible(fromList) };
+        const healthy = pool.find((id) => !stillEligible(id));
+        if (healthy) return { id: healthy, why: `no longer IR-eligible (${env.pmap[healthy]?.inj ?? "healthy"})`, eligible: false };
+        const weakest = [...pool].sort((a, b) => {
+          const [a1, a2] = env.rank(a);
+          const [b1, b2] = env.rank(b);
+          return a1 - b1 || a2 - b2;
+        })[0];
+        return { id: weakest, why: "lowest value of your IR players", eligible: true };
+      };
       for (const [leagueId, arr] of byLeague) {
         let open = openSlotsByLeague.get(leagueId) ?? 0;
         const leagueName = arr[0].c.leagueName;
@@ -1418,8 +1440,56 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
               })
             );
           } else {
-            entry.items.push(`${p.name}: IR is full — release someone from IR first`);
-            fullByPlayer.set(p.id, (fullByPlayer.get(p.id) ?? 0) + 1);
+            const out = pickIrOut(c.snap);
+            if (!out) {
+              entry.items.push(`${p.name}: IR is full — everyone on IR is on your Priority list, so nobody is suggested`);
+              fullByPlayer.set(p.id, (fullByPlayer.get(p.id) ?? 0) + 1);
+              continue;
+            }
+            const set = claimedIr.get(leagueId) ?? new Set<string>();
+            set.add(out.id);
+            claimedIr.set(leagueId, set);
+            const outName = posName(env, out.id);
+            const lg = env.tools.get_league_details(leagueId);
+            const limit = rosterPositions(c.snap.league.settings)?.length ?? null;
+            const active = activeCount(c.snap);
+            // A spare active spot means he can come off IR to your bench with no drop; otherwise he has to be released.
+            const room = limit != null && active != null && active < limit;
+            if (room) {
+              entry.items.push(`${p.name}: IR is full — swap with ${outName} (${out.why}): move him to your bench, then ${p.name} to IR`);
+              drafts.push(
+                activateIrDraft({
+                  league: lg,
+                  playerId: out.id,
+                  playerName: outName,
+                  drop: null,
+                  rationale: [`IR is full; ${outName} is ${out.why}`, `Your active roster has an open spot, so he moves to the bench with no drop`, `Makes room for ${p.name} (${c.injury}) on IR — send this before the IR move`],
+                  command: text,
+                })
+              );
+            } else {
+              entry.items.push(`${p.name}: IR is full — replace ${outName} (${out.why}): release him, then move ${p.name} to IR`);
+              drafts.push(
+                dropDraft({
+                  league: lg,
+                  playerId: out.id,
+                  playerName: outName,
+                  rationale: [`IR is full; ${outName} is ${out.why}`, `Your active roster is full, so he can't come off IR to the bench without a drop — releasing him is what frees the IR slot`, `Makes room for ${p.name} (${c.injury}) on IR — send this before the IR move`],
+                  command: text,
+                })
+              );
+            }
+            drafts.push(
+              irDraft({
+                league: lg,
+                playerId: p.id,
+                playerName: p.name,
+                injury: c.injury,
+                rationale: [`Sleeper lists ${p.name} as ${c.injury}`, `IR is full — this goes right after ${room ? "moving" : "releasing"} ${outName}, and only works once that's done`, ...(c.inStarters ? ["He is currently in your starting lineup"] : [])],
+                command: text,
+              })
+            );
+            swapByPlayer.set(p.id, (swapByPlayer.get(p.id) ?? 0) + 1);
           }
         }
         decisionsByLeague.set(leagueId, entry);
@@ -1429,18 +1499,19 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
         const cands = candidatesByPlayer.get(p.id)!;
         const draftsForP = drafts.filter((d) => (d.params as IrParams).playerId === p.id);
         const full = fullByPlayer.get(p.id) ?? 0;
+        const swaps = swapByPlayer.get(p.id) ?? 0;
         const bits: string[] = [];
         if (alreadyOnIrByPlayer.get(p.id)!.length) bits.push(`already on IR in ${alreadyOnIrByPlayer.get(p.id)!.length}`);
         if (notEligibleByPlayer.get(p.id)!.length) bits.push(`not IR-eligible in ${notEligibleByPlayer.get(p.id)!.length}`);
         lines.push(
-          `${p.name} is real IR-eligible in ${cands.length} league${cands.length === 1 ? "" : "s"}. ${draftsForP.length} can be proposed to move him to IR${
-            full > 0 ? `; ${full} have a full IR — you'd need to release someone off IR first` : ""
-          }${bits.length ? `. Also: ${bits.join(", ")}` : ""}.`
+          `${p.name} is real IR-eligible in ${cands.length} league${cands.length === 1 ? "" : "s"}. ${draftsForP.length - swaps} have an open IR slot${
+            swaps > 0 ? `; ${swaps} have a full IR — each lists who to swap out (released, or moved to your bench when there's room) right before the IR move` : ""
+          }${full > 0 ? `; ${full} have a full IR where everyone on it is on your Priority list` : ""}${bits.length ? `. Also: ${bits.join(", ")}` : ""}.`
         );
       }
       blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.` });
       blocks.push({ t: "decisions", title: "Move to IR", rows: [...decisionsByLeague.values()], truncated: 0 });
-      const irb = draftsBlock(env, drafts, [...fullByPlayer.values()].reduce((a, c) => a + c, 0));
+      const irb = draftsBlock(env, drafts);
       if (irb) blocks.push(irb);
       recs.push(`move ${label} to IR in ${drafts.length} of ${totalCandidates} leagues`);
       break;
