@@ -603,3 +603,6 @@
 .fos-weak{font-size:12px;font-weight:600;color:var(--bone);padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--red) 10%,transparent)}
 .fos-weak b{color:var(--amber);font-weight:700}
 .fos-need.weakpill{color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)}
+/* add one player to every league */
+.fos-one{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.fos-onerow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;width:100%;font-size:13px;padding:4px 0}

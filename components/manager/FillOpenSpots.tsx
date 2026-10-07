@@ -343,6 +343,35 @@ export default function FillOpenSpots({
     }
     return [...agg.values()].filter((a) => a.leagues.length >= 2).sort((a, b) => b.leagues.length - a.leagues.length).slice(0, 12);
   })();
+  // "Add one player to every league": search anyone, then queue him in every shown league where he's still free —
+  // either only where an empty spot is left, or in all of them (beyond the empty spots he becomes an extra claim, no drop).
+  const [oneQuery, setOneQuery] = useState("");
+  const oneMatches = (() => {
+    const q = oneQuery.trim().toLowerCase();
+    if (q.length < 2 || !pmap) return [] as string[];
+    const out: string[] = [];
+    for (const [id, e] of Object.entries(pmap)) {
+      if (!OFFENSE.has(e.p) || !e.t || !e.n.toLowerCase().includes(q)) continue;
+      out.push(id);
+    }
+    return out.sort((a, b) => (pmap[a]?.rk ?? 1e9) - (pmap[b]?.rk ?? 1e9)).slice(0, 6);
+  })();
+  const freeLeaguesFor = (id: string) =>
+    shown.filter((r) => !!r.live && !takenIn(r).has(id) && !r.players.includes(id) && !claimedIn(r.league.league.id).some((c) => c.addId === id));
+  const queueInAll = (id: string) => {
+    const ls = freeLeaguesFor(id);
+    let n = 0;
+    const next = { ...picks };
+    for (const r of ls) {
+      const cur = next[r.league.league.id] ?? [];
+      if (cur.includes(id)) continue;
+      next[r.league.league.id] = [...cur, id];
+      n++;
+    }
+    setPicks(next);
+    setFlash(n ? `Queued ${nameOf(id)} in ${n} league${n === 1 ? "" : "s"} — press Apply all to send.` : `${nameOf(id)} isn't free in any shown league (or is already queued/claimed).`);
+    setOneQuery("");
+  };
   const queueEverywhere = (id: string, leaguesFree: Row[]) => {
     let n = 0;
     const next = { ...picks };
@@ -636,6 +665,33 @@ export default function FillOpenSpots({
       )}
       {summary && <p className="fos-note" style={{ color: summaryColor ?? "var(--bone)", fontWeight: summaryColor ? 650 : undefined }}>{summary}</p>}
 
+      <div className="fos-one">
+        <span className="fos-label">Add one player to every league</span>
+        <input
+          className="input fos-search"
+          placeholder="Search a player…"
+          value={oneQuery}
+          disabled={running || liveLoading}
+          onChange={(e) => setOneQuery(e.target.value)}
+          aria-label="Player to queue in every league"
+        />
+        {oneMatches.map((id) => {
+          const free = freeLeaguesFor(id);
+          const withRoom = free.filter((r) => pickList(r).length + spotClaims(r.league.league.id) < r.spots && !pickList(r).includes(id));
+          return (
+            <span key={id} className="fos-onerow">
+              <PlayerAvatar playerId={id} pos={posOf(id)} size={24} />
+              <b>{nameOf(id)}</b> <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t} · free in {free.length}</span>
+              <button type="button" className="btn ghost sm" disabled={running || withRoom.length === 0} onClick={() => { queueEverywhere(id, free); setOneQuery(""); }}>
+                Empty spots only · {withRoom.length}
+              </button>
+              <button type="button" className="btn sm" disabled={running || free.length === 0} onClick={() => queueInAll(id)}>
+                All leagues · {free.length}
+              </button>
+            </span>
+          );
+        })}
+      </div>
       {flash && <p className="fos-note fos-flash">{flash}</p>}
       {across.length > 0 && (
         <div className="fos-across">
