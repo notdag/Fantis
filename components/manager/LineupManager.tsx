@@ -19,6 +19,7 @@ import PlayerPreferences from "./PlayerPreferences";
 import TopPlayersWatch from "./TopPlayersWatch";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import BulkAdd from "./BulkAdd";
+import BulkDrop from "./BulkDrop";
 import { PlayerAvatar } from "./Avatar";
 import { SectionHead } from "./PageHead";
 import { StatCard, StatCardGrid } from "./StatCard";
@@ -304,7 +305,7 @@ export default function LineupManager({
   );
   const [token, setToken] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  type Tab = "lineups" | "optimize" | "players" | "ir" | "add";
+  type Tab = "lineups" | "optimize" | "players" | "ir" | "add" | "drop";
   const [tab, setTab] = useState<Tab>("lineups");
   // Tabs are mounted the first time they're opened and then kept alive
   // (just hidden), so going back to one is instant instead of rebuilding it.
@@ -372,6 +373,9 @@ export default function LineupManager({
           <button className={`chip-filter ${tab === "add" ? "on" : ""}`} onClick={() => go("add")}>
             Mass Add / Claim
           </button>
+          <button className={`chip-filter ${tab === "drop" ? "on" : ""}`} onClick={() => go("drop")}>
+            Mass Drop
+          </button>
           <span style={{ flex: 1 }} />
           {bestBallCount > 0 && (
             <button
@@ -412,6 +416,11 @@ export default function LineupManager({
         {visited.has("add") && (
           <div hidden={tab !== "add"}>
             <BulkAdd leagues={leagues} pmap={pmap} token={token} prefs={prefs} liveRostered={liveRostered} />
+          </div>
+        )}
+        {visited.has("drop") && (
+          <div hidden={tab !== "drop"}>
+            <BulkDrop leagues={leagues} pmap={pmap} token={token} prefs={prefs} onSent={liveRosters.reload} />
           </div>
         )}
         {tab === "lineups" && (

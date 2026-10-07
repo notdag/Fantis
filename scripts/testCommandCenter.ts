@@ -405,13 +405,30 @@ async function main() {
     delete pm["101"];
     const env = makeEnv(scenario(), pm);
     const scan = await run(["Find Antonio Williams everywhere"], env);
-    for (const cmd of ["Add him", "Drop Bench A everywhere", "Go ahead and claim him", "Submit the waiver claims", "execute all"]) {
+    for (const cmd of ["Add him", "Go ahead and claim him", "Submit the waiver claims", "execute all"]) {
       const o = await handleCommand(cmd, scan.session, env);
       const txt = textOf(o.blocks);
       ok(o.audit.intent === "execute_request", `"${cmd}" is an execute request`, o.audit.intent);
       ok(/don't .* anything from chat, in any mode/.test(txt) && /Nothing has been sent to Sleeper/.test(txt), `"${cmd}" refused`, txt.slice(0, 120));
       ok(!o.blocks.some((b) => b.t === "text" && /^(Added|Dropped|Claimed|Done)/i.test(b.text)), `"${cmd}" no fake success`);
     }
+    // Mass release: drafts DROP proposals only — nothing is sent, no fake success
+    const draftsOfB = (blocks: Block[]) => blocks.filter((b): b is Extract<Block, { t: "drafts" }> => b.t === "drafts").flatMap((b) => b.drafts);
+    const md = await handleCommand("Drop Bench A everywhere", scan.session, env);
+    ok(md.audit.intent === "mass_drop", "'drop X everywhere' → mass_drop", md.audit.intent);
+    const mdd = draftsOfB(md.blocks);
+    ok(mdd.length > 0 && mdd.every((d) => d.kind === "DROP" && (d.params as { playerId: string }).playerId === "400"), "drafts one DROP per league where he's rostered", String(mdd.length));
+    ok(/Nothing has been changed/.test(textOf(md.blocks)) && !md.blocks.some((b) => b.t === "text" && /^(Added|Dropped|Released|Done)/i.test(b.text)), "mass drop: no fake success");
+    // a starter is skipped unless asked; a Priority-list player is never released
+    const st = await handleCommand("release Sam QB from all my leagues", newSession(), env);
+    ok(st.audit.intent === "mass_drop" && draftsOfB(st.blocks).length === 0 && /skipped because he's starting/.test(textOf(st.blocks)), "a starter isn't released by default", textOf(st.blocks).slice(0, 200));
+    const st2 = await handleCommand("release Sam QB from all my leagues including starters", newSession(), env);
+    ok(draftsOfB(st2.blocks).length > 0, "'including starters' releases him from the lineup too");
+    const envP = makeEnv(scenario(), pm, signals(pm, { priority: ["400"] }));
+    const pr = await handleCommand("Drop Bench A everywhere", newSession(), envP);
+    ok(draftsOfB(pr.blocks).length === 0 && /Priority list/.test(textOf(pr.blocks)), "a Priority-list player is never released", textOf(pr.blocks).slice(0, 200));
+    const combo = await handleCommand("add Antonio Williams everywhere, drop Bench A if needed", newSession(), env);
+    ok(combo.audit.intent === "execute_request", "'add X, drop Y' stays the combined add (not a mass drop)", combo.audit.intent);
     const o = await handleCommand("Add Antonio Williams to every league", newSession(), makeEnv(scenario(), pm));
     ok(/READ-ONLY/.test(textOf(o.blocks)) && o.blocks.some((b) => b.t === "preview"), "'add X everywhere' → refusal + preview, still no write");
   }

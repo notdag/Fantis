@@ -31,6 +31,9 @@ export type Intent =
   // Sunday in true slots / late Sunday + Monday in FLEX. Drafts only, like every chat command.
   | { kind: "set_weeks"; from?: number; to?: number; rankMode?: RankMode }
   | { kind: "questionable" }
+  // "Drop X everywhere" / "release X and Y from all my leagues" — a real per-league release draft (DROP), bench/IR only unless
+  // "including starters"; Priority-list players are never released.
+  | { kind: "mass_drop"; mentions: Mention[]; includeStarters: boolean }
   | { kind: "weekly_sweep" }
   | { kind: "week_record"; week: number | null; relative?: "last" | "this" }
   | { kind: "activate_ir"; mentions: Mention[] }
@@ -332,6 +335,15 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
       if (ef.needsDrop === undefined && ef.states?.length === 1 && ef.states[0] === "AVAILABLE") delete ef.states;
       const leadVerb = t.match(/^(?:please\s+|now\s+|then\s+|ok(?:ay)?,?\s+)?(add|drop|claim|submit|execute|approve|confirm|place|send|release|cut|pick up|put|move|activate|start|bench)\b/);
       return { kind: "execute_request", verb: leadVerb?.[1] ?? "execute", mentions: preVerbSplit.before, filter: ef, dropOrder: preVerbSplit.after };
+    }
+  }
+
+  // Mass release: "drop/release/cut X (everywhere / from all my leagues)". Comes after the add+drop split above (so "add X, drop Y"
+  // stays a combined add) and after the drop_preferences follow-up.
+  {
+    const dropVerb = /^(?:please\s+|now\s+|ok(?:ay)?,?\s+)?(drop|release|cut|waive)\b/.test(t) || /\b(drop|release|cut|waive)\b.*\b(everywhere|in all|from all|across|every league|all (of )?my leagues)\b/.test(t);
+    if (mentions.length > 0 && dropVerb && !/\b(add|claim|pick up)\b/.test(t)) {
+      return { kind: "mass_drop", mentions, includeStarters: /\b(including|incl\.?|even) (my )?starters?\b|\beven if (he'?s|they'?re|starting)\b|\bstarters too\b/.test(t) };
     }
   }
 

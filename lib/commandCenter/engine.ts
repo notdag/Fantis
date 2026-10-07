@@ -2025,6 +2025,84 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "mass_drop": {
+      const resolved = await resolveMentions(intent.mentions.map((m) => m.text), [], { filter: {}, wantDrops: false });
+      if (!resolved) break;
+      const players = resolved;
+      const label = players.map((p) => p.name).join(", ");
+      const kickoffs = env.kickoffs ? await env.kickoffs().catch(() => null) : null;
+      const { snaps, meta } = await scanAll(env, false, `Finding every league with ${label}`);
+      session = { ...session, meta };
+      blocks.push({ t: "scanStatus", meta });
+      const nowMs = now();
+      const started = (id: string) => {
+        const t = env.pmap[id]?.t;
+        const ko = t && kickoffs ? kickoffs[t] : undefined;
+        return !!ko && Date.parse(ko) <= nowMs;
+      };
+      const drafts: ProposalDraft[] = [];
+      const rows: { leagueId: string; leagueName: string; items: string[] }[] = [];
+      const tally = new Map(players.map((p) => [p.id, { drafted: 0, starting: 0, protectedN: 0, locked: 0, rostered: 0 }]));
+      for (const s of snaps) {
+        if (s.status === "FAILED" || !s.rosters) continue;
+        const me = s.rosters.find((r) => r.rosterId === s.league.rosterId);
+        if (!me) continue;
+        const items: string[] = [];
+        for (const p of players) {
+          if (!me.players.includes(p.id)) continue;
+          const t = tally.get(p.id)!;
+          t.rostered += 1;
+          const onIr = me.reserve.includes(p.id);
+          const starting = me.starters.includes(p.id);
+          if (env.signals.priority.has(p.id)) {
+            t.protectedN += 1;
+            items.push(`${p.name}: on your Priority list — not released`);
+            continue;
+          }
+          if (starting && started(p.id)) {
+            t.locked += 1;
+            items.push(`${p.name}: his game has started — Sleeper won't allow the drop until it ends`);
+            continue;
+          }
+          if (starting && !intent.includeStarters) {
+            t.starting += 1;
+            items.push(`${p.name}: in your starting lineup — not released (say "including starters" to include these)`);
+            continue;
+          }
+          t.drafted += 1;
+          items.push(`${p.name}: release${onIr ? " (from IR)" : starting ? " (starter — slot left empty)" : ""}`);
+          drafts.push(
+            dropDraft({
+              league: env.tools.get_league_details(s.league.id),
+              playerId: p.id,
+              playerName: p.name,
+              rationale: [
+                `You asked to release ${p.name}${onIr ? " (he's on IR)" : starting ? " — he's in your starting lineup, so that slot will be empty until you fill it" : ""}`,
+                "He goes to waivers and other teams can claim him",
+              ],
+              command: text,
+            })
+          );
+        }
+        if (items.length) rows.push({ leagueId: s.league.id, leagueName: s.league.name, items });
+      }
+      const lines = players.map((p) => {
+        const t = tally.get(p.id)!;
+        if (t.rostered === 0) return `${p.name} isn't on your roster in any of your ${meta.ok + meta.partial} readable leagues.`;
+        const bits = [`${t.drafted} release${t.drafted === 1 ? "" : "s"} drafted`];
+        if (t.starting) bits.push(`${t.starting} skipped because he's starting`);
+        if (t.locked) bits.push(`${t.locked} skipped because his game has started`);
+        if (t.protectedN) bits.push(`${t.protectedN} skipped — Priority list`);
+        return `${p.name} is on your roster in ${t.rostered} league${t.rostered === 1 ? "" : "s"}: ${bits.join(", ")}.`;
+      });
+      blocks.push({ t: "text", tone: drafts.length ? "good" : "info", text: `${lines.join(" ")} Nothing has been changed.` });
+      if (rows.length) blocks.push({ t: "decisions", title: "Release", rows: rows.slice(0, ROW_CAP), truncated: Math.max(0, rows.length - ROW_CAP) });
+      const db = draftsBlock(env, drafts);
+      if (db) blocks.push(db);
+      recs.push(`release ${label} in ${drafts.length} leagues`);
+      break;
+    }
+
     case "week_record": {
       const week = intent.week ?? (env.week != null ? (intent.relative === "last" ? env.week - 1 : env.week) : null);
       if (week == null) {
