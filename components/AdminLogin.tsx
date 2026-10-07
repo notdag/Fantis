@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 
-export default function AdminLogin() {
+export default function AdminLogin({
+  title = "Owner access",
+  description = "This unlocks the tier board — re-tiering and re-ranking the starter rankings for everyone. Not for regular visitors.",
+}: {
+  title?: string;
+  description?: string;
+}) {
   const [pass, setPass] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -32,11 +38,8 @@ export default function AdminLogin() {
 
   return (
     <section className="hero">
-      <h1 className="big">Owner access</h1>
-      <p className="sub">
-        This unlocks the tier board — re-tiering and re-ranking the starter
-        rankings for everyone. Not for regular visitors.
-      </p>
+      <h1 className="big">{title}</h1>
+      <p className="sub">{description}</p>
       <div className="card sync">
         <div className="field">
           <input

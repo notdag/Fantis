@@ -1,12 +1,52 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TIER_COLOR, TIER_LABELS, computePosRanks, posChipStyle } from "@/lib/players";
-import type { Player } from "@/lib/types";
+import Headshot from "@/components/Headshot";
+import { usePlayerMap } from "@/lib/usePlayerMap";
+import {
+  clearLegacyRefRanks,
+  deleteRefRanks,
+  putRefRanks,
+  readLegacyRefRanks,
+  refRankKey,
+  refRanksFromRows,
+  type RefRankRow,
+  type RefRanks,
+} from "@/lib/refRanks";
+import {
+  currentProjectionWeek,
+  getProjections,
+  getSeasonProjectionTotals,
+  getState,
+  SEASONS,
+} from "@/lib/sleeper";
+import {
+  buildSleeperIndex,
+  findTeamDrift,
+  findUnranked,
+  injurySeverity,
+  isInjured,
+  looseKey,
+  matchPastedList,
+  describeFirstLine,
+  matchTableRows,
+  parseRankTable,
+  parseHistory,
+  pushSnapshot,
+  sortByAdp,
+  type PastedMatch,
+  type TableMatch,
+  type RankSnapshot,
+} from "@/lib/rankingsHelpers";
+import type { Player, ProjectionMap, SeasonProjectionTotal } from "@/lib/types";
 
 const TIER_COUNT = TIER_LABELS.length; // 8: S, A, B, C, D, E, F, G
 const TIERS = Array.from({ length: TIER_COUNT }, (_, i) => i + 1);
 const ADD_POSITIONS = ["QB", "RB", "WR", "TE"];
+const UNDO_LIMIT = 50;
+const PANEL_PAGE = 25;
+const HISTORY_KEY = "fantis_rank_history_v1";
 
 type Board = Player[][]; // index 0..(TIER_COUNT-1) = tier 1..TIER_COUNT
 
@@ -58,12 +98,57 @@ function prependIndexForPos(col: Player[], pos: string): number {
   return idx === -1 ? col.length : idx;
 }
 
-export default function TierBoard({ initialPlayers }: { initialPlayers: Player[] }) {
+// Cheap identity of a board's saved content — what "unsaved changes" means.
+const boardSig = (b: Board) =>
+  b.map((col, ti) => col.map((p) => `${ti}|${p.name}|${p.pos}|${p.team}`).join(";")).join("#");
+
+function injColor(inj: string): string {
+  if (inj === "Doubtful" || inj === "Questionable") return "var(--amber)";
+  return "var(--red)";
+}
+
+function InjBadge({ inj }: { inj: string | null | undefined }) {
+  if (!inj || !isInjured(inj)) return null;
+  return (
+    <span
+      title={`Sleeper injury status: ${inj}`}
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: 0.3,
+        color: injColor(inj),
+        border: `1px solid ${injColor(inj)}`,
+        borderRadius: 4,
+        padding: "0 4px",
+        lineHeight: "15px",
+        flex: "none",
+      }}
+    >
+      {inj === "Questionable" ? "Q" : inj === "Doubtful" ? "D" : inj}
+    </span>
+  );
+}
+
+export default function TierBoard({
+  initialPlayers,
+  exposure,
+  exposureLeagues,
+  initialRefRanks,
+}: {
+  initialPlayers: Player[];
+  // Sleeper player_id → how many of the owner's in-season, non-best-ball
+  // leagues roster him (computed server-side from the synced Roster table).
+  exposure: Record<string, number>;
+  exposureLeagues: number;
+  // Expert / Mason reference ranks from the owner's imported CSV (stored in the database).
+  initialRefRanks: RefRanks;
+}) {
   const [board, setBoard] = useState<Board>(() => groupByTier(initialPlayers));
+  const [savedBoard, setSavedBoard] = useState<Board>(board);
+  const [history, setHistory] = useState<Board[]>([]);
   const dragRef = useRef<{ tier: number; idx: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ text: string; error?: boolean } | null>(null);
-  const [prodSource, setProdSource] = useState<string | null>(null);
 
   const [newName, setNewName] = useState("");
   const [newPos, setNewPos] = useState("WR");
@@ -80,23 +165,95 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
     setPosFilter(p);
     if (p !== "ALL") setNewPos(p);
   };
+  const [query, setQuery] = useState("");
+  const [injuredOnly, setInjuredOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkTier, setBulkTier] = useState(TIER_COUNT);
+
+  // Every edit goes through commit() so Undo can step back through it. Edits
+  // are computed from the current board (not a functional updater) because
+  // the history push is a side effect, and updater functions must stay pure
+  // (React runs them twice in dev).
+  const commit = (fn: (b: Board) => Board) => {
+    const next = fn(board);
+    if (next === board) return;
+    setHistory((h) => [...h.slice(-(UNDO_LIMIT - 1)), board]);
+    setBoard(next);
+  };
+  const undo = () => {
+    const prev = history[history.length - 1];
+    if (!prev) return;
+    setHistory((h) => h.slice(0, -1));
+    setBoard(prev);
+    setSaveMsg(null);
+  };
+
+  const dirty = useMemo(() => boardSig(board) !== boardSig(savedBoard), [board, savedBoard]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+
+  // Sleeper's player dump (cached for the day in localStorage, same as every
+  // other page) — gives each ranked player a live injury status and drives
+  // the "Needs ranking" panel and team-drift check.
+  const { pmap, loading: pmapLoading, error: pmapError, retry: pmapRetry } = usePlayerMap();
+  const index = useMemo(() => (pmap ? buildSleeperIndex(pmap) : null), [pmap]);
+  const flat = useMemo(() => board.flat(), [board]);
+
+  const infoByName = useMemo(() => {
+    const m: Record<string, { id: string; inj: string | null; leagues: number }> = {};
+    if (!index) return m;
+    for (const p of flat) {
+      const hit = index.lookup(p);
+      if (hit) m[p.name] = { id: hit.id, inj: hit.e.inj ?? null, leagues: exposure[hit.id] ?? 0 };
+    }
+    return m;
+  }, [index, flat, exposure]);
+
+  const injuredRankedCount = useMemo(
+    () => flat.filter((p) => isInjured(infoByName[p.name]?.inj)).length,
+    [flat, infoByName]
+  );
+
+  const unranked = useMemo(() => (pmap ? findUnranked(pmap, flat, exposure) : []), [pmap, flat, exposure]);
+  const drift = useMemo(() => (index ? findTeamDrift(index, flat) : []), [index, flat]);
 
   // posRank derived live from board order, same rule the save route uses —
   // this is what the owner sees while dragging, so it matches what gets saved.
   const rankByName = useMemo(() => {
-    const flat = board.flat();
     const ranks = computePosRanks(flat);
     const map: Record<string, number> = {};
     flat.forEach((p, i) => (map[p.name] = ranks[i]));
     return map;
-  }, [board]);
+  }, [flat]);
+  // Overall rank (1 = best on the whole board) — what "where is he in my list" means.
+  const overallByName = useMemo(() => {
+    const m: Record<string, number> = {};
+    flat.forEach((p, i) => (m[p.name] = i + 1));
+    return m;
+  }, [flat]);
 
   const moveWithinTier = (tier: number, idx: number, dir: -1 | 1) => {
-    setBoard((b) => {
+    commit((b) => {
       const col = b[tier];
       const p = col[idx];
       const target = posFilter === "ALL" ? idx + dir : findAdjacentSamePos(col, idx, p.pos, dir);
-      if (target == null || target < 0 || target >= col.length) return b;
+      if (target == null || target < 0 || target >= col.length) {
+        // Already first/last in this tier: carry him across the tier line, so
+        // repeated clicks walk a player through the whole board.
+        const toTier = tier + dir;
+        if (toTier < 0 || toTier > TIER_COUNT - 1) return b;
+        const insertIdx =
+          dir === -1
+            ? posFilter === "ALL" ? b[toTier].length : appendIndexForPos(b[toTier], p.pos)
+            : posFilter === "ALL" ? 0 : prependIndexForPos(b[toTier], p.pos);
+        return movePlayer(b, { tier, idx }, { tier: toTier, idx: insertIdx });
+      }
       const next = b.map((c) => [...c]);
       const arr = next[tier];
       [arr[idx], arr[target]] = [arr[target], arr[idx]];
@@ -107,7 +264,7 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   const moveToTier = (tier: number, idx: number, dir: -1 | 1) => {
     const targetTier = tier + dir;
     if (targetTier < 0 || targetTier > TIER_COUNT - 1) return;
-    setBoard((b) => {
+    commit((b) => {
       const p = b[tier][idx];
       const insertIdx =
         posFilter === "ALL" ? b[targetTier].length : appendIndexForPos(b[targetTier], p.pos);
@@ -116,9 +273,9 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   };
 
   const reset = () => {
-    setBoard(groupByTier(initialPlayers));
+    commit(() => savedBoard);
+    setSelected(new Set());
     setSaveMsg(null);
-    setProdSource(null);
   };
 
   const addPlayer = () => {
@@ -143,7 +300,7 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
     // posRank is a placeholder here — rankByName (derived from board order)
     // is what's actually displayed and saved, this field is never read.
     const player: Player = { name, pos: newPos, team, tier: newTier, posRank: 0 };
-    setBoard((b) => {
+    commit((b) => {
       const next = b.map((c) => [...c]);
       next[newTier - 1] = [...next[newTier - 1], player];
       return next;
@@ -153,17 +310,337 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
   };
 
   const removePlayer = (tier: number, idx: number) => {
-    setBoard((b) => {
+    commit((b) => {
       const next = b.map((c) => [...c]);
       next[tier].splice(idx, 1);
       return next;
     });
   };
 
+  // ── Sleeper projected points column ──
+  // "This week" is a ~500KB file Sleeper serves per week (loaded on page open).
+  // "Season" sums all 18 weekly files (~10MB, cached for the day), so it's only
+  // fetched the first time you ask for it.
+  const [projMode, setProjMode] = useState<"week" | "season">("week");
+  const [weekProj, setWeekProj] = useState<ProjectionMap | null>(null);
+  const [weekNum, setWeekNum] = useState<number | null>(null);
+  const [seasonProj, setSeasonProj] = useState<Record<string, SeasonProjectionTotal> | null>(null);
+  const [seasonLoading, setSeasonLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    getState()
+      .then(async (st) => {
+        const w = currentProjectionWeek(st);
+        const p = await getProjections(SEASONS[0], w);
+        if (!cancelled) {
+          setWeekNum(w);
+          setWeekProj(p);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const chooseSeason = async () => {
+    setProjMode("season");
+    if (seasonProj || seasonLoading) return;
+    setSeasonLoading(true);
+    try {
+      setSeasonProj(await getSeasonProjectionTotals(SEASONS[0]));
+    } catch {
+      // leave null: column shows "—" and the chip label says it didn't load
+    } finally {
+      setSeasonLoading(false);
+    }
+  };
+  const projOf = (name: string): number | null => {
+    const id = infoByName[name]?.id;
+    if (!id) return null;
+    const v = projMode === "week" ? weekProj?.[id]?.pts_ppr : seasonProj?.[id]?.pts;
+    return typeof v === "number" && v > 0 ? v : null;
+  };
+
+  // ── "Needs ranking" panel ──
+  const [panelView, setPanelView] = useState<"injured" | "all">("injured");
+  const [panelTier, setPanelTier] = useState(TIER_COUNT);
+  const [panelLimit, setPanelLimit] = useState(PANEL_PAGE);
+  const panelRows = useMemo(
+    () =>
+      unranked
+        .filter((u) => (panelView === "injured" ? isInjured(u.inj) : true))
+        .filter((u) => posFilter === "ALL" || u.pos === posFilter)
+        // Most-hurt first, then most-rostered (findUnranked's own order is
+        // preserved within a severity band by the stable sort).
+        .sort((a, b) => (panelView === "injured" ? injurySeverity(a.inj) - injurySeverity(b.inj) : 0)),
+    [unranked, panelView, posFilter]
+  );
+  const injuredUnrankedCount = useMemo(() => unranked.filter((u) => isInjured(u.inj)).length, [unranked]);
+
+  const addCandidates = (rows: typeof panelRows) => {
+    if (rows.length === 0) return;
+    commit((b) => {
+      const next = b.map((c) => [...c]);
+      for (const u of rows) {
+        next[panelTier - 1].push({ name: u.name, pos: u.pos, team: u.team, tier: panelTier, posRank: 0 });
+      }
+      return next;
+    });
+    setSaveMsg(null);
+  };
+
+  const syncTeams = () => {
+    const moves = new Map(drift.filter((d) => d.to).map((d) => [d.name, d.to]));
+    if (moves.size === 0) return;
+    commit((b) => b.map((col) => col.map((p) => (moves.has(p.name) ? { ...p, team: moves.get(p.name)! } : p))));
+  };
+  const releasedDrift = drift.filter((d) => !d.to);
+
+  // ── Multi-select bulk actions ──
+  const toggleSelected = (name: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(name)) n.delete(name);
+      else n.add(name);
+      return n;
+    });
+
+  const moveSelectedToTier = () => {
+    const tier = bulkTier - 1;
+    commit((b) => {
+      const picked: Player[] = [];
+      const next = b.map((col) =>
+        col.filter((p) => {
+          if (!selected.has(p.name)) return true;
+          picked.push(p);
+          return false;
+        })
+      );
+      next[tier] = [...next[tier], ...picked];
+      return next;
+    });
+    setSelected(new Set());
+  };
+
+  const removeSelected = () => {
+    commit((b) => b.map((col) => col.filter((p) => !selected.has(p.name))));
+    setSelected(new Set());
+  };
+
+  // ── Save history (restore a previous version) ──
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history_, setHistory_] = useState<RankSnapshot[]>([]);
+  const toggleHistory = () => {
+    if (!historyOpen) {
+      try {
+        setHistory_(parseHistory(window.localStorage.getItem(HISTORY_KEY)));
+      } catch {
+        setHistory_([]);
+      }
+    }
+    setHistoryOpen((v) => !v);
+  };
+  const restoreSnapshot = (snap: RankSnapshot) => {
+    // Loaded as an ordinary unsaved edit: Undo reverts it, Save makes it live.
+    commit(() => groupByTier(snap.players.map((p) => ({ ...p, posRank: 0 }))));
+    setSelected(new Set());
+    setSaveMsg({ text: "Restored into the board — press Save to make it live." });
+    setHistoryOpen(false);
+  };
+
+  // ── Sort one tier by Sleeper ADP ──
+  const [sortMsg, setSortMsg] = useState("");
+  const sortTierByAdp = async (ti: number) => {
+    if (!index) {
+      setSortMsg("Sleeper player data is still loading — try again in a second.");
+      return;
+    }
+    try {
+      setSortMsg("Loading ADP…");
+      const state = await getState();
+      const proj = await getProjections(SEASONS[0], currentProjectionWeek(state));
+      const adpOf = (p: Player) => {
+        const hit = index.lookup(p);
+        const a = hit ? proj[hit.id]?.adp_dd_ppr : undefined;
+        return typeof a === "number" && a < 999 ? a : undefined;
+      };
+      commit((b) => {
+        const next = b.map((c) => [...c]);
+        // Only the cards currently shown are reordered (so a position filter
+        // sorts just that position); hidden ones keep their exact slots.
+        const shownIdx = next[ti].map((p, i) => (isShown(p) ? i : -1)).filter((i) => i >= 0);
+        const sorted = sortByAdp(shownIdx.map((i) => next[ti][i]), adpOf);
+        shownIdx.forEach((i, k) => (next[ti][i] = sorted[k]));
+        return next;
+      });
+      setSortMsg(`Tier ${TIER_LABELS[ti]} sorted by Sleeper ADP (players with no ADP stay below, in their current order).`);
+    } catch {
+      setSortMsg("Couldn't load ADP from Sleeper.");
+    }
+  };
+
+  // ── Import a pasted list / uploaded CSV ──
+  // Two shapes: a plain list of names (reorders players WITHIN their current
+  // tiers), or a table with a header row (Rank, Name, Team, Position, Tier,
+  // Expert Rank, Mason Rank). A table's Expert/Mason ranks are saved as
+  // reference ranks and shown next to your own; reordering by its Rank column
+  // and taking its Tier column are separate opt-in checkboxes, so importing
+  // never silently rearranges your board.
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importFile, setImportFile] = useState("");
+  const [importAdd, setImportAdd] = useState(true);
+  const [importReorder, setImportReorder] = useState<boolean | null>(null); // null = default for the shape
+  const [importTiers, setImportTiers] = useState(false);
+  const [importSaveRefs, setImportSaveRefs] = useState(true);
+  const [refRanks, setRefRanks] = useState<RefRanks>(initialRefRanks);
+  // How many spots apart (vs. my overall rank) before a reference rank's edge turns red.
+  const [refFlagDiff, setRefFlagDiff] = useState(15);
+  // One-time: ranks uploaded by an earlier version were kept only in this
+  // browser. If the database has none yet, move them over so nothing is lost.
+  useEffect(() => {
+    if (initialRefRanks.count > 0) return;
+    const legacy = readLegacyRefRanks();
+    if (legacy.length === 0) return;
+    putRefRanks(legacy)
+      .then(() => {
+        setRefRanks(refRanksFromRows(legacy.map((r) => ({ ...r, updatedAt: new Date() }))));
+        clearLegacyRefRanks();
+      })
+      .catch(() => {});
+  }, [initialRefRanks.count]);
+  const saveRefsToDb = (rows: RefRankRow[]) => {
+    setRefRanks(refRanksFromRows(rows.map((r) => ({ ...r, updatedAt: new Date() }))));
+    putRefRanks(rows).catch((e: unknown) =>
+      setSaveMsg({
+        text: `Couldn't save the reference ranks to the database (${e instanceof Error ? e.message : "error"}) — they're showing for this visit only.`,
+        error: true,
+      })
+    );
+  };
+  const clearRefs = () => {
+    setRefRanks(refRanksFromRows([]));
+    deleteRefRanks().catch(() => setSaveMsg({ text: "Couldn't clear the saved reference ranks.", error: true }));
+  };
+  const table = useMemo(() => (importText.trim() ? parseRankTable(importText) : null), [importText]);
+  const reorder = importReorder ?? !table; // plain list: reorder by default; table: display-only by default
+  const importMatches = useMemo<(PastedMatch | TableMatch)[]>(() => {
+    if (!index || !importText.trim()) return [];
+    return table ? matchTableRows(table.rows, flat, index) : matchPastedList(importText, flat, index);
+  }, [index, importText, flat, table]);
+  const importCounts = useMemo(() => {
+    const c = { board: 0, add: 0, ambiguous: 0, unmatched: 0 };
+    for (const m of importMatches) c[m.status]++;
+    return c;
+  }, [importMatches]);
+  const tierMoves = useMemo(() => {
+    if (!table) return 0;
+    const cur = new Map(flat.map((p) => [looseKey(p.name), p.tier]));
+    let n = 0;
+    for (const m of importMatches as TableMatch[]) {
+      if (m.status === "board" && m.name && m.row.tier && cur.get(looseKey(m.name)) !== m.row.tier) n++;
+    }
+    return n;
+  }, [table, importMatches, flat]);
+  // Saves Expert / Mason reference ranks for every matched row; returns how many players got one.
+  const persistRefs = (matches: TableMatch[]): number => {
+    const rows: RefRankRow[] = [];
+    for (const m of matches) {
+      if ((m.status !== "board" && m.status !== "add") || !m.name || !m.pos) continue;
+      if (m.row.expert == null && m.row.mason == null) continue;
+      rows.push({ key: refRankKey(looseKey(m.name), m.pos), name: m.name, pos: m.pos, expert: m.row.expert ?? null, mason: m.row.mason ?? null });
+    }
+    if (rows.length > 0) saveRefsToDb(rows);
+    return rows.length;
+  };
+  const onCsvFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2_000_000) {
+      setSaveMsg({ text: "That file is over 2MB — a rankings CSV should be far smaller.", error: true });
+      return;
+    }
+    setImportFile(file.name);
+    const text = await file.text();
+    setImportText(text);
+    // Reference ranks are display-only and harmless, so a table with Expert /
+    // Mason columns is saved the moment it's uploaded — no extra Apply needed
+    // just to SEE them. Board changes (reorder / tiers / adds) still wait for Apply.
+    const parsed = parseRankTable(text);
+    if (parsed && (parsed.columns.expert || parsed.columns.mason)) {
+      if (!index) {
+        setSaveMsg({ text: "Sleeper player data is still loading — press Apply below once the preview appears to show the ranks.", error: true });
+        return;
+      }
+      const n = persistRefs(matchTableRows(parsed.rows, flat, index));
+      setSaveMsg(
+        n > 0
+          ? { text: `Saved Expert/Mason ranks for ${n} players — they're now shown next to your rankings. Review the rest below and press Apply for any board changes.` }
+          : { text: "Table found, but none of its players matched — no reference ranks saved. Check the names below.", error: true }
+      );
+    } else if (!parsed) {
+      setSaveMsg({ text: `Couldn't find a header row with a Name column (first line: ${describeFirstLine(text).join(" | ") || "empty"}).`, error: true });
+    }
+  };
+  const applyImport = () => {
+    if (importMatches.length === 0) return;
+    const usable = importMatches.filter((m) => (m.status === "board" || (m.status === "add" && importAdd)) && m.name);
+    // Order: the Rank column when the table has one, otherwise the row order.
+    const ordered = [...usable]
+      .map((m, i) => ({ m, i, r: table ? (m as TableMatch).row.rank : undefined }))
+      .sort((x, y) => (x.r ?? Infinity) - (y.r ?? Infinity) || x.i - y.i)
+      .map((x) => x.m);
+    const orderOf = new Map<string, number>();
+    ordered.forEach((m, i) => orderOf.set(looseKey(m.name!), i));
+    const tierOf = new Map<string, number>();
+    if (table && importTiers) {
+      for (const m of importMatches as TableMatch[]) if (m.status === "board" && m.name && m.row.tier) tierOf.set(looseKey(m.name), m.row.tier);
+    }
+
+    commit((b) => {
+      let next = b.map((c) => [...c]);
+      if (importAdd) {
+        for (const m of importMatches) {
+          if (m.status === "add" && m.name && m.pos && m.team) {
+            const t = table && importTiers ? ((m as TableMatch).row.tier ?? TIER_COUNT) : TIER_COUNT;
+            next[t - 1].push({ name: m.name, pos: m.pos, team: m.team, tier: t, posRank: 0 });
+          }
+        }
+      }
+      if (tierOf.size > 0) {
+        const moved: Player[] = [];
+        next = next.map((col, ti) =>
+          col.filter((p) => {
+            const want = tierOf.get(looseKey(p.name));
+            if (want && want - 1 !== ti) {
+              moved.push({ ...p, tier: want });
+              return false;
+            }
+            return true;
+          })
+        );
+        for (const p of moved) next[p.tier - 1].push(p);
+      }
+      return reorder ? next.map((col) => sortByAdp(col, (p) => orderOf.get(looseKey(p.name)))) : next;
+    });
+
+    const savedRefs = table && importSaveRefs ? persistRefs(importMatches as TableMatch[]) : 0;
+    const bits = [
+      reorder ? `reordered ${importCounts.board} on-board player${importCounts.board === 1 ? "" : "s"}` : null,
+      tierOf.size ? `set ${tierOf.size} tier${tierOf.size === 1 ? "" : "s"}` : null,
+      importAdd && importCounts.add ? `added ${importCounts.add} not-on-board` : null,
+      savedRefs ? `saved Expert/Mason ranks for ${savedRefs} players (shown next to yours)` : null,
+    ].filter(Boolean);
+    setSaveMsg({ text: `Imported: ${bits.join(", ") || "nothing to change"}. Board changes are unsaved until you press Save.` });
+    setImportOpen(false);
+    setImportText("");
+    setImportFile("");
+    setImportReorder(null);
+  };
+
   const save = async () => {
+    if (saving) return;
     setSaving(true);
     setSaveMsg(null);
-    setProdSource(null);
     try {
       const players = board.flatMap((col, ti) =>
         col.map((p) => ({ name: p.name, pos: p.pos, team: p.team, tier: ti + 1 }))
@@ -178,14 +655,22 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         setSaveMsg({ text: body.error || "Save failed.", error: true });
         return;
       }
-      if (body.written) {
-        setSaveMsg({ text: "Saved to lib/players.data.ts — the app will hot-reload." });
-      } else {
-        setSaveMsg({
-          text: "This deployment can't write files at runtime. Copy the generated source below into lib/players.data.ts and commit it.",
-        });
-        setProdSource(body.source);
+      // Keep what this save just replaced, so a bad save can be rolled back.
+      // Browser-local on purpose (a DB table would be a migration on the
+      // shared Postgres); best-effort — a full/blocked localStorage never
+      // fails the save itself.
+      try {
+        const prev = parseHistory(window.localStorage.getItem(HISTORY_KEY));
+        const snap: RankSnapshot = {
+          at: new Date().toISOString(),
+          players: savedBoard.flatMap((col, ti) => col.map((p) => ({ name: p.name, pos: p.pos, team: p.team, tier: ti + 1 }))),
+        };
+        window.localStorage.setItem(HISTORY_KEY, JSON.stringify(pushSnapshot(prev, snap)));
+      } catch {
+        // ignore
       }
+      setSavedBoard(board);
+      setSaveMsg({ text: "Saved — live everywhere on the next page load." });
     } catch {
       setSaveMsg({ text: "Couldn't reach the server.", error: true });
     } finally {
@@ -193,10 +678,41 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
     }
   };
 
+  // Ctrl/Cmd+S saves, Ctrl/Cmd+Z undoes (but never inside a text box, where
+  // Ctrl+Z should keep meaning "undo my typing").
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "s") {
+        e.preventDefault();
+        void save();
+      } else if (k === "z" && !e.shiftKey) {
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+        e.preventDefault();
+        undo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const logout = async () => {
     await fetch("/api/admin/logout", { method: "POST" });
     window.location.reload();
   };
+
+  const q = query.trim().toLowerCase();
+  const isShown = (p: Player) =>
+    (posFilter === "ALL" || p.pos === posFilter) &&
+    (!q || p.name.toLowerCase().includes(q) || p.team.toLowerCase().includes(q)) &&
+    (!injuredOnly || isInjured(infoByName[p.name]?.inj));
+  const shownNames = useMemo(
+    () => flat.filter(isShown).map((p) => p.name),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [flat, posFilter, q, injuredOnly, infoByName]
+  );
 
   return (
     <section className="sec">
@@ -205,12 +721,393 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         <span className="rt">owner only</span>
       </div>
       <p className="hint" style={{ marginBottom: 10 }}>
-        Drag a player up or down to reorder them, or past a tier band to
-        re-tier them — position rank (QB1, RB4, …) updates live from where a
-        player lands. Nothing is saved until you click Save. Rankings
-        displays every position mixed together; filter to one position below
-        to rank within just that position instead of the aggregate pile.
+        Click the ▲▼ arrows on the left of a player (or drag him) to reorder
+        — an arrow at the edge of a tier moves him into the next tier, and « » jump a
+        whole tier. Position rank (QB1, RB4, …) updates live from where a
+        player lands. Nothing is saved until you click Save (or press Ctrl+S);
+        Ctrl+Z steps back. Rankings displays every position mixed together;
+        filter to one position below to rank within just that position instead
+        of the aggregate pile.
       </p>
+
+      {/* Sticky so Save / Undo stay reachable however far down the board you are. */}
+      <div
+        style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          background: "var(--ink)",
+          padding: "8px 0",
+          borderBottom: "1px solid var(--line-soft)",
+          marginBottom: 12,
+        }}
+      >
+        <div className="field" style={{ marginBottom: 0, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+          <button className="btn" onClick={save} disabled={saving || !dirty}>
+            {saving ? "Saving…" : dirty ? "Save changes" : "Saved"}
+          </button>
+          <button className="btn ghost sm" onClick={undo} disabled={saving || history.length === 0} title="Ctrl+Z">
+            Undo{history.length ? ` (${history.length})` : ""}
+          </button>
+          <button className="btn ghost sm" onClick={reset} disabled={saving || !dirty}>
+            Discard changes
+          </button>
+          <button className="btn ghost sm" onClick={() => setImportOpen((v) => !v)}>
+            {importOpen ? "Close import" : "Import list"}
+          </button>
+          <button className="btn ghost sm" onClick={toggleHistory}>
+            {historyOpen ? "Hide history" : "Save history"}
+          </button>
+          {dirty && (
+            <span className="hint" style={{ color: "var(--amber)", margin: 0 }}>
+              ● Unsaved changes
+            </span>
+          )}
+          {saveMsg && (
+            <span className="hint" style={{ color: saveMsg.error ? "var(--red)" : "var(--mint)", margin: 0 }}>
+              {saveMsg.text}
+            </span>
+          )}
+          <button className="btn ghost sm" onClick={logout} style={{ marginLeft: "auto" }}>
+            Log out
+          </button>
+        </div>
+
+        {selected.size > 0 && (
+          <div className="field" style={{ marginTop: 8, marginBottom: 0, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <b style={{ fontSize: 13 }}>{selected.size} selected</b>
+            <select className="select" value={bulkTier} onChange={(e) => setBulkTier(Number(e.target.value))}>
+              {TIERS.map((t) => (
+                <option key={t} value={t}>
+                  Tier {TIER_LABELS[t - 1]}
+                </option>
+              ))}
+            </select>
+            <button className="btn sm" onClick={moveSelectedToTier}>
+              Move to tier
+            </button>
+            <button className="btn ghost sm" onClick={removeSelected}>
+              Remove
+            </button>
+            <button className="btn ghost sm" onClick={() => setSelected(new Set())}>
+              Clear
+            </button>
+          </div>
+        )}
+      </div>
+
+      {importOpen && (
+        <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>
+          <b style={{ fontSize: 14 }}>Import a ranked list or CSV</b>
+          <p className="hint" style={{ margin: "4px 0 8px" }}>
+            Upload a CSV, or paste. <b>With a header row</b> (Rank, Name, Team, Position, Tier, Expert Rank, Mason Rank — any subset with a Name) the
+            Expert / Mason ranks are saved and shown next to your own ranks. <b>Without one</b>, one player per line (&ldquo;1. Ja&apos;Marr Chase&rdquo;,
+            &ldquo;2) Puka Nacua WR LAR&rdquo;) reorders players within their tiers. Nothing is fetched from anywhere — you provide the file.
+          </p>
+          <div className="field" style={{ marginBottom: 8, alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label className="btn sm" style={{ cursor: "pointer" }}>
+              Upload CSV…
+              <input
+                type="file"
+                accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  void onCsvFile(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {importFile && <span className="hint" style={{ margin: 0 }}>Loaded {importFile}</span>}
+          </div>
+          <textarea
+            className="input"
+            rows={7}
+            placeholder={"…or paste here.\nRank,Name,Team,Position,Tier,Expert Rank,Mason Rank\n1,Ja'Marr Chase,CIN,WR,1,3,2"}
+            value={importText}
+            onChange={(e) => {
+              setImportText(e.target.value);
+              setImportFile("");
+            }}
+            style={{ width: "100%", fontFamily: "inherit", resize: "vertical" }}
+          />
+          {!index && importText.trim() && <p className="hint">Loading Sleeper player data…</p>}
+          {!table && importText.trim() && /[,\t;]/.test(importText.split(/\r?\n/)[0] ?? "") && (
+            <p className="hint" style={{ margin: "8px 0 0", color: "var(--amber)" }}>
+              No header row with a <b>Name</b> column found, so this is being read as a plain list of names. First line:{" "}
+              {describeFirstLine(importText).join(" | ")}
+            </p>
+          )}
+          {table && (
+            <p className="hint" style={{ margin: "8px 0 0" }}>
+              Table detected, {table.rows.length} rows. Columns found:{" "}
+              <b>Name</b>
+              {table.columns.rank && ", Rank"}
+              {table.columns.team && ", Team"}
+              {table.columns.pos && ", Position"}
+              {table.columns.tier && ", Tier"}
+              {table.columns.expert && ", Expert Rank"}
+              {table.columns.mason && ", Mason Rank"}.
+            </p>
+          )}
+          {table &&
+            (["expert", "mason"] as const).map((k) => {
+              const st = table.sources[k];
+              if (!st) return null;
+              const bad = st.blank + st.unreadable > 0;
+              return (
+                <p key={k} className="hint" style={{ margin: "4px 0 0", color: bad ? "var(--amber)" : "var(--mint)" }}>
+                  <b>{k === "expert" ? "Expert" : "Mason"}</b> ← CSV column &ldquo;{st.header}&rdquo;: {st.numeric} ranks read
+                  {st.blank > 0 && `, ${st.blank} blank`}
+                  {st.unreadable > 0 && `, ${st.unreadable} not readable as a number (e.g. ${st.examples.map((e) => `"${e}"`).join(", ")})`}
+                  {st.alternatives.length > 0 && ` · other matching columns ignored: ${st.alternatives.join("; ")}`}
+                </p>
+              );
+            })}
+          {importMatches.length > 0 && (
+            <>
+              <p className="hint" style={{ margin: "8px 0 4px" }}>
+                <b style={{ color: "var(--mint)" }}>{importCounts.board} on your board</b>
+                {" · "}
+                <b>{importCounts.add} not on board (found on Sleeper)</b>
+                {" · "}
+                <b style={{ color: importCounts.ambiguous ? "var(--amber)" : undefined }}>{importCounts.ambiguous} ambiguous</b>
+                {" · "}
+                <b style={{ color: importCounts.unmatched ? "var(--red)" : undefined }}>{importCounts.unmatched} not matched</b>
+              </p>
+              {importMatches.some((m) => m.status !== "board" || m.fuzzy) && (
+                <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--line-soft)", borderRadius: 8, marginBottom: 8 }}>
+                  {importMatches
+                    .filter((m) => m.status !== "board" || m.fuzzy)
+                    .map((m, i) => (
+                      <div key={i} className="tierrow" style={{ cursor: "default", padding: "6px 12px" }}>
+                        <span className="plname" style={{ fontSize: 13.5 }}>{m.raw}</span>
+                        <span className="plteam" style={{ color: m.status === "board" || m.status === "add" ? "var(--mint)" : m.status === "ambiguous" ? "var(--amber)" : "var(--red)" }}>
+                          {m.status === "board" ? `${m.note} (name variant)` : m.status === "add" ? `not on board: ${m.name} · ${m.pos} ${m.team}${m.fuzzy ? " (name variant)" : ""}` : m.status === "ambiguous" ? `ambiguous (${m.note}) — skipped` : `${m.note} — skipped`}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              )}
+              <div style={{ display: "grid", gap: 4, marginBottom: 8 }}>
+                {table && (table.columns.expert || table.columns.mason) && (
+                  <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                    <input type="checkbox" checked={importSaveRefs} onChange={(e) => setImportSaveRefs(e.target.checked)} />
+                    Show Expert{table.columns.mason ? " / Mason" : ""} ranks next to my rankings (saved in this browser)
+                  </label>
+                )}
+                <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                  <input type="checkbox" checked={reorder} onChange={(e) => setImportReorder(e.target.checked)} />
+                  Reorder my board (within tiers) to follow {table?.columns.rank ? "the Rank column" : "this list"}
+                </label>
+                {table?.columns.tier && (
+                  <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                    <input type="checkbox" checked={importTiers} onChange={(e) => setImportTiers(e.target.checked)} />
+                    Also take tiers from the Tier column (1–8 or S–G){importTiers ? ` — ${tierMoves} player${tierMoves === 1 ? "" : "s"} would change tier` : ""}
+                  </label>
+                )}
+                <label className="hint" style={{ display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                  <input type="checkbox" checked={importAdd} onChange={(e) => setImportAdd(e.target.checked)} />
+                  Also add the {importCounts.add} not-on-board player{importCounts.add === 1 ? "" : "s"} {importTiers && table?.columns.tier ? "(in their listed tier)" : "to the bottom of tier G"}
+                </label>
+              </div>
+            </>
+          )}
+          <div className="field" style={{ marginBottom: 0, gap: 8 }}>
+            <button
+              className="btn"
+              onClick={applyImport}
+              disabled={importMatches.length === 0 || (importCounts.board + importCounts.add === 0)}
+            >
+              Apply
+            </button>
+            <span className="hint" style={{ margin: 0 }}>Board changes stay unsaved until you press Save; Undo reverts them.</span>
+          </div>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div style={{ border: "1px solid var(--line)", borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "var(--panel)" }}>
+          <b style={{ fontSize: 14 }}>Previous versions</b>
+          <p className="hint" style={{ margin: "4px 0 8px" }}>
+            Each Save keeps the version it replaced (last 20, stored in this browser only). Restoring loads a version into
+            the board as an unsaved change — Undo reverts it, Save makes it live.
+          </p>
+          {history_.length === 0 ? (
+            <p className="hint" style={{ margin: 0 }}>Nothing yet — a version is kept every time you Save.</p>
+          ) : (
+            <div style={{ border: "1px solid var(--line-soft)", borderRadius: 8, overflow: "hidden" }}>
+              {history_.map((h) => (
+                <div key={h.at} className="tierrow" style={{ cursor: "default" }}>
+                  <span className="plname">{new Date(h.at).toLocaleString()}</span>
+                  <span className="plteam">{h.players.length} players</span>
+                  <button className="btn ghost sm" onClick={() => restoreSnapshot(h)}>Restore</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {sortMsg && (
+        <p className="hint" style={{ margin: "0 0 10px" }}>{sortMsg}</p>
+      )}
+
+      {/* ── Needs ranking: unranked players on the owner's rosters ── */}
+      <div
+        style={{
+          border: "1px solid var(--line)",
+          borderRadius: 10,
+          padding: "12px 14px",
+          marginBottom: 14,
+          background: "var(--panel)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+          <b style={{ fontSize: 14 }}>Needs ranking</b>
+          <span className="hint" style={{ margin: 0 }}>
+            {pmapLoading
+              ? "Loading Sleeper player data…"
+              : pmapError
+                ? "Couldn't load Sleeper player data."
+                : `${injuredUnrankedCount} injured · ${unranked.length} unranked in total, all on your rosters`}
+          </span>
+          {pmapError && (
+            <button className="linklike" style={{ fontSize: 12.5 }} onClick={pmapRetry}>
+              Retry
+            </button>
+          )}
+        </div>
+        <p className="hint" style={{ marginBottom: 8 }}>
+          Players rostered in at least one of your {exposureLeagues} in-season leagues who
+          aren&apos;t on this board — sorted most-hurt first, then by how many of your leagues
+          hold them. Adding places them on the board (unsaved until you Save).
+        </p>
+
+        {exposureLeagues === 0 ? (
+          <p className="hint" style={{ margin: 0 }}>
+            No synced rosters yet — run a sync in Sleeper Manager and this panel will see which
+            players are on your teams.
+          </p>
+        ) : (
+          <>
+            <div className="filters" style={{ marginBottom: 8 }}>
+              <button
+                className={`chip-filter ${panelView === "injured" ? "on" : ""}`}
+                onClick={() => {
+                  setPanelView("injured");
+                  setPanelLimit(PANEL_PAGE);
+                }}
+              >
+                Injured ({injuredUnrankedCount})
+              </button>
+              <button
+                className={`chip-filter ${panelView === "all" ? "on" : ""}`}
+                onClick={() => {
+                  setPanelView("all");
+                  setPanelLimit(PANEL_PAGE);
+                }}
+              >
+                All unranked ({unranked.length})
+              </button>
+              <span className="hint" style={{ margin: "0 0 0 6px", alignSelf: "center" }}>
+                position follows the filter below
+              </span>
+            </div>
+
+            {panelRows.length === 0 ? (
+              <p className="hint" style={{ margin: 0, color: "var(--mint)" }}>
+                {pmap
+                  ? panelView === "injured"
+                    ? "✓ Every injured player on your rosters is already ranked."
+                    : "✓ Every player on your rosters is already ranked."
+                  : ""}
+              </p>
+            ) : (
+              <>
+                <div className="field" style={{ marginBottom: 8, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <select className="select" value={panelTier} onChange={(e) => setPanelTier(Number(e.target.value))}>
+                    {TIERS.map((t) => (
+                      <option key={t} value={t}>
+                        Add to tier {TIER_LABELS[t - 1]}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn sm" onClick={() => addCandidates(panelRows)}>
+                    Add all {panelRows.length} shown
+                  </button>
+                </div>
+                <div style={{ border: "1px solid var(--line-soft)", borderRadius: 8, overflow: "hidden" }}>
+                  {panelRows.slice(0, panelLimit).map((u) => (
+                    <div
+                      key={u.id}
+                      className="tierrow"
+                      style={{ cursor: "default" }}
+                    >
+                      <span className="pos" style={posChipStyle(u.pos)}>
+                        {u.pos}
+                      </span>
+                      <span className="plname">{u.name}</span>
+                      <InjBadge inj={u.inj} />
+                      <span className="plteam">{u.team}</span>
+                      <span className="plteam" title={`On ${u.leagues} of your ${exposureLeagues} leagues`}>
+                        ×{u.leagues}
+                      </span>
+                      <button className="btn ghost sm" onClick={() => addCandidates([u])}>
+                        + Add
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {panelRows.length > panelLimit && (
+                  <button
+                    className="linklike"
+                    style={{ fontSize: 12.5, marginTop: 6 }}
+                    onClick={() => setPanelLimit((n) => n + PANEL_PAGE)}
+                  >
+                    Show {Math.min(PANEL_PAGE, panelRows.length - panelLimit)} more ({panelRows.length - panelLimit} left)
+                  </button>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── Team drift: board team text vs Sleeper's current team ── */}
+      {drift.length > 0 && (
+        <div
+          style={{
+            border: "1px solid var(--line)",
+            borderRadius: 10,
+            padding: "10px 14px",
+            marginBottom: 14,
+            background: "var(--panel)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <b style={{ fontSize: 13.5 }}>{drift.length} ranked player{drift.length === 1 ? "" : "s"} changed team on Sleeper</b>
+            {drift.length > releasedDrift.length && (
+              <button className="btn sm" onClick={syncTeams}>
+                Update {drift.length - releasedDrift.length} team{drift.length - releasedDrift.length === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
+          <p className="hint" style={{ margin: "6px 0 0" }}>
+            {drift
+              .filter((d) => d.to)
+              .slice(0, 12)
+              .map((d) => `${d.name} ${d.from}→${d.to}`)
+              .join(" · ")}
+            {drift.filter((d) => d.to).length > 12 ? " · …" : ""}
+          </p>
+          {releasedDrift.length > 0 && (
+            <p className="hint" style={{ margin: "6px 0 0", color: "var(--amber)" }}>
+              No team on Sleeper right now (released or retired) — not auto-updated, decide yourself:{" "}
+              {releasedDrift.map((d) => d.name).join(", ")}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="filters">
         {["ALL", ...ADD_POSITIONS].map((p) => (
           <button
@@ -221,12 +1118,72 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
             {p}
           </button>
         ))}
+        <span className="hint" style={{ margin: "0 4px 0 12px", alignSelf: "center" }}>Projected pts:</span>
+        <button className={`chip-filter ${projMode === "week" ? "on" : ""}`} onClick={() => setProjMode("week")}>
+          {weekNum ? `Week ${weekNum}` : "This week"}
+        </button>
+        <button className={`chip-filter ${projMode === "season" ? "on" : ""}`} onClick={() => void chooseSeason()}>
+          {seasonLoading ? "Loading season…" : "Season"}
+        </button>
+        <button
+          className={`chip-filter ${injuredOnly ? "on" : ""}`}
+          onClick={() => setInjuredOnly((v) => !v)}
+          disabled={!index}
+          title="Show only ranked players Sleeper lists as injured"
+        >
+          Injured ({injuredRankedCount})
+        </button>
+      </div>
+
+      <p className="hint" style={{ margin: "0 0 8px" }}>
+        Each row shows <b>Mine</b> (your overall rank), then <b>Expert</b> and <b>Mason</b> (the Flock ranks from your imported CSV).{" "}
+        {refRanks.count > 0 ? (
+          <>
+            Loaded for {refRanks.count} players
+            {refRanks.at ? `, imported ${new Date(refRanks.at).toLocaleDateString()}` : ""} — saved to your account, shows on every device.{" "}
+            <button type="button" className="link" onClick={clearRefs}>Clear</button>{" · "}
+            Edge is <b style={{ color: "var(--red)" }}>red</b> when they differ from you by{" "}
+            <input
+              type="number"
+              min={1}
+              max={200}
+              value={refFlagDiff}
+              onChange={(e) => setRefFlagDiff(Math.max(1, Number(e.target.value) || 1))}
+              className="input"
+              style={{ width: 56, padding: "2px 6px", display: "inline-block" }}
+            />{" "}
+            or more spots, <b style={{ color: "var(--mint)" }}>green</b> when close.
+          </>
+        ) : (
+          <b style={{ color: "var(--amber)" }}>
+            None loaded yet — click Import list → Upload CSV and the columns fill in.
+          </b>
+        )}
+      </p>
+      <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <input
+          className="input"
+          placeholder="Find a ranked player or team…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ maxWidth: 260 }}
+        />
+        {(q || injuredOnly || posFilter !== "ALL") && (
+          <>
+            <span className="hint" style={{ margin: 0 }}>
+              {shownNames.length} shown
+            </span>
+            <button className="btn ghost sm" onClick={() => setSelected(new Set(shownNames))}>
+              Select all shown
+            </button>
+          </>
+        )}
       </div>
 
       <div className="field" style={{ marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input
           className="input"
-          placeholder="Player name"
+          placeholder="Add by name"
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && addPlayer()}
@@ -268,60 +1225,26 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
         </p>
       )}
 
-      <div className="field" style={{ marginBottom: 14, alignItems: "center" }}>
-        <button className="btn" onClick={save} disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-        <button className="btn ghost sm" onClick={reset} disabled={saving}>
-          Reset
-        </button>
-        <button className="btn ghost sm" onClick={logout} style={{ marginLeft: "auto" }}>
-          Log out
-        </button>
-      </div>
-      {saveMsg && (
-        <p className="hint" style={{ color: saveMsg.error ? "var(--red)" : "var(--mint)", marginBottom: 12 }}>
-          {saveMsg.text}
-        </p>
-      )}
-      {prodSource && (
-        <textarea
-          readOnly
-          value={prodSource}
-          style={{
-            width: "100%",
-            height: 220,
-            marginBottom: 16,
-            background: "var(--ink)",
-            color: "var(--bone)",
-            border: "1px solid var(--line)",
-            borderRadius: 8,
-            padding: 10,
-            fontFamily: "monospace",
-            fontSize: 12,
-          }}
-        />
-      )}
-
       <div className="tierlist">
+        <div className="tiergrid">
         {TIERS.map((t) => {
           const ti = t - 1;
           const color = TIER_COLOR[ti];
           const cards = board[ti]
             .map((p, ai) => ({ p, ai }))
-            .filter(({ p }) => posFilter === "ALL" || p.pos === posFilter);
+            .filter(({ p }) => isShown(p));
 
           return (
             <div key={t}>
               <div
-                className={`tierband ${cards.length === 0 ? "empty" : ""}`}
+                className={`tierband ${cards.length === 0 ? "empty" : "hasgrid"}`}
                 style={{ background: color }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
                   const from = dragRef.current;
                   if (!from) return;
-                  setBoard((b) => {
+                  commit((b) => {
                     const draggedPos = b[from.tier][from.idx]?.pos;
                     const insertIdx =
                       posFilter === "ALL" || !draggedPos
@@ -336,48 +1259,116 @@ export default function TierBoard({ initialPlayers }: { initialPlayers: Player[]
                   <>Tier {TIER_LABELS[ti]} — drop here</>
                 ) : (
                   <>
-                    {TIER_LABELS[ti]}
-                    <span className="count">{cards.length}</span>
+                    <div className="bandlead">
+                      <span className="bandletter">{TIER_LABELS[ti]}</span>
+                      <span>TIER</span>
+                      <span className="count">{cards.length}</span>
+                      <button
+                        className="tierbandbtn"
+                        title="Reorder this tier by Sleeper ADP (best first)"
+                        onClick={() => void sortTierByAdp(ti)}
+                      >
+                        Sort by ADP
+                      </button>
+                    </div>
+                    <span className="bandlabel">{projMode === "week" ? `Wk ${weekNum ?? ""} pts` : "Szn pts"}</span>
+                    <span className="bandlabel">Team</span>
+                    <span className="bandlabel">Expert</span>
+                    <span className="bandlabel">Mason</span>
+                    <span />
                   </>
                 )}
               </div>
-              {cards.map(({ p, ai }) => (
-                <div
-                  key={p.name}
-                  className="tierrow"
-                  draggable
-                  onDragStart={() => {
-                    dragRef.current = { tier: ti, idx: ai };
-                  }}
-                  onDragOver={(e) => e.preventDefault()}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    const from = dragRef.current;
-                    if (!from) return;
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const before = e.clientY < rect.top + rect.height / 2;
-                    setBoard((b) => movePlayer(b, from, { tier: ti, idx: ai + (before ? 0 : 1) }));
-                    dragRef.current = null;
-                  }}
-                >
-                  <span className="pos" style={posChipStyle(p.pos)}>
-                    {p.pos}
-                    {rankByName[p.name]}
-                  </span>
-                  <span className="plname">{p.name}</span>
-                  <span className="plteam">{p.team}</span>
-                  <div className="btnrow">
-                    <button className="mini" title="Move up" onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
-                    <button className="mini" title="Move down" onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
-                    <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
-                    <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
-                    <button className="mini" title="Remove" onClick={() => removePlayer(ti, ai)}>✕</button>
+              {cards.map(({ p, ai }) => {
+                const info = infoByName[p.name];
+                const r = refRanks.ranks[refRankKey(looseKey(p.name), p.pos)];
+                const mine = overallByName[p.name];
+                // green edge = within the threshold of MY rank, red = they disagree by that many spots or more
+                const edge = (v?: number) => (v == null ? "transparent" : Math.abs(v - mine) >= refFlagDiff ? "var(--red)" : "var(--mint)");
+                const proj = projOf(p.name);
+                return (
+                  <div
+                    key={p.name}
+                    className="tierrow gridrow"
+                    draggable
+                    style={selected.has(p.name) ? { background: "var(--line-soft)" } : undefined}
+                    onDragStart={() => {
+                      dragRef.current = { tier: ti, idx: ai };
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const from = dragRef.current;
+                      if (!from) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const before = e.clientY < rect.top + rect.height / 2;
+                      commit((b) => movePlayer(b, from, { tier: ti, idx: ai + (before ? 0 : 1) }));
+                      dragRef.current = null;
+                    }}
+                  >
+                    <div className="gc ctrl">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.name}`}
+                        checked={selected.has(p.name)}
+                        onChange={() => toggleSelected(p.name)}
+                        style={{ flex: "none", margin: 0 }}
+                      />
+                      <div className="rankarrows">
+                        <button title="Move up (past the top of a tier moves to the tier above)" aria-label={`Move ${p.name} up`} onClick={() => moveWithinTier(ti, ai, -1)}>▲</button>
+                        <button title="Move down (past the bottom of a tier moves to the tier below)" aria-label={`Move ${p.name} down`} onClick={() => moveWithinTier(ti, ai, 1)}>▼</button>
+                      </div>
+                    </div>
+                    <div className="gc rk" title="Your overall rank">{mine}</div>
+                    <div className="gc player">
+                      <Headshot id={info?.id ?? null} pos={p.pos} />
+                      <div className="nm">
+                        <span className="plname">
+                          {p.name} <InjBadge inj={info?.inj} />
+                        </span>
+                        {info && info.leagues > 0 && (
+                          <small title={`On ${info.leagues} of your ${exposureLeagues} leagues`}>on {info.leagues} of your leagues</small>
+                        )}
+                      </div>
+                    </div>
+                    <div className="gc">
+                      <span className="pos" style={posChipStyle(p.pos)}>
+                        {p.pos} {rankByName[p.name]}
+                      </span>
+                    </div>
+                    <div
+                      className="gc proj"
+                      title={projMode === "week" ? `Sleeper's projected PPR points, week ${weekNum ?? ""}` : "Sleeper's projected PPR points, full season"}
+                    >
+                      {proj?.toFixed(2) ?? "—"}
+                    </div>
+                    <div className="gc team">{p.team}</div>
+                    <div
+                      className={`gc ref expert${r?.expert == null ? " none" : ""}`}
+                      style={{ "--edge": edge(r?.expert) } as React.CSSProperties}
+                      title={r?.expert == null ? "No Expert rank for this player in your CSV" : "Expert rank (Flock)"}
+                    >
+                      {r?.expert ?? "n/a"}
+                    </div>
+                    <div
+                      className={`gc ref mason${r?.mason == null ? " none" : ""}`}
+                      style={{ "--edge": edge(r?.mason) } as React.CSSProperties}
+                      title={r?.mason == null ? "No Mason rank for this player in your CSV" : "Mason Dodd rank (Flock)"}
+                    >
+                      {r?.mason ?? "n/a"}
+                    </div>
+                    <div className="gc act">
+                      <button className="mini" title="Move to tier above" onClick={() => moveToTier(ti, ai, -1)}>«</button>
+                      <button className="mini" title="Move to tier below" onClick={() => moveToTier(ti, ai, 1)}>»</button>
+                      <button className="mini" title="Remove" onClick={() => removePlayer(ti, ai)}>✕</button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           );
         })}
+        </div>
       </div>
     </section>
   );
