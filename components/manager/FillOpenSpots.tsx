@@ -7,14 +7,19 @@ import { fetchAllLive, preflightRosters, type LiveRoster } from "@/lib/liveRoste
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
+import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { LineupLeague } from "./LineupManager";
-import { DataTable, TableRow, TableHeaderRow } from "./DataRow";
+import { PlayerAvatar } from "./Avatar";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
 import { useRefreshLeagues } from "./useRefreshLeagues";
 
 const OFFENSE = new Set(["QB", "RB", "WR", "TE"]);
+const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"];
+// Statuses that mean "won't play" — the same set the lineup tools treat as unavailable.
+const OUT = new Set(["Out", "IR", "PUP", "Sus", "COV", "NA", "DNR", "Doubtful"]);
+const INJ_SHORT: Record<string, string> = { Questionable: "Q", Doubtful: "D", Out: "O", IR: "IR", PUP: "PUP", Sus: "SUS", COV: "COV" };
 
 const inner = (settings: unknown, key: string): number => {
   const s = settings && typeof settings === "object" ? (settings as Record<string, unknown>).settings : null;
@@ -22,15 +27,31 @@ const inner = (settings: unknown, key: string): number => {
   return typeof v === "number" ? v : 0;
 };
 
+type Source = "adds" | "drops" | "best" | "handcuffs";
 interface Row {
   league: LineupLeague;
   spots: number;
   live: LiveRoster | null;
+  players: string[];
+  reserve: string[];
+  starters: string[];
+}
+interface Need {
+  pos: string;
+  healthy: number;
+  slots: number;
+  short: boolean; // fewer healthy players than starting slots
+}
+interface Suggestion {
+  id: string;
+  count: number;
+  note?: string;
 }
 
-// Every league with open roster spots, how many, and a picker per spot: Sleeper's most-added players right now that are
-// actually still free in THAT league (read live), or anyone you search. Adds need no drop; a player still on waivers becomes a
-// claim (FAAB bid suggested from the league's own past claims). Nothing is sent until you confirm.
+// Every league with open roster spots, shown as one block per league: your roster by position (starters, injuries), what you're
+// short at, the claims you've lined up, and suggestion cards to tap. Choices come from Sleeper's live lists and are always players
+// still free in THAT league. Open spots need no drop; extra claims can stack on the same spot (drop optional). Nothing is sent
+// until you confirm.
 export default function FillOpenSpots({
   leagues,
   pmap,
@@ -42,24 +63,21 @@ export default function FillOpenSpots({
   token: string | null;
   onSent?: () => void;
 }) {
-  // Extra claims beyond the open spots, so you can line up several claims in one league. A drop is OPTIONAL: Sleeper accepts a
-  // claim with no drop even when you'd be one over — it simply fails at waiver time if no spot is open by then (e.g. once an
-  // earlier claim of yours fills it), which is exactly how stacking claims for one spot works in the Sleeper app.
-  const [extraSlots, setExtraSlots] = useState<Record<string, number>>({});
-  const [dropPick, setDropPick] = useState<Record<string, string>>({}); // "leagueId:slotIndex" -> player to drop
   const refresh = useRefreshLeagues();
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
-  const [trending, setTrending] = useState<{ id: string; count: number }[]>([]);
-  const [dropped, setDropped] = useState<{ id: string; count: number }[]>([]);
-  // Where the picker's choices come from. "best" = Sleeper's own popularity rank (search_rank) — the closest public signal to
-  // "most rostered" (Sleeper doesn't publish roster %); "handcuffs" = RB2s on Sleeper's depth chart, your own starters' backups first.
-  const [source, setSource] = useState<"adds" | "drops" | "best" | "handcuffs">("adds");
+  const [trending, setTrending] = useState<Suggestion[]>([]);
+  const [dropped, setDropped] = useState<Suggestion[]>([]);
+  // "best" = Sleeper's own popularity rank (search_rank) — the closest public signal to "most rostered" (Sleeper doesn't publish
+  // roster %); "handcuffs" = RB2s on Sleeper's depth chart, your own starters' backups first.
+  const [source, setSource] = useState<Source>("adds");
   const [faabStats, setFaabStats] = useState<FaabStats | null>(null);
   const [only, setOnly] = useState<0 | 1 | 2 | 3>(0); // 0 = all, 3 = 3+
-  const [picks, setPicks] = useState<Record<string, string[]>>({}); // leagueId -> player ids, one per spot
+  const [picks, setPicks] = useState<Record<string, string[]>>({}); // leagueId -> claim order (player ids)
+  const [dropPick, setDropPick] = useState<Record<string, string>>({}); // "leagueId:playerId" -> player to drop (extra claims only)
   const [bids, setBids] = useState<Record<string, number>>({}); // "leagueId:playerId" -> bid
   const [search, setSearch] = useState<Record<string, string>>({});
+  const [more, setMore] = useState<Set<string>>(new Set());
   const [status, setStatus] = useState<Record<string, TaskStatus>>({});
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
@@ -97,15 +115,15 @@ export default function FillOpenSpots({
       const lv = live[l.league.id] ?? null;
       const players = lv?.players ?? l.roster!.players;
       const reserve = lv?.reserve ?? l.roster!.reserve;
+      const starters = lv?.starters ?? l.roster!.starters;
       const spots = l.rosterPositions.length - (players.length - reserve.length);
-      if (spots > 0) out.push({ league: l, spots, live: lv });
+      if (spots > 0) out.push({ league: l, spots, live: lv, players, reserve, starters });
     }
     return out.sort((a, b) => b.spots - a.spots || a.league.league.name.localeCompare(b.league.league.name));
   }, [candidates, live]);
   const shown = rows.filter((r) => only === 0 || (only === 3 ? r.spots >= 3 : r.spots === only));
   const count = (n: 1 | 2 | 3) => rows.filter((r) => (n === 3 ? r.spots >= 3 : r.spots === n)).length;
 
-  const takenIn = (r: Row) => new Set(r.live?.allRostered ?? []);
   // Sleeper ranks for everyone on a team, best first — reused by "best available" and "handcuffs".
   const ranked = useMemo(() => {
     if (!pmap) return [] as string[];
@@ -114,44 +132,87 @@ export default function FillOpenSpots({
       .sort((a, b) => (a[1].rk ?? 1e9) - (b[1].rk ?? 1e9))
       .map(([id]) => id);
   }, [pmap]);
-  // Each team's RB1 on Sleeper's depth chart, so a handcuff can say whose backup he is.
   const rb1ByTeam = useMemo(() => {
     const m = new Map<string, string>();
     if (!pmap) return m;
     for (const [id, e] of Object.entries(pmap)) if (e.p === "RB" && e.t && e.dc === 1 && !m.has(e.t)) m.set(e.t, id);
     return m;
   }, [pmap]);
-  const available = (r: Row): { id: string; count: number; note?: string }[] => {
-    const taken = takenIn(r);
-    const free = (id: string) => OFFENSE.has(pmap?.[id]?.p ?? "") && !!pmap?.[id]?.t && !taken.has(id);
-    if (source === "adds") return trending.filter((t) => free(t.id)).slice(0, 30);
-    if (source === "drops") return dropped.filter((t) => free(t.id)).slice(0, 30).map((t) => ({ ...t, note: `dropped in ${t.count.toLocaleString()} leagues (24h)` }));
-    if (source === "best") return ranked.filter(free).slice(0, 30).map((id) => ({ id, count: 0, note: `Sleeper rank #${pmap?.[id]?.rk}` }));
-    // handcuffs: free RBs listed 2nd (or 3rd) on their team's depth chart; your own RB1s' backups first.
-    const mine = new Set(r.live?.players ?? r.league.roster?.players ?? []);
-    return ranked
-      .filter((id) => free(id) && pmap?.[id]?.p === "RB" && (pmap?.[id]?.dc === 2 || pmap?.[id]?.dc === 3))
-      .map((id) => {
-        const starter = rb1ByTeam.get(pmap![id].t);
-        const own = !!starter && mine.has(starter);
-        return { id, count: 0, own, note: starter ? `${own ? "YOUR " : ""}handcuff for ${pmap?.[starter]?.n ?? starter}` : "RB2" };
-      })
-      .sort((a, b) => Number(b.own) - Number(a.own))
-      .slice(0, 30)
-      .map(({ id, count, note }) => ({ id, count, note }));
+
+  const nameOf = (id: string) => pmap?.[id]?.n ?? id;
+  const posOf = (id: string) => pmap?.[id]?.p ?? "";
+  const isOut = (id: string) => OUT.has(pmap?.[id]?.inj ?? "");
+
+  // What you're short at: healthy players per position vs the starting slots that position can fill (FLEX shares RB/WR/TE,
+  // SUPER_FLEX adds QB). "short" = fewer healthy than slots; otherwise "no backup" when healthy just equals the slots.
+  const needsOf = (r: Row): Need[] => {
+    const codes = buildStartingSlots(r.league.rosterPositions).map((s) => s.code);
+    const active = r.players.filter((id) => !r.reserve.includes(id));
+    const out: Need[] = [];
+    for (const pos of ["QB", "RB", "WR", "TE"]) {
+      const slots = codes.filter((c) => c === pos).length;
+      if (slots === 0) continue;
+      const healthy = active.filter((id) => posOf(id) === pos && !isOut(id)).length;
+      if (healthy <= slots) out.push({ pos, healthy, slots, short: healthy < slots });
+    }
+    const flex = codes.filter((c) => c !== "QB" && c !== "RB" && c !== "WR" && c !== "TE" && eligiblePositions(c).some((p) => p === "RB" || p === "WR")).length;
+    if (flex > 0) {
+      const fixed = ["RB", "WR", "TE"].reduce((n, p) => n + codes.filter((c) => c === p).length, 0);
+      const healthyFlex = active.filter((id) => ["RB", "WR", "TE"].includes(posOf(id)) && !isOut(id)).length;
+      if (healthyFlex < fixed + flex) out.push({ pos: "FLEX", healthy: healthyFlex - fixed, slots: flex, short: true });
+    }
+    return out.sort((a, b) => Number(b.short) - Number(a.short));
   };
+
+  const takenIn = (r: Row) => new Set(r.live?.allRostered ?? []);
+  const suggestionsFor = (r: Row): Suggestion[] => {
+    const taken = takenIn(r);
+    const free = (id: string) => OFFENSE.has(posOf(id)) && !!pmap?.[id]?.t && !taken.has(id) && !r.players.includes(id);
+    let list: Suggestion[];
+    if (source === "adds") list = trending.filter((t) => free(t.id)).map((t) => ({ ...t, note: `+${t.count.toLocaleString()} adds` }));
+    else if (source === "drops") list = dropped.filter((t) => free(t.id)).map((t) => ({ ...t, note: `dropped ${t.count.toLocaleString()}×` }));
+    else if (source === "best") list = ranked.filter(free).slice(0, 60).map((id) => ({ id, count: 0, note: `Sleeper #${pmap?.[id]?.rk}` }));
+    else {
+      list = ranked
+        .filter((id) => free(id) && posOf(id) === "RB" && (pmap?.[id]?.dc === 2 || pmap?.[id]?.dc === 3))
+        .map((id) => {
+          const starter = rb1ByTeam.get(pmap![id].t);
+          const own = !!starter && r.players.includes(starter);
+          return { id, count: own ? 1 : 0, note: starter ? `${own ? "YOUR " : ""}cuff · ${(pmap?.[starter]?.n ?? "").split(" ").slice(-1)[0]}` : "RB2" };
+        })
+        .sort((a, b) => b.count - a.count);
+    }
+    // Positions you're short at come first; otherwise keep the list's own order.
+    const needPos = new Set(needsOf(r).flatMap((n) => (n.pos === "FLEX" ? ["RB", "WR", "TE"] : [n.pos])));
+    return [...list].sort((a, b) => Number(needPos.has(posOf(b.id))) - Number(needPos.has(posOf(a.id))));
+  };
+
   const pickList = (r: Row) => picks[r.league.league.id] ?? [];
-  const setPick = (r: Row, i: number, id: string) =>
+  const addPick = (r: Row, id: string) =>
     setPicks((p) => {
-      const cur = [...(p[r.league.league.id] ?? Array(r.spots).fill(""))];
-      cur[i] = id;
+      const cur = p[r.league.league.id] ?? [];
+      return cur.includes(id) ? p : { ...p, [r.league.league.id]: [...cur, id] };
+    });
+  const removePick = (r: Row, id: string) => setPicks((p) => ({ ...p, [r.league.league.id]: (p[r.league.league.id] ?? []).filter((x) => x !== id) }));
+  const movePick = (r: Row, id: string, dir: -1 | 1) =>
+    setPicks((p) => {
+      const cur = [...(p[r.league.league.id] ?? [])];
+      const i = cur.indexOf(id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= cur.length) return p;
+      [cur[i], cur[j]] = [cur[j], cur[i]];
       return { ...p, [r.league.league.id]: cur };
     });
   const autoFill = () => {
-    const next: Record<string, string[]> = { ...picks };
+    const next = { ...picks };
     for (const r of shown) {
       if (!r.live) continue; // without a live read we can't tell who's still free there
-      next[r.league.league.id] = available(r).slice(0, r.spots).map((t) => t.id);
+      const cur = (next[r.league.league.id] ?? []).slice(0, r.spots);
+      for (const s of suggestionsFor(r)) {
+        if (cur.length >= r.spots) break;
+        if (!cur.includes(s.id)) cur.push(s.id);
+      }
+      next[r.league.league.id] = cur;
     }
     setPicks(next);
   };
@@ -162,7 +223,7 @@ export default function FillOpenSpots({
     const out: string[] = [];
     for (const [id, e] of Object.entries(pmap)) {
       if (out.length >= 6) break;
-      if (!OFFENSE.has(e.p) || !e.t || taken.has(id) || !e.n.toLowerCase().includes(q)) continue;
+      if (!OFFENSE.has(e.p) || !e.t || taken.has(id) || r.players.includes(id) || !e.n.toLowerCase().includes(q)) continue;
       out.push(id);
     }
     return out;
@@ -176,39 +237,21 @@ export default function FillOpenSpots({
   };
   const bidFor = (l: LineupLeague, id: string) => {
     const k = `${l.league.id}:${id}`;
-    const raw = k in bids ? bids[k] : suggestBid(faabStats, l.league.id, pmap?.[id]?.p ?? "", bidMin(l), bidMin(l)).bid;
+    const raw = k in bids ? bids[k] : suggestBid(faabStats, l.league.id, posOf(id), bidMin(l), bidMin(l)).bid;
     const left = budgetLeft(l);
     return Math.max(bidMin(l), Math.min(raw, left ?? raw));
   };
+  const dropOptions = (r: Row) =>
+    r.players.filter((id) => !r.reserve.includes(id)).sort((a, b) => (pmap?.[b]?.rk ?? 1e9) - (pmap?.[a]?.rk ?? 1e9));
 
-  const slotsOf = (r: Row) => r.spots + (extraSlots[r.league.league.id] ?? 0);
-  // Players you could drop for an extra claim: active (non-IR) players, weakest Sleeper rank first.
-  const dropOptions = (r: Row) => {
-    const players = r.live?.players ?? r.league.roster?.players ?? [];
-    const reserve = new Set(r.live?.reserve ?? r.league.roster?.reserve ?? []);
-    return players.filter((id) => !reserve.has(id)).sort((a, b) => (pmap?.[b]?.rk ?? 1e9) - (pmap?.[a]?.rk ?? 1e9));
-  };
-  const queue = rows.flatMap((r) => {
-    const lid = r.league.league.id;
-    const list = pickList(r);
-    const seen = new Set<string>();
-    const out: { key: string; row: Row; id: string; drop?: string }[] = [];
-    for (let i = 0; i < slotsOf(r); i++) {
-      const id = list[i];
-      if (!id || seen.has(id)) continue;
-      const drop = i >= r.spots ? dropPick[`${lid}:${i}`] || undefined : undefined;
-      seen.add(id);
-      out.push({ key: `${lid}:${id}`, row: r, id, drop });
-    }
-    return out;
-  });
-  const missingDrops = rows.reduce((n, r) => {
-    let c = 0;
-    for (let i = r.spots; i < slotsOf(r); i++) if (pickList(r)[i] && !dropPick[`${r.league.league.id}:${i}`]) c++;
-    return n + c;
-  }, 0);
+  const queue = rows.flatMap((r) =>
+    pickList(r).map((id, i) => {
+      const lid = r.league.league.id;
+      return { key: `${lid}:${id}`, row: r, id, drop: i >= r.spots ? dropPick[`${lid}:${id}`] || undefined : undefined };
+    })
+  );
   const pending = queue.filter((q) => status[q.key]?.kind !== "done");
-  const nameOf = (id: string) => pmap?.[id]?.n ?? id;
+  const extraNoDrop = queue.filter((q) => pickList(q.row).indexOf(q.id) >= q.row.spots && !q.drop).length;
 
   const start = async () => {
     if (!token) return;
@@ -271,53 +314,57 @@ export default function FillOpenSpots({
     );
   };
 
+  const SOURCES: [Source, string][] = [
+    ["adds", "Most added"],
+    ["drops", "Recently dropped"],
+    ["best", "Best available"],
+    ["handcuffs", "RB handcuffs"],
+  ];
+
   return (
-    <>
-      <div className="field" style={{ alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-        <button className={`chip-filter ${only === 0 ? "on" : ""}`} onClick={() => setOnly(0)}>All ({rows.length})</button>
-        <button className={`chip-filter ${only === 1 ? "on" : ""}`} onClick={() => setOnly(1)}>1 open ({count(1)})</button>
-        <button className={`chip-filter ${only === 2 ? "on" : ""}`} onClick={() => setOnly(2)}>2 open ({count(2)})</button>
-        <button className={`chip-filter ${only === 3 ? "on" : ""}`} onClick={() => setOnly(3)}>3+ open ({count(3)})</button>
-        <span className="portmeta" style={{ marginLeft: 8 }}>Choices:</span>
-        {(
-          [
-            ["adds", "Most added (24h)"],
-            ["drops", "Recently dropped"],
-            ["best", "Best available (Sleeper rank)"],
-            ["handcuffs", "RB handcuffs"],
-          ] as const
-        ).map(([k, lbl]) => (
-          <button key={k} className={`chip-filter ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>
-            {lbl}
+    <div className="fos">
+      <div className="fos-bar">
+        <div className="fos-filters" role="group" aria-label="Filter by open spots">
+          <button className={`chip-filter ${only === 0 ? "on" : ""}`} onClick={() => setOnly(0)}>All {rows.length}</button>
+          <button className={`chip-filter ${only === 1 ? "on" : ""}`} onClick={() => setOnly(1)}>1 open · {count(1)}</button>
+          <button className={`chip-filter ${only === 2 ? "on" : ""}`} onClick={() => setOnly(2)}>2 open · {count(2)}</button>
+          <button className={`chip-filter ${only === 3 ? "on" : ""}`} onClick={() => setOnly(3)}>3+ open · {count(3)}</button>
+        </div>
+        <div className="fos-filters" role="group" aria-label="Where suggestions come from">
+          <span className="fos-label">Suggest</span>
+          {SOURCES.map(([k, lbl]) => (
+            <button key={k} className={`chip-filter ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>{lbl}</button>
+          ))}
+        </div>
+        <div className="fos-actions">
+          <button className="btn ghost sm" disabled={running || liveLoading} onClick={autoFill} title="Fill every shown league's open spots with its top suggestions">
+            Auto-fill open spots
           </button>
-        ))}
-        <span style={{ flex: 1 }} />
-        <button className="chip-filter" disabled={running || liveLoading} onClick={autoFill} title="Fill every shown league's open spots with the top choices still free there (current Choices list)">
-          Fill shown with top choices
-        </button>
-        {running ? (
-          <button className="btn ghost" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
-        ) : (
-          <button className="btn" disabled={!token || pending.length === 0} onClick={() => setConfirming(true)}>
-            Add {pending.length} player{pending.length === 1 ? "" : "s"}
-          </button>
-        )}
+          {running ? (
+            <button className="btn ghost sm" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
+          ) : (
+            <button className="btn sm" disabled={!token || pending.length === 0} onClick={() => setConfirming(true)}>
+              Send {pending.length || ""} {pending.length === 1 ? "claim" : "claims"}
+            </button>
+          )}
+        </div>
       </div>
-      <p className="hint" style={{ margin: "0 0 10px" }}>
-        {liveLoading ? "Reading rosters live from Sleeper…" : "Open spots and who's still free are read live from Sleeper."} Choices (pick a list above): Sleeper&rsquo;s most-added or
-        most-dropped players in the last 24h, the best available by Sleeper&rsquo;s own rank (their popularity rank — Sleeper doesn&rsquo;t publish roster %),
-        or RB handcuffs from Sleeper&rsquo;s depth chart (your own starters&rsquo; backups first) — always only players still free in that league. Or search anyone. No drop is needed; a player on waivers becomes a claim.
+      <p className="fos-note">
+        {liveLoading ? "Reading rosters live from Sleeper… " : ""}
+        Tap a suggestion to queue it. Suggestions are always players still free in that league, positions you&rsquo;re short at first.
+        {source === "best" && " “Best available” uses Sleeper’s own popularity rank — Sleeper doesn’t publish roster %."}
+        {source === "handcuffs" && " Handcuffs come from Sleeper’s depth chart; backups to RBs you roster are marked YOUR."}
       </p>
-      {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above to send.</p>}
-      {missingDrops > 0 && (
-        <p className="hint" style={{ color: "var(--amber)" }}>
-          {missingDrops} extra claim{missingDrops === 1 ? " has" : "s have"} no drop — fine for waiver claims (they compete for your open spot{" "}
-          and only go through if a spot is still open when waivers run), but a free agent can&rsquo;t be added without room, so Sleeper will refuse that one.
+      {!token && <p className="fos-note fos-warn">Connect write access above to send.</p>}
+      {extraNoDrop > 0 && (
+        <p className="fos-note fos-warn">
+          {extraNoDrop} claim{extraNoDrop === 1 ? "" : "s"} beyond your open spots ha{extraNoDrop === 1 ? "s" : "ve"} no drop — fine for waiver claims (they compete for the spot,
+          first in your order wins), but a free agent can&rsquo;t be added without room.
         </p>
       )}
       {confirming && (
         <BulkConfirm
-          title={`Add ${pending.length} player${pending.length === 1 ? "" : "s"} across ${new Set(pending.map((q) => q.row.league.league.id)).size} leagues (no drops)`}
+          title={`Send ${pending.length} add${pending.length === 1 ? "" : "s"} / claim${pending.length === 1 ? "" : "s"} across ${new Set(pending.map((q) => q.row.league.league.id)).size} leagues`}
           lines={pending.map((q) => (
             <span key={q.key}>
               {q.row.league.league.name}: add {nameOf(q.id)}
@@ -330,148 +377,191 @@ export default function FillOpenSpots({
           onCancel={() => setConfirming(false)}
         />
       )}
-      {summary && <p className="hint" style={{ color: summaryColor ?? "var(--bone)", fontWeight: summaryColor ? 650 : undefined }}>{summary}</p>}
+      {summary && <p className="fos-note" style={{ color: summaryColor ?? "var(--bone)", fontWeight: summaryColor ? 650 : undefined }}>{summary}</p>}
 
       {shown.length === 0 ? (
-        <p className="hint">{rows.length === 0 ? "Every roster is full right now — nothing to add without a drop." : "No leagues match this filter."}</p>
+        <p className="fos-note">{rows.length === 0 ? (liveLoading ? "Loading…" : "Every roster is full right now — nothing to add without a drop.") : "No leagues match this filter."}</p>
       ) : (
-        <div className="mgrtable-scroll">
-          <DataTable>
-            <TableHeaderRow>
-              <span style={{ flex: "0 0 220px" }}>League</span>
-              <span style={{ flex: 1 }}>Who to add (one per open spot)</span>
-            </TableHeaderRow>
-            {shown.map((r) => {
-              const l = r.league;
-              const opts = available(r);
-              const list = pickList(r);
-              const matches = searchMatches(r);
-              return (
-                <TableRow key={l.league.id}>
-                  <span style={{ flex: "0 0 220px", minWidth: 0 }}>
-                    <Link href={`/manager/${l.league.id}`} className="tname">{l.league.name}</Link>
-                    <span className="portmeta" style={{ display: "block", color: "var(--mint)", fontWeight: 600 }}>
-                      {r.spots} open{!r.live ? " · couldn't read live" : ""}
-                      {budgetLeft(l) != null ? ` · $${budgetLeft(l)} FAAB left` : ""}
-                    </span>
+        <div className="fos-list">
+          {shown.map((r) => {
+            const l = r.league;
+            const lid = l.league.id;
+            const list = pickList(r);
+            const needs = needsOf(r);
+            const sugg = suggestionsFor(r).filter((s) => !list.includes(s.id));
+            const visible = more.has(lid) ? sugg.slice(0, 24) : sugg.slice(0, 8);
+            const left = budgetLeft(l);
+            const irCap = inner(l.league.settings, "reserve_slots");
+            const byPos = new Map<string, string[]>();
+            for (const id of r.players.filter((x) => !r.reserve.includes(x))) {
+              const p = POS_ORDER.includes(posOf(id)) ? posOf(id) : "OTH";
+              byPos.set(p, [...(byPos.get(p) ?? []), id]);
+            }
+            const matches = searchMatches(r);
+            return (
+              <section key={lid} className="fos-league" aria-label={l.league.name}>
+                <header className="fos-head">
+                  <Link href={`/manager/${lid}`} className="fos-name">{l.league.name}</Link>
+                  <span className="fos-spots" title={`${r.spots} empty roster spot${r.spots === 1 ? "" : "s"}`}>
+                    {Array.from({ length: r.spots }, (_, i) => (
+                      <span key={i} className={`fos-dot ${i < Math.min(list.length, r.spots) ? "filled" : ""}`} />
+                    ))}
+                    <b>{r.spots} open</b>
                   </span>
-                  <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-                    {Array.from({ length: slotsOf(r) }, (_, i) => {
-                      const id = list[i] ?? "";
-                      const k = `${l.league.id}:${id}`;
-                      const extra = id && !opts.some((o) => o.id === id) ? [{ id, count: 0 }] : [];
+                  <span className="fos-meta">
+                    {left != null ? `$${left} FAAB` : "no FAAB"}
+                    {irCap > 0 ? ` · IR ${r.reserve.length}/${irCap}` : ""}
+                    {!r.live ? " · not read live" : ""}
+                  </span>
+                </header>
+
+                <div className="fos-roster">
+                  {POS_ORDER.concat("OTH").filter((p) => byPos.has(p)).map((p) => (
+                    <div key={p} className="fos-posrow">
+                      <span className="fos-pos" style={posChipStyle(p === "OTH" ? "" : p)}>{p}</span>
+                      <span className="fos-players">
+                        {byPos.get(p)!.map((id) => {
+                          const inj = pmap?.[id]?.inj ?? "";
+                          const starting = r.starters.includes(id);
+                          return (
+                            <span key={id} className={`fos-pl ${starting ? "start" : ""} ${isOut(id) ? "out" : ""}`} title={`${nameOf(id)}${starting ? " — starting" : ""}${inj ? ` — ${inj}` : ""}`}>
+                              {nameOf(id).split(" ").slice(-1)[0]}
+                              {inj && <sup>{INJ_SHORT[inj] ?? inj}</sup>}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                  {r.reserve.length > 0 && (
+                    <div className="fos-posrow">
+                      <span className="fos-pos fos-ir">IR</span>
+                      <span className="fos-players">
+                        {r.reserve.map((id) => (
+                          <span key={id} className="fos-pl out" title={`${nameOf(id)} — on IR`}>{nameOf(id).split(" ").slice(-1)[0]}</span>
+                        ))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="fos-needs">
+                  <span className="fos-label">Need</span>
+                  {needs.length === 0 ? (
+                    <span className="fos-ok">Depth looks fine — add the best player available</span>
+                  ) : (
+                    needs.map((n) => (
+                      <span key={n.pos} className={`fos-need ${n.short ? "short" : ""}`}>
+                        {n.pos} {n.short ? `short · ${Math.max(0, n.healthy)} healthy for ${n.slots}` : "no backup"}
+                      </span>
+                    ))
+                  )}
+                </div>
+
+                {list.length > 0 && (
+                  <ol className="fos-queue" aria-label="Your claims in this league, in priority order">
+                    {list.map((id, i) => {
+                      const k = `${lid}:${id}`;
+                      const extra = i >= r.spots;
                       return (
-                        <span key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <select className="select sm" value={id} disabled={running} onChange={(e) => setPick(r, i, e.target.value)} style={{ minWidth: 260 }}>
-                            <option value="">{i < r.spots ? `— spot ${i + 1}: leave open —` : `— extra claim ${i - r.spots + 1}: pick a player —`}</option>
-                            {([...extra, ...opts] as { id: string; count: number; note?: string }[]).map((o) => (
-                              <option key={o.id} value={o.id} disabled={o.id !== id && list.includes(o.id)}>
-                                {nameOf(o.id)} · {pmap?.[o.id]?.p} {pmap?.[o.id]?.t}
-                                {o.note ? ` · ${o.note}` : o.count ? ` · +${o.count.toLocaleString()} adds` : ""}
-                                {pmap?.[o.id]?.inj ? ` (${pmap[o.id].inj})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                          {id && pmap?.[id]?.p && <span className="pos" style={posChipStyle(pmap[id].p)}>{pmap[id].p}</span>}
-                          {id && isFaab(l) && (
-                            <label className="portmeta" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              bid $
+                        <li key={id} className={`fos-q ${extra ? "extra" : ""}`}>
+                          <span className="fos-qn">{i + 1}</span>
+                          <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
+                          <span className="fos-qname">
+                            {nameOf(id)} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
+                            <span className="fos-sub">{extra ? "extra claim — competes for the spot" : "fills an open spot · no drop"}</span>
+                          </span>
+                          {extra && (
+                            <select
+                              className="select sm"
+                              value={dropPick[k] ?? ""}
+                              disabled={running}
+                              onChange={(e) => setDropPick((d) => ({ ...d, [k]: e.target.value }))}
+                              aria-label={`Drop for ${nameOf(id)} (optional)`}
+                            >
+                              <option value="">no drop</option>
+                              {dropOptions(r).map((d) => (
+                                <option key={d} value={d} disabled={Object.entries(dropPick).some(([kk, v]) => v === d && kk.startsWith(`${lid}:`) && kk !== k)}>
+                                  drop {nameOf(d)}{r.starters.includes(d) ? " (starting)" : ""}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {isFaab(l) && (
+                            <label className="fos-bid">
+                              $
                               <input
-                                className="input"
                                 type="number"
                                 min={bidMin(l)}
-                                max={budgetLeft(l) ?? undefined}
+                                max={left ?? undefined}
                                 value={bidFor(l, id)}
                                 disabled={running}
-                                onChange={(e) => setBids((b) => ({ ...b, [k]: Number(e.target.value) || 0 }))}
-                                style={{ width: 64 }}
+                                onChange={(e) => setBids((b) => ({ ...b, [k]: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
+                                aria-label={`FAAB bid for ${nameOf(id)}`}
                               />
                             </label>
                           )}
-                          {i >= r.spots && (
-                            <select
-                              className="select sm"
-                              value={dropPick[`${l.league.id}:${i}`] ?? ""}
-                              disabled={running}
-                              onChange={(e) => setDropPick((d) => ({ ...d, [`${l.league.id}:${i}`]: e.target.value }))}
-                              style={{ minWidth: 200 }}
-                              aria-label="Player to drop for this claim (optional)"
-                            >
-                              <option value="">— no drop (optional) —</option>
-                              {dropOptions(r).map((d) => {
-                                const usedElsewhere = Object.entries(dropPick).some(([kk, v]) => v === d && kk.startsWith(`${l.league.id}:`) && kk !== `${l.league.id}:${i}`);
-                                const starting = (r.live?.starters ?? l.roster?.starters ?? []).includes(d);
-                                return (
-                                  <option key={d} value={d} disabled={usedElsewhere}>
-                                    drop {nameOf(d)} · {pmap?.[d]?.p}{starting ? " (starting)" : ""}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          )}
-                          {i >= r.spots && i === slotsOf(r) - 1 && (
-                            <button
-                              type="button"
-                              className="chip-filter"
-                              disabled={running}
-                              title="Remove this extra claim"
-                              onClick={() => {
-                                setExtraSlots((x) => ({ ...x, [l.league.id]: Math.max(0, (x[l.league.id] ?? 0) - 1) }));
-                                setPicks((p) => ({ ...p, [l.league.id]: (p[l.league.id] ?? []).slice(0, i) }));
-                                setDropPick((d) => {
-                                  const n = { ...d };
-                                  delete n[`${l.league.id}:${i}`];
-                                  return n;
-                                });
-                              }}
-                            >
-                              ✕
-                            </button>
-                          )}
-                          {id && <StatusCell status={status[k]} />}
-                        </span>
+                          <span className="fos-qctl">
+                            <button type="button" className="fos-icon" disabled={running || i === 0} onClick={() => movePick(r, id, -1)} aria-label="Move up">↑</button>
+                            <button type="button" className="fos-icon" disabled={running || i === list.length - 1} onClick={() => movePick(r, id, 1)} aria-label="Move down">↓</button>
+                            <button type="button" className="fos-icon" disabled={running} onClick={() => removePick(r, id)} aria-label={`Remove ${nameOf(id)}`}>✕</button>
+                          </span>
+                          <StatusCell status={status[k]} />
+                        </li>
                       );
                     })}
-                    <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                      <button
-                        type="button"
-                        className="chip-filter"
-                        disabled={running}
-                        onClick={() => setExtraSlots((x) => ({ ...x, [l.league.id]: (x[l.league.id] ?? 0) + 1 }))}
-                        title="Line up another claim in this league — a drop is optional"
-                      >
-                        + another claim
-                      </button>
-                      <input
-                        className="input"
-                        style={{ maxWidth: 220 }}
-                        placeholder="Search anyone free here…"
-                        value={search[l.league.id] ?? ""}
-                        disabled={running}
-                        onChange={(e) => setSearch((s) => ({ ...s, [l.league.id]: e.target.value }))}
-                      />
-                      {matches.map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          className="chip-filter"
-                          onClick={() => {
-                            const free = Array.from({ length: slotsOf(r) }, (_, i) => list[i] ?? "").findIndex((x) => !x);
-                            setPick(r, free < 0 ? slotsOf(r) - 1 : free, id);
-                            setSearch((s) => ({ ...s, [l.league.id]: "" }));
-                          }}
-                        >
-                          + {nameOf(id)} · {pmap?.[id]?.p} {pmap?.[id]?.t}
-                        </button>
-                      ))}
-                    </span>
-                  </span>
-                </TableRow>
-              );
-            })}
-          </DataTable>
+                  </ol>
+                )}
+
+                <div className="fos-sugg">
+                  {visible.map((s) => (
+                    <button key={s.id} type="button" className="fos-card" disabled={running} onClick={() => addPick(r, s.id)} title={`Queue ${nameOf(s.id)}`}>
+                      <PlayerAvatar playerId={s.id} pos={posOf(s.id)} size={30} />
+                      <span className="fos-cbody">
+                        <span className="fos-cname">{nameOf(s.id)}</span>
+                        <span className="fos-cmeta">
+                          <span className="pos" style={posChipStyle(posOf(s.id))}>{posOf(s.id)}</span> {pmap?.[s.id]?.t}
+                          {pmap?.[s.id]?.inj ? <span className="fos-inj"> {INJ_SHORT[pmap[s.id].inj!] ?? pmap[s.id].inj}</span> : null}
+                        </span>
+                        {s.note && <span className="fos-cnote">{s.note}</span>}
+                      </span>
+                      <span className="fos-plus" aria-hidden>+</span>
+                    </button>
+                  ))}
+                  {sugg.length === 0 && <span className="fos-note">{r.live ? "Nobody from this list is free here." : "Couldn't read this league live, so availability is unknown — search instead."}</span>}
+                </div>
+                <div className="fos-foot">
+                  {sugg.length > 8 && (
+                    <button type="button" className="fos-link" onClick={() => setMore((m) => { const n = new Set(m); if (n.has(lid)) n.delete(lid); else n.add(lid); return n; })}>
+                      {more.has(lid) ? "Show fewer" : `Show ${Math.min(24, sugg.length) - 8} more`}
+                    </button>
+                  )}
+                  <input
+                    className="input fos-search"
+                    placeholder="Search anyone free here…"
+                    value={search[lid] ?? ""}
+                    disabled={running}
+                    onChange={(e) => setSearch((s) => ({ ...s, [lid]: e.target.value }))}
+                  />
+                  {matches.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="chip-filter"
+                      onClick={() => {
+                        addPick(r, id);
+                        setSearch((s) => ({ ...s, [lid]: "" }));
+                      }}
+                    >
+                      + {nameOf(id)} · {posOf(id)} {pmap?.[id]?.t}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
-    </>
+    </div>
   );
 }
