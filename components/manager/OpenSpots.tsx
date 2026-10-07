@@ -10,6 +10,7 @@ import { StatCard, StatCardGrid } from "./StatCard";
 import { DataTable, TableRow } from "./DataRow";
 import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkAdd from "./BulkAdd";
+import FillOpenSpots from "./FillOpenSpots";
 import { useDropRank } from "./useDropRank";
 import type { LineupLeague } from "./LineupManager";
 
@@ -116,23 +117,9 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
       </section>
 
       <section className="sec">
-        {leagues.length === 0 ? (
-          <p className="hint">No in-season leagues synced yet.</p>
-        ) : open.length === 0 ? (
-          <p className="hint">Every roster is full right now — nothing to add without a drop.</p>
-        ) : (
-          <DataTable>
-            {open.map((l) => (
-              <TableRow as="link" href={`/manager/${l.leagueId}`} key={l.leagueId}>
-                <span className="tname" style={{ flex: 1 }}>{l.leagueName}</span>
-                <span className="portmeta">{l.active}/{l.limit} filled</span>
-                <span className="portmeta" style={{ color: "var(--mint)", fontWeight: 600, minWidth: 70, textAlign: "right" }}>
-                  {l.spots} open
-                </span>
-              </TableRow>
-            ))}
-          </DataTable>
-        )}
+        <SectionHead title="Fill your open spots" right="pick who to add in each league" />
+        <ConnectWriteAccess onTokenReady={setToken} />
+        {leagues.length === 0 ? <p className="hint">No in-season leagues synced yet.</p> : <FillOpenSpots leagues={leagues} pmap={pmap} token={token} />}
       </section>
 
       <section className="sec">
@@ -178,10 +165,9 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
       {open.length > 0 && (
         <section className="sec">
           <SectionHead
-            title="Waiver a player into these leagues"
+            title="Or add the same player everywhere"
             right={`${open.length} league${open.length === 1 ? "" : "s"}, no drop needed`}
           />
-          <ConnectWriteAccess onTokenReady={setToken} />
           <BulkAdd leagues={openLeagues} pmap={pmap} token={token} prefs={prefs} />
         </section>
       )}
