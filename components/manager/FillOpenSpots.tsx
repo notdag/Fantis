@@ -78,6 +78,10 @@ export default function FillOpenSpots({
   const [bids, setBids] = useState<Record<string, number>>({}); // "leagueId:playerId" -> bid
   const [search, setSearch] = useState<Record<string, string>>({});
   const [more, setMore] = useState<Set<string>>(new Set());
+  // Multi-league view: leagues collapse to a one-line summary once there are more than a few; open any to edit.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+  const [needFilter, setNeedFilter] = useState<string | null>(null); // "RB" etc — only leagues short/thin there
+  const [flash, setFlash] = useState("");
   const [status, setStatus] = useState<Record<string, TaskStatus>>({});
   const [confirming, setConfirming] = useState(false);
   const [running, setRunning] = useState(false);
@@ -121,7 +125,7 @@ export default function FillOpenSpots({
     }
     return out.sort((a, b) => b.spots - a.spots || a.league.league.name.localeCompare(b.league.league.name));
   }, [candidates, live]);
-  const shown = rows.filter((r) => only === 0 || (only === 3 ? r.spots >= 3 : r.spots === only));
+  const shownBySpots = rows.filter((r) => only === 0 || (only === 3 ? r.spots >= 3 : r.spots === only));
   const count = (n: 1 | 2 | 3) => rows.filter((r) => (n === 3 ? r.spots >= 3 : r.spots === n)).length;
 
   // Sleeper ranks for everyone on a team, best first — reused by "best available" and "handcuffs".
@@ -253,6 +257,49 @@ export default function FillOpenSpots({
   const pending = queue.filter((q) => status[q.key]?.kind !== "done");
   const extraNoDrop = queue.filter((q) => pickList(q.row).indexOf(q.id) >= q.row.spots && !q.drop).length;
 
+  // ---- multi-league helpers
+  const needsByLeague = new Map(shownBySpots.map((r) => [r.league.league.id, needsOf(r)]));
+  const needCounts = ["QB", "RB", "WR", "TE"].map((p) => [p, shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === p || (n.pos === "FLEX" && p !== "QB"))).length] as const);
+  const shown = needFilter
+    ? shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === needFilter || (n.pos === "FLEX" && needFilter !== "QB")))
+    : shownBySpots;
+  const isOpen = (lid: string) => openMap[lid] ?? shown.length <= 3;
+  const setAllOpen = (on: boolean) => setOpenMap(Object.fromEntries(shown.map((r) => [r.league.league.id, on])));
+  const unfilled = shown.filter((r) => pickList(r).length < r.spots);
+  const queuedLeagues = new Set(queue.map((q) => q.row.league.league.id)).size;
+  // Players that are free in several of the shown leagues — one tap queues him wherever he's free and you still have an empty spot.
+  const across = (() => {
+    const agg = new Map<string, { s: Suggestion; leagues: Row[] }>();
+    for (const r of shown) {
+      if (!r.live) continue;
+      for (const s of suggestionsFor(r).slice(0, 30)) {
+        const a = agg.get(s.id) ?? { s, leagues: [] };
+        a.leagues.push(r);
+        agg.set(s.id, a);
+      }
+    }
+    return [...agg.values()].filter((a) => a.leagues.length >= 2).sort((a, b) => b.leagues.length - a.leagues.length).slice(0, 12);
+  })();
+  const queueEverywhere = (id: string, leaguesFree: Row[]) => {
+    let n = 0;
+    const next = { ...picks };
+    for (const r of leaguesFree) {
+      const cur = next[r.league.league.id] ?? [];
+      if (cur.includes(id) || cur.length >= r.spots) continue; // only into a still-empty spot — never an extra claim
+      next[r.league.league.id] = [...cur, id];
+      n++;
+    }
+    setPicks(next);
+    setFlash(n ? `Queued ${nameOf(id)} in ${n} league${n === 1 ? "" : "s"} with an empty spot.` : `${nameOf(id)} — no league with an empty spot left to put him in.`);
+  };
+  const nextUnfilled = () => {
+    const r = unfilled[0];
+    if (!r) return;
+    const lid = r.league.league.id;
+    setOpenMap((m) => ({ ...m, [lid]: true }));
+    requestAnimationFrame(() => document.getElementById(`fos-${lid}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
   const start = async () => {
     if (!token) return;
     setConfirming(false);
@@ -330,11 +377,28 @@ export default function FillOpenSpots({
           <button className={`chip-filter ${only === 2 ? "on" : ""}`} onClick={() => setOnly(2)}>2 open · {count(2)}</button>
           <button className={`chip-filter ${only === 3 ? "on" : ""}`} onClick={() => setOnly(3)}>3+ open · {count(3)}</button>
         </div>
+        <div className="fos-filters" role="group" aria-label="Filter by what the league needs">
+          <span className="fos-label">Needs</span>
+          {needCounts.map(([p, n]) => (
+            <button key={p} className={`chip-filter ${needFilter === p ? "on" : ""}`} disabled={n === 0 && needFilter !== p} onClick={() => setNeedFilter((f) => (f === p ? null : p))}>
+              {p} · {n}
+            </button>
+          ))}
+        </div>
         <div className="fos-filters" role="group" aria-label="Where suggestions come from">
           <span className="fos-label">Suggest</span>
           {SOURCES.map(([k, lbl]) => (
             <button key={k} className={`chip-filter ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>{lbl}</button>
           ))}
+        </div>
+        <div className="fos-status" aria-live="polite">
+          <b>{queue.length}</b> queued in <b>{queuedLeagues}</b> league{queuedLeagues === 1 ? "" : "s"} ·{" "}
+          <span className={unfilled.length ? "fos-warn" : ""}>{unfilled.length} still {unfilled.length === 1 ? "has" : "have"} an empty spot</span>
+          {unfilled.length > 0 && (
+            <button type="button" className="fos-link" onClick={nextUnfilled}>Next ›</button>
+          )}
+          <button type="button" className="fos-link" onClick={() => setAllOpen(true)}>Expand all</button>
+          <button type="button" className="fos-link" onClick={() => setAllOpen(false)}>Collapse all</button>
         </div>
         <div className="fos-actions">
           <button className="btn ghost sm" disabled={running || liveLoading} onClick={autoFill} title="Fill every shown league's open spots with its top suggestions">
@@ -379,6 +443,34 @@ export default function FillOpenSpots({
       )}
       {summary && <p className="fos-note" style={{ color: summaryColor ?? "var(--bone)", fontWeight: summaryColor ? 650 : undefined }}>{summary}</p>}
 
+      {flash && <p className="fos-note fos-flash">{flash}</p>}
+      {across.length > 0 && (
+        <div className="fos-across">
+          <div className="fos-across-head">
+            <span className="fos-label">Across your leagues</span>
+            <span className="fos-note">free in several of the leagues shown — tap to queue him in every one that still has an empty spot</span>
+          </div>
+          <div className="fos-sugg">
+            {across.map(({ s, leagues: ls }) => {
+              const room = ls.filter((r) => pickList(r).length < r.spots && !pickList(r).includes(s.id)).length;
+              return (
+                <button key={s.id} type="button" className="fos-card" disabled={running || room === 0} onClick={() => queueEverywhere(s.id, ls)} title={`Queue ${nameOf(s.id)} in ${room} league${room === 1 ? "" : "s"}`}>
+                  <PlayerAvatar playerId={s.id} pos={posOf(s.id)} size={30} />
+                  <span className="fos-cbody">
+                    <span className="fos-cname">{nameOf(s.id)}</span>
+                    <span className="fos-cmeta">
+                      <span className="pos" style={posChipStyle(posOf(s.id))}>{posOf(s.id)}</span> {pmap?.[s.id]?.t}
+                      {pmap?.[s.id]?.inj ? <span className="fos-inj"> {INJ_SHORT[pmap[s.id].inj!] ?? pmap[s.id].inj}</span> : null}
+                    </span>
+                    <span className="fos-cnote">free in {ls.length} · {room ? `fits ${room}` : "no empty spot left"}</span>
+                  </span>
+                  <span className="fos-plus fos-plus-n" aria-hidden>{room ? `+${room}` : "✓"}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {shown.length === 0 ? (
         <p className="fos-note">{rows.length === 0 ? (liveLoading ? "Loading…" : "Every roster is full right now — nothing to add without a drop.") : "No leagues match this filter."}</p>
       ) : (
@@ -399,8 +491,17 @@ export default function FillOpenSpots({
             }
             const matches = searchMatches(r);
             return (
-              <section key={lid} className="fos-league" aria-label={l.league.name}>
+              <section key={lid} id={`fos-${lid}`} className={`fos-league ${isOpen(lid) ? "open" : "closed"}`} aria-label={l.league.name}>
                 <header className="fos-head">
+                  <button
+                    type="button"
+                    className="fos-toggle"
+                    aria-expanded={isOpen(lid)}
+                    aria-controls={`fos-body-${lid}`}
+                    onClick={() => setOpenMap((m) => ({ ...m, [lid]: !isOpen(lid) }))}
+                  >
+                    <span className="fos-chev" aria-hidden>{isOpen(lid) ? "▾" : "▸"}</span>
+                  </button>
                   <Link href={`/manager/${lid}`} className="fos-name">{l.league.name}</Link>
                   <span className="fos-spots" title={`${r.spots} empty roster spot${r.spots === 1 ? "" : "s"}`}>
                     {Array.from({ length: r.spots }, (_, i) => (
@@ -414,6 +515,21 @@ export default function FillOpenSpots({
                     {!r.live ? " · not read live" : ""}
                   </span>
                 </header>
+                {!isOpen(lid) && (
+                  <button type="button" className="fos-compact" onClick={() => setOpenMap((m) => ({ ...m, [lid]: true }))}>
+                    {needs.filter((n) => n.short).map((n) => (
+                      <span key={n.pos} className="fos-need short">{n.pos} short</span>
+                    ))}
+                    {needs.filter((n) => !n.short).map((n) => (
+                      <span key={n.pos} className="fos-need">{n.pos} thin</span>
+                    ))}
+                    <span className="fos-compact-q">
+                      {list.length ? list.map((id) => nameOf(id).split(" ").slice(-1)[0]).join(", ") : "nothing queued — open to pick"}
+                    </span>
+                  </button>
+                )}
+                {isOpen(lid) && (
+                <div id={`fos-body-${lid}`} className="fos-body">
 
                 <div className="fos-roster">
                   {POS_ORDER.concat("OTH").filter((p) => byPos.has(p)).map((p) => (
@@ -557,6 +673,8 @@ export default function FillOpenSpots({
                     </button>
                   ))}
                 </div>
+                </div>
+                )}
               </section>
             );
           })}

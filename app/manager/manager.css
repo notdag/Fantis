@@ -559,3 +559,21 @@
   .fos-roster{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){.fos-card{transition:none}}
+/* multi-league: sticky status bar, collapsed one-line leagues, cross-league picks */
+.fos-bar{position:sticky;top:0;z-index:5;background:var(--ink)}
+.fos-status{font-size:12.5px;color:var(--muted);display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.fos-status b{color:var(--bone);font-variant-numeric:tabular-nums}
+.fos-flash{color:var(--mint)}
+.fos-across{display:flex;flex-direction:column;gap:8px;padding:12px 0 16px;border-bottom:1px solid var(--line)}
+.fos-across-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.fos-plus-n{width:auto;min-width:24px;padding:0 7px;border-radius:999px;font-size:12px;font-variant-numeric:tabular-nums}
+.fos-toggle{flex:none;width:24px;height:24px;border:0;background:none;color:var(--muted);cursor:pointer;border-radius:6px;align-self:center}
+.fos-toggle:hover{color:var(--bone);background:var(--line-soft)}
+.fos-toggle:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+.fos-chev{font-size:11px}
+.fos-league.closed{padding:10px 0;gap:6px}
+.fos-compact{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 0 0 30px;border:0;background:none;text-align:left;font:inherit;cursor:pointer}
+.fos-compact-q{font-size:12.5px;color:var(--muted)}
+.fos-compact:hover .fos-compact-q{color:var(--bone)}
+.fos-body{display:flex;flex-direction:column;gap:12px;padding-left:30px}
+@media (max-width:640px){.fos-body,.fos-compact{padding-left:0}.fos-bar{position:static}}
