@@ -42,7 +42,9 @@ export default function FillOpenSpots({
   token: string | null;
   onSent?: () => void;
 }) {
-  // Extra claims beyond the open spots: each needs a drop (chosen per row), so you can line up several claims in one league.
+  // Extra claims beyond the open spots, so you can line up several claims in one league. A drop is OPTIONAL: Sleeper accepts a
+  // claim with no drop even when you'd be one over — it simply fails at waiver time if no spot is open by then (e.g. once an
+  // earlier claim of yours fills it), which is exactly how stacking claims for one spot works in the Sleeper app.
   const [extraSlots, setExtraSlots] = useState<Record<string, number>>({});
   const [dropPick, setDropPick] = useState<Record<string, string>>({}); // "leagueId:slotIndex" -> player to drop
   const refresh = useRefreshLeagues();
@@ -194,8 +196,7 @@ export default function FillOpenSpots({
     for (let i = 0; i < slotsOf(r); i++) {
       const id = list[i];
       if (!id || seen.has(id)) continue;
-      const drop = i >= r.spots ? dropPick[`${lid}:${i}`] : undefined;
-      if (i >= r.spots && !drop) continue; // an extra claim without a drop can't be placed
+      const drop = i >= r.spots ? dropPick[`${lid}:${i}`] || undefined : undefined;
       seen.add(id);
       out.push({ key: `${lid}:${id}`, row: r, id, drop });
     }
@@ -249,7 +250,9 @@ export default function FillOpenSpots({
       },
     }));
     const doneKeys: string[] = [];
+    // One at a time: several claims in the same league must reach Sleeper in the order shown (that's your claim priority).
     const result = await runBulk(tasks, {
+      concurrency: 1,
       signal: abortRef.current,
       onStatus: (key, s) => {
         if (s.kind === "done") doneKeys.push(key);
@@ -308,7 +311,8 @@ export default function FillOpenSpots({
       {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above to send.</p>}
       {missingDrops > 0 && (
         <p className="hint" style={{ color: "var(--amber)" }}>
-          {missingDrops} extra claim{missingDrops === 1 ? " needs" : "s need"} a player to drop before {missingDrops === 1 ? "it" : "they"} can be sent.
+          {missingDrops} extra claim{missingDrops === 1 ? " has" : "s have"} no drop — fine for waiver claims (they compete for your open spot{" "}
+          and only go through if a spot is still open when waivers run), but a free agent can&rsquo;t be added without room, so Sleeper will refuse that one.
         </p>
       )}
       {confirming && (
@@ -390,10 +394,10 @@ export default function FillOpenSpots({
                               value={dropPick[`${l.league.id}:${i}`] ?? ""}
                               disabled={running}
                               onChange={(e) => setDropPick((d) => ({ ...d, [`${l.league.id}:${i}`]: e.target.value }))}
-                              style={{ minWidth: 200, borderColor: id && !dropPick[`${l.league.id}:${i}`] ? "var(--amber)" : undefined }}
-                              aria-label="Player to drop for this claim"
+                              style={{ minWidth: 200 }}
+                              aria-label="Player to drop for this claim (optional)"
                             >
-                              <option value="">— drop who? —</option>
+                              <option value="">— no drop (optional) —</option>
                               {dropOptions(r).map((d) => {
                                 const usedElsewhere = Object.entries(dropPick).some(([kk, v]) => v === d && kk.startsWith(`${l.league.id}:`) && kk !== `${l.league.id}:${i}`);
                                 const starting = (r.live?.starters ?? l.roster?.starters ?? []).includes(d);
@@ -434,9 +438,9 @@ export default function FillOpenSpots({
                         className="chip-filter"
                         disabled={running}
                         onClick={() => setExtraSlots((x) => ({ ...x, [l.league.id]: (x[l.league.id] ?? 0) + 1 }))}
-                        title="Add another claim in this league — it needs a player to drop"
+                        title="Line up another claim in this league — a drop is optional"
                       >
-                        + another claim (with a drop)
+                        + another claim
                       </button>
                       <input
                         className="input"
