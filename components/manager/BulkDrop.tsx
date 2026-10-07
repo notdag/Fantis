@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { preflightRosters } from "@/lib/liveRosters";
-import { addDropFreeAgent } from "@/lib/sleeperWrite";
+import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -53,6 +53,28 @@ export default function BulkDrop({
   const abortRef = useRef({ aborted: false });
   const refresh = useRefreshLeagues();
   const priority = useMemo(() => new Set(prefs.priority), [prefs.priority]);
+  // Optional: add someone in his place in the same move (add + drop). If the player is on waivers there it becomes a claim with
+  // that drop (FAAB bid below, never under the league's minimum). If he's already taken in a league, that league is skipped —
+  // nothing is released there, so you never lose a player without getting the replacement.
+  const [replaceWith, setReplaceWith] = useState<string | null>(null);
+  const [repQuery, setRepQuery] = useState("");
+  const [bid, setBid] = useState(1);
+  const repMatches = useMemo(() => {
+    const q = repQuery.trim().toLowerCase();
+    if (q.length < 2 || !pmap) return [];
+    const out: string[] = [];
+    for (const [id, e] of Object.entries(pmap)) {
+      if (out.length >= 8) break;
+      if (!["QB", "RB", "WR", "TE"].includes(e.p) || !e.t || !e.n.toLowerCase().includes(q)) continue;
+      out.push(id);
+    }
+    return out.sort((a, b) => (pmap[a]?.rk ?? 1e9) - (pmap[b]?.rk ?? 1e9));
+  }, [repQuery, pmap]);
+  const leagueSetting = (leagueId: string, key: string) => {
+    const s = leagues.find((l) => l.league.id === leagueId)?.league.settings as Record<string, unknown> | undefined;
+    const v = s && typeof s.settings === "object" && s.settings ? (s.settings as Record<string, unknown>)[key] : undefined;
+    return typeof v === "number" ? v : 0;
+  };
 
   // How many of your leagues roster each player — the search only offers players you actually have.
   const exposure = useMemo(() => {
@@ -127,6 +149,22 @@ export default function BulkDrop({
         const p = pre[r.leagueId];
         if (p?.blocked) throw new Error(p.blocked);
         if (p?.fresh && !p.fresh.players.includes(r.playerId)) throw new Error(`${nameOf(r.playerId)} is no longer on this roster — nothing sent.`);
+        if (replaceWith) {
+          if (p?.fresh?.allRostered?.includes(replaceWith) || p?.fresh?.players.includes(replaceWith)) {
+            throw new Error(`${nameOf(replaceWith)} is already on a roster here — nothing released in this league.`);
+          }
+          const base = { leagueId: r.leagueId, rosterId: r.rosterId, addPlayerId: replaceWith, dropPlayerId: r.playerId };
+          try {
+            await addDropFreeAgent(token, base);
+            return `swapped for ${nameOf(replaceWith)}`;
+          } catch (e) {
+            if (!(e instanceof Error && /waiver/i.test(e.message))) throw e;
+            const faab = leagueSetting(r.leagueId, "waiver_type") === 2;
+            const b = faab ? Math.max(bid, leagueSetting(r.leagueId, "waiver_bid_min")) : 0;
+            await claimWaiver(token, { ...base, bid: b });
+            return `claim placed for ${nameOf(replaceWith)}${faab ? ` ($${b})` : ""} — ${nameOf(r.playerId)} drops if it wins`;
+          }
+        }
         await addDropFreeAgent(token, { leagueId: r.leagueId, rosterId: r.rosterId, dropPlayerId: r.playerId });
         return "released";
       },
@@ -198,6 +236,53 @@ export default function BulkDrop({
       {targets.length > 0 && rows.length === 0 && <p className="hint">None of your leagues roster {targets.length === 1 ? "him" : "them"}.</p>}
 
       {rows.length > 0 && (
+        <div className="field" style={{ alignItems: "center", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>
+          <span className="portmeta">Add in his place (optional):</span>
+          {replaceWith ? (
+            <>
+              <button type="button" className="chip-filter on" disabled={running} onClick={() => setReplaceWith(null)}>
+                {nameOf(replaceWith)} · {pmap?.[replaceWith]?.p} {pmap?.[replaceWith]?.t} ✕
+              </button>
+              <label className="portmeta" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                FAAB bid if he&rsquo;s on waivers $
+                <input className="input" type="number" min={0} value={bid} disabled={running} onChange={(e) => setBid(Math.max(0, Math.trunc(Number(e.target.value) || 0)))} style={{ width: 70 }} />
+              </label>
+            </>
+          ) : (
+            <>
+              <input
+                className="input"
+                style={{ maxWidth: 260 }}
+                placeholder="Search a player to add instead…"
+                value={repQuery}
+                disabled={running}
+                onChange={(e) => setRepQuery(e.target.value)}
+                aria-label="Player to add in his place"
+              />
+              {repMatches.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="chip-filter"
+                  onClick={() => {
+                    setReplaceWith(id);
+                    setRepQuery("");
+                  }}
+                >
+                  + {nameOf(id)} · {pmap?.[id]?.p} {pmap?.[id]?.t}
+                </button>
+              ))}
+            </>
+          )}
+          {replaceWith && (
+            <span className="portmeta" style={{ flexBasis: "100%" }}>
+              Each ticked league becomes &ldquo;add {nameOf(replaceWith)}, drop the player&rdquo; in one move (a waiver claim with that drop if he&rsquo;s on
+              waivers). Leagues where {nameOf(replaceWith)} is already rostered are skipped — nothing is released there.
+            </span>
+          )}
+        </div>
+      )}
+      {rows.length > 0 && (
         <>
           <div className="field" style={{ alignItems: "center", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
             <input className="input" style={{ maxWidth: 240 }} placeholder="Filter leagues…" value={filter} onChange={(e) => setFilter(e.target.value)} />
@@ -214,7 +299,7 @@ export default function BulkDrop({
               </button>
             ) : (
               <button className="btn" disabled={!token || selected.length === 0} onClick={() => setConfirming(true)}>
-                Release from {selected.length} league{selected.length === 1 ? "" : "s"}
+                {replaceWith ? `Swap in ${nameOf(replaceWith)} in ${selected.length} league${selected.length === 1 ? "" : "s"}` : `Release from ${selected.length} league${selected.length === 1 ? "" : "s"}`}
               </button>
             )}
           </div>
@@ -235,7 +320,7 @@ export default function BulkDrop({
               }
               lines={selected.map((r) => (
                 <span key={r.key}>
-                  {r.leagueName}: release {nameOf(r.playerId)} ({r.where})
+                  {r.leagueName}: {replaceWith ? `add ${nameOf(replaceWith)}, drop ${nameOf(r.playerId)}` : `release ${nameOf(r.playerId)}`} ({r.where})
                 </span>
               ))}
               confirmLabel={`Release ${selected.length}`}
