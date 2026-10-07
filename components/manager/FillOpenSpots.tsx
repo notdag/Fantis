@@ -316,8 +316,12 @@ export default function FillOpenSpots({
   const needCounts = ["QB", "RB", "WR", "TE"].map((p) => [p, shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === p || (n.pos === "FLEX" && p !== "QB"))).length] as const);
   const weakIn = (r: Row) => r.players.filter((id) => !r.reserve.includes(id) && weakReason(id) !== null);
   const weakLeagues = shownBySpots.filter((r) => weakIn(r).length > 0).length;
+  // Leagues with an empty spot and NO waiver claim on Sleeper yet (claims with a drop don't count — they don't use the spot).
+  const noClaimLeagues = shownBySpots.filter((r) => claimedIn(r.league.league.id).length === 0).length;
   const shown =
-    needFilter === "WEAK"
+    needFilter === "NOCLAIM"
+      ? shownBySpots.filter((r) => claimedIn(r.league.league.id).length === 0)
+      : needFilter === "WEAK"
       ? shownBySpots.filter((r) => weakIn(r).length > 0)
       : needFilter
         ? shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === needFilter || (n.pos === "FLEX" && needFilter !== "QB")))
@@ -553,6 +557,14 @@ export default function FillOpenSpots({
         </div>
         <div className="fos-filters" role="group" aria-label="Filter by what the league needs">
           <span className="fos-label">Needs</span>
+          <button
+            className={`chip-filter ${needFilter === "NOCLAIM" ? "on" : ""}`}
+            disabled={(existingClaims == null || noClaimLeagues === 0) && needFilter !== "NOCLAIM"}
+            onClick={() => setNeedFilter((f) => (f === "NOCLAIM" ? null : "NOCLAIM"))}
+            title={existingClaims == null ? "Connect Sleeper access above to read your claims" : "Leagues with no waiver claims queued on Sleeper"}
+          >
+            No waivers queued · {existingClaims == null ? "–" : noClaimLeagues}
+          </button>
           <button
             className={`chip-filter ${needFilter === "WEAK" ? "on" : ""}`}
             disabled={weakLeagues === 0 && needFilter !== "WEAK"}

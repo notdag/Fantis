@@ -59,6 +59,9 @@ export default function BulkDrop({
   const [replaceWith, setReplaceWith] = useState<string | null>(null);
   const [repQuery, setRepQuery] = useState("");
   const [bid, setBid] = useState(1);
+  // ON (default): only ever place a waiver CLAIM — your player stays on your roster and is dropped only if the claim wins when
+  // waivers run. Never falls back to an instant add/drop. OFF: if the replacement is a free agent, add him and drop yours NOW.
+  const [claimOnly, setClaimOnly] = useState(true);
   const repMatches = useMemo(() => {
     const q = repQuery.trim().toLowerCase();
     if (q.length < 2 || !pmap) return [];
@@ -154,6 +157,18 @@ export default function BulkDrop({
             throw new Error(`${nameOf(replaceWith)} is already on a roster here — nothing released in this league.`);
           }
           const base = { leagueId: r.leagueId, rosterId: r.rosterId, addPlayerId: replaceWith, dropPlayerId: r.playerId };
+          if (claimOnly) {
+            const faab = leagueSetting(r.leagueId, "waiver_type") === 2;
+            const b = faab ? Math.max(bid, leagueSetting(r.leagueId, "waiver_bid_min")) : 0;
+            try {
+              await claimWaiver(token, { ...base, bid: b });
+            } catch (e) {
+              throw new Error(
+                `Sleeper didn't accept a waiver claim here (${e instanceof Error ? e.message : "error"}) — he may be a free agent, which can only be added instantly. Nothing was sent; ${nameOf(r.playerId)} was NOT dropped.`
+              );
+            }
+            return `claim queued for ${nameOf(replaceWith)}${faab ? ` ($${b})` : ""} — ${nameOf(r.playerId)} stays until waivers run, dropped only if it wins`;
+          }
           try {
             await addDropFreeAgent(token, base);
             return `swapped for ${nameOf(replaceWith)}`;
@@ -195,7 +210,7 @@ export default function BulkDrop({
   return (
     <section className="sec">
       <p className="hint" style={{ marginTop: 0 }}>
-        Release players from as many leagues as you like in one go. Pick up to {MAX_TARGETS} players, untick any league you want to keep him in, then
+        Drop a player from as many leagues as you like in one go — on its own that drop happens immediately (Sleeper has no &ldquo;queued drop&rdquo;). To keep him until waivers run, pick a player to add in his place below and leave &ldquo;Waiver claim only&rdquo; ticked: he&rsquo;s then dropped only if the claim wins. Pick up to {MAX_TARGETS} players, untick any league you want to keep him in, then
         confirm. Bench and IR rows start ticked; starters and your Priority-list players start unticked so they&rsquo;re only released on purpose. A player
         whose game has already kicked off usually can&rsquo;t be dropped until it ends — Sleeper will refuse that league and the rest still go through.
       </p>
@@ -276,8 +291,14 @@ export default function BulkDrop({
           )}
           {replaceWith && (
             <span className="portmeta" style={{ flexBasis: "100%" }}>
-              Each ticked league becomes &ldquo;add {nameOf(replaceWith)}, drop the player&rdquo; in one move (a waiver claim with that drop if he&rsquo;s on
-              waivers). Leagues where {nameOf(replaceWith)} is already rostered are skipped — nothing is released there.
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 10 }}>
+                <input type="checkbox" checked={claimOnly} disabled={running} onChange={(e) => setClaimOnly(e.target.checked)} />
+                <b>Waiver claim only — don&rsquo;t drop anyone now</b>
+              </label>
+              {claimOnly
+                ? `Each ticked league gets a waiver claim: add ${nameOf(replaceWith)}, drop your player. Your player stays on your roster and is dropped only if the claim wins when waivers run. If a league won't take a claim (he's a free agent there), nothing is sent for it.`
+                : `Untick = instant where possible: if ${nameOf(replaceWith)} is a free agent, he's added and your player is dropped THE MOMENT you confirm (a claim only where he's on waivers).`}{" "}
+              Leagues where {nameOf(replaceWith)} is already rostered are skipped.
             </span>
           )}
         </div>
@@ -299,14 +320,24 @@ export default function BulkDrop({
               </button>
             ) : (
               <button className="btn" disabled={!token || selected.length === 0} onClick={() => setConfirming(true)}>
-                {replaceWith ? `Swap in ${nameOf(replaceWith)} in ${selected.length} league${selected.length === 1 ? "" : "s"}` : `Release from ${selected.length} league${selected.length === 1 ? "" : "s"}`}
+                {replaceWith
+                  ? claimOnly
+                    ? `Queue claims in ${selected.length} league${selected.length === 1 ? "" : "s"}`
+                    : `Swap in ${nameOf(replaceWith)} in ${selected.length} league${selected.length === 1 ? "" : "s"}`
+                  : `Drop now from ${selected.length} league${selected.length === 1 ? "" : "s"}`}
               </button>
             )}
           </div>
           {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above first.</p>}
           {confirming && (
             <BulkConfirm
-              title={`Release ${selected.length} player${selected.length === 1 ? "" : "s"} across ${new Set(selected.map((r) => r.leagueId)).size} leagues`}
+              title={
+                replaceWith && claimOnly
+                  ? `Queue ${selected.length} waiver claim${selected.length === 1 ? "" : "s"} (nobody is dropped now)`
+                  : replaceWith
+                    ? `Add ${nameOf(replaceWith)} and drop in ${selected.length} league${selected.length === 1 ? "" : "s"} — instant where he's a free agent`
+                    : `DROP NOW: ${selected.length} player${selected.length === 1 ? "" : "s"} across ${new Set(selected.map((r) => r.leagueId)).size} leagues — immediate, not a claim`
+              }
               summary={
                 starters || prot ? (
                   <b style={{ color: "var(--amber)" }}>
@@ -323,7 +354,7 @@ export default function BulkDrop({
                   {r.leagueName}: {replaceWith ? `add ${nameOf(replaceWith)}, drop ${nameOf(r.playerId)}` : `release ${nameOf(r.playerId)}`} ({r.where})
                 </span>
               ))}
-              confirmLabel={`Release ${selected.length}`}
+              confirmLabel={replaceWith && claimOnly ? `Queue ${selected.length} claim${selected.length === 1 ? "" : "s"}` : `Drop ${selected.length} now`}
               onConfirm={start}
               onCancel={() => setConfirming(false)}
             />

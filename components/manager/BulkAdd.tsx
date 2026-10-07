@@ -270,11 +270,16 @@ export default function BulkAdd({
   // several targets at once) instead of scrolling to it. Filters the VIEW
   // only — Select all/none below act on whatever's currently filtered in,
   // real selection state for everything else is untouched.
+  // "Empty spot, no waivers queued": only leagues where this add needs no drop AND you have no pending claim there yet.
+  // Needs the claims scan (Waiver Assistant passes claimsByLeague); hidden where it isn't available.
+  const [noClaimsOnly, setNoClaimsOnly] = useState(false);
   const visibleRows = useMemo(() => {
     const q = rowFilter.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => r.leagueName.toLowerCase().includes(q) || nameOf(pmap, r.targetId).toLowerCase().includes(q));
-  }, [rows, rowFilter, pmap]);
+    let out = rows;
+    if (noClaimsOnly && claimsByLeague) out = out.filter((r) => !r.full && (claimsByLeague.get(r.leagueId)?.length ?? 0) === 0);
+    if (!q) return out;
+    return out.filter((r) => r.leagueName.toLowerCase().includes(q) || nameOf(pmap, r.targetId).toLowerCase().includes(q));
+  }, [rows, rowFilter, pmap, noClaimsOnly, claimsByLeague]);
 
   const selectVisible = () =>
     setDeselected((prev) => {
@@ -528,8 +533,17 @@ export default function BulkAdd({
                   onChange={(e) => setRowFilter(e.target.value)}
                   style={{ maxWidth: 220 }}
                 />
-                <button className="chip-filter" onClick={selectVisible}>Select all{rowFilter ? " shown" : ""}</button>
-                <button className="chip-filter" onClick={deselectVisible}>Select none{rowFilter ? " shown" : ""}</button>
+                {claimsByLeague && (
+                  <button
+                    className={`chip-filter ${noClaimsOnly ? "on" : ""}`}
+                    onClick={() => setNoClaimsOnly((v) => !v)}
+                    title="Only leagues where this add needs no drop and you have no waiver claim queued yet"
+                  >
+                    Empty spot, no waivers queued
+                  </button>
+                )}
+                <button className="chip-filter" onClick={selectVisible}>Select all{rowFilter || noClaimsOnly ? " shown" : ""}</button>
+                <button className="chip-filter" onClick={deselectVisible}>Select none{rowFilter || noClaimsOnly ? " shown" : ""}</button>
                 {rows.some((r) => r.faab) && (
                   <>
                     <input
