@@ -583,3 +583,9 @@
 .fos-claimchip{padding:3px 9px;border-radius:999px;background:var(--amber-soft);color:var(--bone);font-weight:600}
 .fos-claimchip b{color:var(--amber);font-weight:700}
 @media (max-width:640px){.fos-claimed{padding-left:0}}
+/* placed claims inside the queue + incoming players in the roster */
+.fos-q.placed{background:color-mix(in srgb,var(--amber) 9%,var(--panel))}
+.fos-q.placed .fos-sub{color:var(--amber)}
+.fos-pl.incoming{font-weight:600}
+.fos-pl.incoming.claimed{color:var(--amber)}
+.fos-pl.incoming.queued{color:var(--mint)}

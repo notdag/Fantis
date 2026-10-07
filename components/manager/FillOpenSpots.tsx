@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getTrendingAdds, getTrendingDrops } from "@/lib/sleeper";
 import { fetchAllLive, preflightRosters, type LiveRoster } from "@/lib/liveRosters";
-import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
-import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { addDropFreeAgent, cancelWaiverClaim, claimWaiver } from "@/lib/sleeperWrite";
+import { runBulk, bulkResultTone, errorMessage, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { posChipStyle } from "@/lib/players";
@@ -59,6 +59,7 @@ export default function FillOpenSpots({
   token,
   existingClaims,
   onSent,
+  onClaimsChanged,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
@@ -66,6 +67,8 @@ export default function FillOpenSpots({
   // Your pending waiver claims (null = not read yet / no Sleeper access). Claims already placed count toward a league's empty spots.
   existingClaims?: Claim[] | null;
   onSent?: () => void;
+  // Called after a claim is cancelled or its bid changed here, so the claims list is re-read from Sleeper.
+  onClaimsChanged?: () => void;
 }) {
   const pendingByLeague = useMemo(() => {
     const m = new Map<string, Claim[]>();
@@ -75,6 +78,53 @@ export default function FillOpenSpots({
   const claimedIn = (lid: string) => pendingByLeague.get(lid) ?? [];
   // Only claims with no drop take one of the empty spots; a claim that drops someone keeps the roster size the same.
   const spotClaims = (lid: string) => claimedIn(lid).filter((c) => !c.dropId).length;
+  // Edit / cancel a claim that's already on Sleeper, right in the league's queue. Sleeper has no "edit bid", so a bid change =
+  // cancel, then place the same add/drop again at the new bid (it moves to the end of your claim order in that league).
+  const [claimBid, setClaimBid] = useState<Record<string, number>>({});
+  const [claimBusy, setClaimBusy] = useState<Set<string>>(new Set());
+  const [claimMsg, setClaimMsg] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [gone, setGone] = useState<Set<string>>(new Set()); // cancelled here, hidden until the list is re-read
+  const busyOn = (k: string, on: boolean) =>
+    setClaimBusy((p) => {
+      const n = new Set(p);
+      if (on) n.add(k);
+      else n.delete(k);
+      return n;
+    });
+  const cancelClaim = async (c: Claim) => {
+    if (!token) return;
+    busyOn(c.key, true);
+    try {
+      await cancelWaiverClaim(token, { leagueId: c.leagueId, transactionId: c.transactionId, leg: c.leg });
+      setGone((g) => new Set(g).add(c.key));
+      onClaimsChanged?.();
+    } catch (e) {
+      setClaimMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Cancel failed: ${errorMessage(e)}` } }));
+    } finally {
+      busyOn(c.key, false);
+    }
+  };
+  const rebid = async (c: Claim, rosterId: number) => {
+    if (!token || !c.addId) return;
+    const bid = claimBid[c.key];
+    busyOn(c.key, true);
+    try {
+      await cancelWaiverClaim(token, { leagueId: c.leagueId, transactionId: c.transactionId, leg: c.leg });
+    } catch (e) {
+      setClaimMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Bid not changed — couldn't cancel the old claim: ${errorMessage(e)}` } }));
+      busyOn(c.key, false);
+      return;
+    }
+    try {
+      await claimWaiver(token, { leagueId: c.leagueId, rosterId, addPlayerId: c.addId, dropPlayerId: c.dropId ?? undefined, bid });
+      setClaimMsg((m) => ({ ...m, [c.key]: { ok: true, text: `✓ Now $${bid}` } }));
+    } catch (e) {
+      setClaimMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Old claim cancelled, but re-placing at $${bid} failed: ${errorMessage(e)} — queue him again below.` } }));
+    } finally {
+      busyOn(c.key, false);
+      onClaimsChanged?.();
+    }
+  };
   const refresh = useRefreshLeagues();
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
@@ -265,11 +315,11 @@ export default function FillOpenSpots({
   const queue = rows.flatMap((r) =>
     pickList(r).map((id, i) => {
       const lid = r.league.league.id;
-      return { key: `${lid}:${id}`, row: r, id, drop: i >= r.spots ? dropPick[`${lid}:${id}`] || undefined : undefined };
+      return { key: `${lid}:${id}`, row: r, id, drop: spotClaims(lid) + i >= r.spots ? dropPick[`${lid}:${id}`] || undefined : undefined };
     })
   );
   const pending = queue.filter((q) => status[q.key]?.kind !== "done");
-  const extraNoDrop = queue.filter((q) => pickList(q.row).indexOf(q.id) >= q.row.spots && !q.drop).length;
+  const extraNoDrop = queue.filter((q) => spotClaims(q.row.league.league.id) + pickList(q.row).indexOf(q.id) >= q.row.spots && !q.drop).length;
 
   // ---- multi-league helpers
   const needsByLeague = new Map(shownBySpots.map((r) => [r.league.league.id, needsOf(r)]));
@@ -498,6 +548,10 @@ export default function FillOpenSpots({
             const visible = more.has(lid) ? sugg.slice(0, 24) : sugg.slice(0, 8);
             const left = budgetLeft(l);
             const irCap = inner(l.league.settings, "reserve_slots");
+            const placed = claimedIn(lid).filter((c) => !gone.has(c.key));
+            const incoming = new Map<string, { id: string; kind: "claimed" | "queued" }[]>();
+            for (const c of placed) if (c.addId) incoming.set(posOf(c.addId) || "OTH", [...(incoming.get(posOf(c.addId) || "OTH") ?? []), { id: c.addId, kind: "claimed" }]);
+            for (const id of list) incoming.set(posOf(id) || "OTH", [...(incoming.get(posOf(id) || "OTH") ?? []), { id, kind: "queued" }]);
             const byPos = new Map<string, string[]>();
             for (const id of r.players.filter((x) => !r.reserve.includes(x))) {
               const p = POS_ORDER.includes(posOf(id)) ? posOf(id) : "OTH";
@@ -529,19 +583,6 @@ export default function FillOpenSpots({
                     {!r.live ? " · not read live" : ""}
                   </span>
                 </header>
-                {claimedIn(lid).length > 0 && (
-                  <div className="fos-claimed">
-                    <span className="fos-label">Already claimed</span>
-                    {claimedIn(lid).map((c) => (
-                      <span key={c.key} className="fos-claimchip">
-                        {c.addId ? nameOf(c.addId) : "?"}
-                        {c.bid != null ? <b> ${c.bid}</b> : null}
-                        {c.dropId ? <span className="fos-dim"> · drop {nameOf(c.dropId).split(" ").slice(-1)[0]}</span> : null}
-                      </span>
-                    ))}
-                    <span className="fos-dim">edit or cancel in Your pending claims below</span>
-                  </div>
-                )}
                 {!isOpen(lid) && (
                   <button type="button" className="fos-compact" onClick={() => setOpenMap((m) => ({ ...m, [lid]: true }))}>
                     {needs.filter((n) => n.short).map((n) => (
@@ -550,8 +591,18 @@ export default function FillOpenSpots({
                     {needs.filter((n) => !n.short).map((n) => (
                       <span key={n.pos} className="fos-need">{n.pos} thin</span>
                     ))}
+                    {claimedIn(lid).filter((c) => !gone.has(c.key)).map((c) => (
+                      <span key={c.key} className="fos-claimchip" title="Claim already placed on Sleeper">
+                        claimed {c.addId ? nameOf(c.addId).split(" ").slice(-1)[0] : "?"}
+                        {c.bid != null ? <b> ${c.bid}</b> : null}
+                      </span>
+                    ))}
                     <span className="fos-compact-q">
-                      {list.length ? list.map((id) => nameOf(id).split(" ").slice(-1)[0]).join(", ") : "nothing queued — open to pick"}
+                      {list.length
+                        ? `queued: ${list.map((id) => nameOf(id).split(" ").slice(-1)[0]).join(", ")}`
+                        : claimedIn(lid).length
+                          ? ""
+                          : "nothing queued — open to pick"}
                     </span>
                   </button>
                 )}
@@ -559,11 +610,11 @@ export default function FillOpenSpots({
                 <div id={`fos-body-${lid}`} className="fos-body">
 
                 <div className="fos-roster">
-                  {POS_ORDER.concat("OTH").filter((p) => byPos.has(p)).map((p) => (
+                  {POS_ORDER.concat("OTH").filter((p) => byPos.has(p) || incoming.has(p)).map((p) => (
                     <div key={p} className="fos-posrow">
                       <span className="fos-pos" style={posChipStyle(p === "OTH" ? "" : p)}>{p}</span>
                       <span className="fos-players">
-                        {byPos.get(p)!.map((id) => {
+                        {(byPos.get(p) ?? []).map((id) => {
                           const inj = pmap?.[id]?.inj ?? "";
                           const starting = r.starters.includes(id);
                           return (
@@ -573,6 +624,11 @@ export default function FillOpenSpots({
                             </span>
                           );
                         })}
+                        {(incoming.get(p) ?? []).map(({ id, kind }) => (
+                          <span key={`in-${id}`} className={`fos-pl incoming ${kind}`} title={`${nameOf(id)} — ${kind === "claimed" ? "claim placed on Sleeper" : "queued here, not sent yet"}`}>
+                            +{nameOf(id).split(" ").slice(-1)[0]}
+                          </span>
+                        ))}
                       </span>
                     </div>
                   ))}
@@ -601,18 +657,60 @@ export default function FillOpenSpots({
                   )}
                 </div>
 
-                {list.length > 0 && (
+                {(list.length > 0 || placed.length > 0) && (
                   <ol className="fos-queue" aria-label="Your claims in this league, in priority order">
-                    {list.map((id, i) => {
-                      const k = `${lid}:${id}`;
-                      const extra = i >= r.spots;
+                    {placed.map((c, i) => {
+                      const id = c.addId ?? "";
+                      const cur = c.key in claimBid ? claimBid[c.key] : c.bid ?? 0;
+                      const changed = isFaab(l) && c.key in claimBid && claimBid[c.key] !== (c.bid ?? 0);
+                      const msg = claimMsg[c.key];
                       return (
-                        <li key={id} className={`fos-q ${extra ? "extra" : ""}`}>
+                        <li key={c.key} className="fos-q placed">
                           <span className="fos-qn">{i + 1}</span>
                           <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
                           <span className="fos-qname">
+                            {id ? nameOf(id) : "Unknown player"} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
+                            <span className="fos-sub">
+                              claim placed on Sleeper{c.dropId ? ` · drops ${nameOf(c.dropId)}` : " · no drop"}
+                              {msg && <span style={{ color: msg.ok ? "var(--mint)" : "var(--red)" }}> — {msg.text}</span>}
+                            </span>
+                          </span>
+                          {isFaab(l) && (
+                            <label className="fos-bid">
+                              $
+                              <input
+                                type="number"
+                                min={0}
+                                max={left ?? undefined}
+                                value={cur}
+                                disabled={claimBusy.has(c.key)}
+                                onChange={(e) => setClaimBid((b) => ({ ...b, [c.key]: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
+                                aria-label={`FAAB bid on the placed claim for ${id ? nameOf(id) : "this player"}`}
+                              />
+                            </label>
+                          )}
+                          {changed && (
+                            <button type="button" className="btn sm" disabled={!token || claimBusy.has(c.key)} onClick={() => rebid(c, l.roster!.rosterId)}>
+                              Save ${claimBid[c.key]}
+                            </button>
+                          )}
+                          <button type="button" className="btn ghost sm" disabled={!token || claimBusy.has(c.key)} onClick={() => cancelClaim(c)}>
+                            {claimBusy.has(c.key) ? "Working…" : "Cancel"}
+                          </button>
+                        </li>
+                      );
+                    })}
+                    {list.map((id, i0) => {
+                      const i = i0;
+                      const k = `${lid}:${id}`;
+                      const extra = spotClaims(lid) + i >= r.spots;
+                      return (
+                        <li key={id} className={`fos-q ${extra ? "extra" : ""}`}>
+                          <span className="fos-qn">{placed.length + i + 1}</span>
+                          <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
+                          <span className="fos-qname">
                             {nameOf(id)} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
-                            <span className="fos-sub">{extra ? "extra claim — competes for the spot" : "fills an open spot · no drop"}</span>
+                            <span className="fos-sub">{extra ? "not sent yet · extra claim — competes for the spot" : "not sent yet · fills an open spot · no drop"}</span>
                           </span>
                           {extra && (
                             <select

@@ -126,7 +126,7 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
         {leagues.length === 0 ? (
           <p className="hint">No in-season leagues synced yet.</p>
         ) : (
-          <FillOpenSpots leagues={leagues} pmap={pmap} token={token} existingClaims={pendingClaims} onSent={() => setClaimsReload((n) => n + 1)} />
+          <FillOpenSpots leagues={leagues} pmap={pmap} token={token} existingClaims={pendingClaims} onSent={() => setClaimsReload((n) => n + 1)} onClaimsChanged={() => setClaimsReload((n) => n + 1)} />
         )}
       </section>
 
