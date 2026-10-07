@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getTrendingAdds, getTrendingDrops } from "@/lib/sleeper";
 import { fetchAllLive, preflightRosters, type LiveRoster } from "@/lib/liveRosters";
 import { addDropFreeAgent, cancelWaiverClaim, claimWaiver } from "@/lib/sleeperWrite";
-import { runBulk, bulkResultTone, errorMessage, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { bulkResultTone, errorMessage, type TaskStatus } from "@/lib/bulkRun";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { posChipStyle } from "@/lib/players";
@@ -104,27 +104,6 @@ export default function FillOpenSpots({
       busyOn(c.key, false);
     }
   };
-  const rebid = async (c: Claim, rosterId: number) => {
-    if (!token || !c.addId) return;
-    const bid = claimBid[c.key];
-    busyOn(c.key, true);
-    try {
-      await cancelWaiverClaim(token, { leagueId: c.leagueId, transactionId: c.transactionId, leg: c.leg });
-    } catch (e) {
-      setClaimMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Bid not changed — couldn't cancel the old claim: ${errorMessage(e)}` } }));
-      busyOn(c.key, false);
-      return;
-    }
-    try {
-      await claimWaiver(token, { leagueId: c.leagueId, rosterId, addPlayerId: c.addId, dropPlayerId: c.dropId ?? undefined, bid });
-      setClaimMsg((m) => ({ ...m, [c.key]: { ok: true, text: `✓ Now $${bid}` } }));
-    } catch (e) {
-      setClaimMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Old claim cancelled, but re-placing at $${bid} failed: ${errorMessage(e)} — queue him again below.` } }));
-    } finally {
-      busyOn(c.key, false);
-      onClaimsChanged?.();
-    }
-  };
   const refresh = useRefreshLeagues();
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
@@ -138,6 +117,10 @@ export default function FillOpenSpots({
   const [picks, setPicks] = useState<Record<string, string[]>>({}); // leagueId -> claim order (player ids)
   const [dropPick, setDropPick] = useState<Record<string, string>>({}); // "leagueId:playerId" -> player to drop (extra claims only)
   const [bids, setBids] = useState<Record<string, number>>({}); // "leagueId:playerId" -> bid
+  const [order, setOrder] = useState<Record<string, string[]>>({}); // leagueId -> item keys in claim order (drag to change)
+  const [drag, setDrag] = useState<{ lid: string; key: string } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const [armed, setArmed] = useState<string | null>(null); // league whose "Apply" is waiting for its confirm click
   const [search, setSearch] = useState<Record<string, string>>({});
   const [more, setMore] = useState<Set<string>>(new Set());
   // Multi-league view: leagues collapse to a one-line summary once there are more than a few; open any to edit.
@@ -261,15 +244,6 @@ export default function FillOpenSpots({
       return cur.includes(id) ? p : { ...p, [r.league.league.id]: [...cur, id] };
     });
   const removePick = (r: Row, id: string) => setPicks((p) => ({ ...p, [r.league.league.id]: (p[r.league.league.id] ?? []).filter((x) => x !== id) }));
-  const movePick = (r: Row, id: string, dir: -1 | 1) =>
-    setPicks((p) => {
-      const cur = [...(p[r.league.league.id] ?? [])];
-      const i = cur.indexOf(id);
-      const j = i + dir;
-      if (i < 0 || j < 0 || j >= cur.length) return p;
-      [cur[i], cur[j]] = [cur[j], cur[i]];
-      return { ...p, [r.league.league.id]: cur };
-    });
   const autoFill = () => {
     const next = { ...picks };
     for (const r of shown) {
@@ -318,7 +292,6 @@ export default function FillOpenSpots({
       return { key: `${lid}:${id}`, row: r, id, drop: spotClaims(lid) + i >= r.spots ? dropPick[`${lid}:${id}`] || undefined : undefined };
     })
   );
-  const pending = queue.filter((q) => status[q.key]?.kind !== "done");
   const extraNoDrop = queue.filter((q) => spotClaims(q.row.league.league.id) + pickList(q.row).indexOf(q.id) >= q.row.spots && !q.drop).length;
 
   // ---- multi-league helpers
@@ -364,66 +337,181 @@ export default function FillOpenSpots({
     requestAnimationFrame(() => document.getElementById(`fos-${lid}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
-  const start = async () => {
-    if (!token) return;
+  // ---- one ordered claim list per league (placed on Sleeper + queued here), drag to reorder, Apply to save.
+  type Item = { key: string; kind: "placed"; c: Claim } | { key: string; kind: "queued"; id: string };
+  const placedOf = (lid: string) => claimedIn(lid).filter((c) => !gone.has(c.key));
+  const itemsOf = (r: Row): Item[] => {
+    const lid = r.league.league.id;
+    const all: Item[] = [
+      ...placedOf(lid).map((c) => ({ key: `c:${c.key}`, kind: "placed" as const, c })),
+      ...pickList(r).map((id) => ({ key: `p:${id}`, kind: "queued" as const, id })),
+    ];
+    const byKey = new Map(all.map((i) => [i.key, i]));
+    const saved = (order[lid] ?? []).filter((k) => byKey.has(k));
+    for (const i of all) if (!saved.includes(i.key)) saved.push(i.key);
+    return saved.map((k) => byKey.get(k)!);
+  };
+  const bidChanged = (c: Claim) => c.key in claimBid && claimBid[c.key] !== (c.bid ?? 0);
+  // Re-placing is needed when a placed claim's bid changed, placed claims were reordered, or a new pick was dragged ABOVE a
+  // placed claim — Sleeper has no edit/reorder call, so those claims are cancelled and placed again in the new order.
+  const rebuildNeeded = (r: Row) => {
+    const lid = r.league.league.id;
+    const items = itemsOf(r);
+    const placed = placedOf(lid);
+    if (placed.some(bidChanged)) return true;
+    const seq = items.filter((i) => i.kind === "placed").map((i) => i.key).join();
+    if (seq !== placed.map((c) => `c:${c.key}`).join()) return true;
+    const lastPlaced = items.map((i) => i.kind).lastIndexOf("placed");
+    const firstQueued = items.findIndex((i) => i.kind === "queued");
+    return firstQueued >= 0 && firstQueued < lastPlaced;
+  };
+  const queuedLeft = (r: Row) => pickList(r).filter((id) => status[`${r.league.league.id}:${id}`]?.kind !== "done");
+  const isDirty = (r: Row) => queuedLeft(r).length > 0 || rebuildNeeded(r);
+  const moveItem = (r: Row, from: string, to: string) => {
+    if (from === to) return;
+    const keys = itemsOf(r).map((i) => i.key);
+    const a = keys.indexOf(from);
+    const b = keys.indexOf(to);
+    if (a < 0 || b < 0) return;
+    keys.splice(b, 0, keys.splice(a, 1)[0]);
+    setOrder((o) => ({ ...o, [r.league.league.id]: keys }));
+  };
+  const nudge = (r: Row, key: string, dir: -1 | 1) => {
+    const keys = itemsOf(r).map((i) => i.key);
+    const a = keys.indexOf(key);
+    const b = a + dir;
+    if (a < 0 || b < 0 || b >= keys.length) return;
+    [keys[a], keys[b]] = [keys[b], keys[a]];
+    setOrder((o) => ({ ...o, [r.league.league.id]: keys }));
+  };
+  const describeApply = (r: Row) => {
+    const n = queuedLeft(r).length;
+    const re = rebuildNeeded(r) ? placedOf(r.league.league.id).length : 0;
+    return [n ? `send ${n} new` : "", re ? `re-place ${re} existing (cancel + place again in your order/bids)` : ""].filter(Boolean).join(" · ");
+  };
+
+  // Apply one league: optionally cancel the placed claims (when their order/bids changed), then place everything in the order shown.
+  const applyLeague = async (r: Row): Promise<{ done: number; failed: number; auth: boolean }> => {
+    const l = r.league;
+    const lid = l.league.id;
+    const items = itemsOf(r);
+    const rebuild = rebuildNeeded(r);
+    const set = (k: string, s: TaskStatus) => setStatus((prev) => ({ ...prev, [k]: s }));
+    let done = 0;
+    let failed = 0;
+    const pre = await preflightRosters([
+      { leagueId: lid, rosterId: l.roster!.rosterId, base: r.live ? { starters: r.live.starters, players: r.live.players, reserve: r.live.reserve } : null, strictStarters: false },
+    ]);
+    const p = pre[lid];
+    if (p?.blocked) {
+      for (const i of items) set(i.kind === "placed" ? i.c.key : `${lid}:${i.id}`, { kind: "failed", message: p.blocked });
+      return { done: 0, failed: items.length, auth: false };
+    }
+    if (rebuild) {
+      for (const i of items) {
+        if (i.kind !== "placed") continue;
+        try {
+          set(i.c.key, { kind: "running" });
+          await cancelWaiverClaim(token!, { leagueId: lid, transactionId: i.c.transactionId, leg: i.c.leg });
+        } catch (e) {
+          set(i.c.key, { kind: "failed", message: `Couldn't cancel to re-order — nothing else changed in this league: ${errorMessage(e)}` });
+          return { done, failed: failed + 1, auth: isAuth(e) };
+        }
+      }
+    }
+    for (const [idx, i] of items.entries()) {
+      if (i.kind === "placed") {
+        if (!rebuild) continue;
+        const c = i.c;
+        const bid = c.key in claimBid ? claimBid[c.key] : c.bid ?? 0;
+        try {
+          await claimWaiver(token!, { leagueId: lid, rosterId: l.roster!.rosterId, addPlayerId: c.addId!, dropPlayerId: c.dropId ?? undefined, bid });
+          set(c.key, { kind: "done", note: `re-placed${isFaab(l) ? ` $${bid}` : ""}` });
+          done++;
+        } catch (e) {
+          set(c.key, { kind: "failed", message: `Cancelled but couldn't place again: ${errorMessage(e)} — queue him again.` });
+          failed++;
+          if (isAuth(e)) return { done, failed, auth: true };
+        }
+        continue;
+      }
+      const k = `${lid}:${i.id}`;
+      if (status[k]?.kind === "done") continue;
+      if (p?.fresh?.allRostered?.includes(i.id)) {
+        set(k, { kind: "failed", message: `${nameOf(i.id)} was just taken in this league — nothing sent.` });
+        failed++;
+        continue;
+      }
+      const drop = idx >= r.spots ? dropPick[k] || undefined : undefined;
+      if (drop && p?.fresh && !p.fresh.players.includes(drop)) {
+        set(k, { kind: "failed", message: `${nameOf(drop)} is no longer on this roster — nothing sent.` });
+        failed++;
+        continue;
+      }
+      const base = { leagueId: lid, rosterId: l.roster!.rosterId, addPlayerId: i.id, ...(drop ? { dropPlayerId: drop } : {}) };
+      set(k, { kind: "running" });
+      try {
+        try {
+          await addDropFreeAgent(token!, base);
+          set(k, { kind: "done", note: drop ? `added (dropped ${nameOf(drop)})` : "added" });
+        } catch (e) {
+          if (!(e instanceof Error && /waiver/i.test(e.message))) throw e;
+          const bid = isFaab(l) ? bidFor(l, i.id) : 0;
+          await claimWaiver(token!, { ...base, bid });
+          set(k, { kind: "done", note: isFaab(l) ? `claim placed ($${bid})` : "claim placed" });
+        }
+        done++;
+      } catch (e) {
+        set(k, { kind: "failed", message: errorMessage(e) });
+        failed++;
+        if (isAuth(e)) return { done, failed, auth: true };
+      }
+    }
+    return { done, failed, auth: false };
+  };
+  const isAuth = (e: unknown) => e instanceof Error && /unauthori|token|401/i.test(e.message);
+
+  const applyLeagues = async (list: Row[]) => {
+    if (!token || list.length === 0) return;
     setConfirming(false);
+    setArmed(null);
     setRunning(true);
-    setSummary("Checking every roster against Sleeper first…");
+    setSummary("");
     setSummaryColor(undefined);
     abortRef.current = { aborted: false };
-    const batch = [...pending];
-    const pre = await preflightRosters(
-      batch.map((q) => ({
-        leagueId: q.row.league.league.id,
-        rosterId: q.row.league.roster!.rosterId,
-        base: q.row.live ? { starters: q.row.live.starters, players: q.row.live.players, reserve: q.row.live.reserve } : null,
-        strictStarters: false,
-      }))
-    );
-    setSummary("");
-    const tasks: BulkTask[] = batch.map((q) => ({
-      key: q.key,
-      run: async () => {
-        const l = q.row.league;
-        const p = pre[l.league.id];
-        if (p?.blocked) throw new Error(p.blocked);
-        if (p?.fresh?.allRostered?.includes(q.id)) throw new Error(`${nameOf(q.id)} was just taken in this league — nothing sent.`);
-        if (q.drop && p?.fresh && !p.fresh.players.includes(q.drop)) throw new Error(`${nameOf(q.drop)} is no longer on this roster — nothing sent.`);
-        const base = { leagueId: l.league.id, rosterId: l.roster!.rosterId, addPlayerId: q.id, ...(q.drop ? { dropPlayerId: q.drop } : {}) };
-        try {
-          await addDropFreeAgent(token, base);
-          return q.drop ? `added (dropped ${nameOf(q.drop)})` : "added";
-        } catch (e) {
-          if (e instanceof Error && /waiver/i.test(e.message)) {
-            const bid = isFaab(l) ? bidFor(l, q.id) : 0;
-            await claimWaiver(token, { ...base, bid });
-            return isFaab(l) ? `claim placed ($${bid})` : "claim placed";
-          }
-          throw e;
-        }
-      },
-    }));
-    const doneKeys: string[] = [];
-    // One at a time: several claims in the same league must reach Sleeper in the order shown (that's your claim priority).
-    const result = await runBulk(tasks, {
-      concurrency: 1,
-      signal: abortRef.current,
-      onStatus: (key, s) => {
-        if (s.kind === "done") doneKeys.push(key);
-        setStatus((prev) => ({ ...prev, [key]: s }));
-      },
-    });
+    let done = 0;
+    let failed = 0;
+    let auth = false;
+    const touched: string[] = [];
+    for (const r of list) {
+      if (abortRef.current.aborted || auth) break;
+      const res = await applyLeague(r);
+      done += res.done;
+      failed += res.failed;
+      auth = res.auth;
+      touched.push(r.league.league.id);
+      setOrder((o) => {
+        const n = { ...o };
+        delete n[r.league.league.id];
+        return n;
+      });
+    }
+    setClaimBid((b) => Object.fromEntries(Object.entries(b).filter(([k]) => !touched.some((lid) => k.startsWith(`${lid}:`)))));
     setRunning(false);
-    if (result.done > 0) onSent?.();
-    const refreshed = result.done > 0 ? await refresh([...new Set(doneKeys.map((k) => k.split(":")[0]))]) : null;
-    const tone = bulkResultTone(result);
+    if (done > 0) {
+      onSent?.();
+      onClaimsChanged?.();
+    }
+    const refreshed = done > 0 ? await refresh(touched) : null;
+    const tone = bulkResultTone({ done, failed });
     setSummaryColor(tone.color);
     setSummary(
-      `${tone.prefix}${result.done} added or claimed${result.failed ? `, ${result.failed} failed` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}.` +
-        (result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : "") +
+      `${tone.prefix}${done} change${done === 1 ? "" : "s"} applied in ${touched.length} league${touched.length === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.` +
+        (auth ? " Stopped — Sleeper rejected the login token; reconnect above." : "") +
         (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : "")
     );
   };
+  const dirtyRows = rows.filter(isDirty);
 
   const SOURCES: [Source, string][] = [
     ["adds", "Most added"],
@@ -471,8 +559,8 @@ export default function FillOpenSpots({
           {running ? (
             <button className="btn ghost sm" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
           ) : (
-            <button className="btn sm" disabled={!token || pending.length === 0} onClick={() => setConfirming(true)}>
-              Send {pending.length || ""} {pending.length === 1 ? "claim" : "claims"}
+            <button className="btn sm" disabled={!token || dirtyRows.length === 0} onClick={() => setConfirming(true)}>
+              Apply all{dirtyRows.length ? ` · ${dirtyRows.length} league${dirtyRows.length === 1 ? "" : "s"}` : ""}
             </button>
           )}
         </div>
@@ -492,16 +580,15 @@ export default function FillOpenSpots({
       )}
       {confirming && (
         <BulkConfirm
-          title={`Send ${pending.length} add${pending.length === 1 ? "" : "s"} / claim${pending.length === 1 ? "" : "s"} across ${new Set(pending.map((q) => q.row.league.league.id)).size} leagues`}
-          lines={pending.map((q) => (
-            <span key={q.key}>
-              {q.row.league.league.name}: add {nameOf(q.id)}
-              {q.drop ? `, drop ${nameOf(q.drop)}` : ""}
-              {isFaab(q.row.league) ? ` (bid $${bidFor(q.row.league, q.id)} if on waivers)` : ""}
+          title={`Apply changes in ${dirtyRows.length} league${dirtyRows.length === 1 ? "" : "s"}`}
+          summary="Leagues go one at a time, claims in the order shown. Re-placing cancels those claims first, then places them again in your order with your bids."
+          lines={dirtyRows.map((r) => (
+            <span key={r.league.league.id}>
+              {r.league.league.name}: {describeApply(r)}
             </span>
           ))}
-          confirmLabel={`Send ${pending.length}`}
-          onConfirm={start}
+          confirmLabel={`Apply ${dirtyRows.length}`}
+          onConfirm={() => applyLeagues(dirtyRows)}
           onCancel={() => setConfirming(false)}
         />
       )}
@@ -657,59 +744,95 @@ export default function FillOpenSpots({
                   )}
                 </div>
 
-                {(list.length > 0 || placed.length > 0) && (
-                  <ol className="fos-queue" aria-label="Your claims in this league, in priority order">
-                    {placed.map((c, i) => {
-                      const id = c.addId ?? "";
-                      const cur = c.key in claimBid ? claimBid[c.key] : c.bid ?? 0;
-                      const changed = isFaab(l) && c.key in claimBid && claimBid[c.key] !== (c.bid ?? 0);
-                      const msg = claimMsg[c.key];
-                      return (
-                        <li key={c.key} className="fos-q placed">
-                          <span className="fos-qn">{i + 1}</span>
-                          <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
-                          <span className="fos-qname">
-                            {id ? nameOf(id) : "Unknown player"} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
-                            <span className="fos-sub">
-                              claim placed on Sleeper{c.dropId ? ` · drops ${nameOf(c.dropId)}` : " · no drop"}
-                              {msg && <span style={{ color: msg.ok ? "var(--mint)" : "var(--red)" }}> — {msg.text}</span>}
-                            </span>
-                          </span>
-                          {isFaab(l) && (
-                            <label className="fos-bid">
-                              $
-                              <input
-                                type="number"
-                                min={0}
-                                max={left ?? undefined}
-                                value={cur}
-                                disabled={claimBusy.has(c.key)}
-                                onChange={(e) => setClaimBid((b) => ({ ...b, [c.key]: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
-                                aria-label={`FAAB bid on the placed claim for ${id ? nameOf(id) : "this player"}`}
-                              />
-                            </label>
-                          )}
-                          {changed && (
-                            <button type="button" className="btn sm" disabled={!token || claimBusy.has(c.key)} onClick={() => rebid(c, l.roster!.rosterId)}>
-                              Save ${claimBid[c.key]}
-                            </button>
-                          )}
-                          <button type="button" className="btn ghost sm" disabled={!token || claimBusy.has(c.key)} onClick={() => cancelClaim(c)}>
-                            {claimBusy.has(c.key) ? "Working…" : "Cancel"}
-                          </button>
-                        </li>
+                {itemsOf(r).length > 0 && (
+                  <>
+                  <ol className="fos-queue" aria-label="Your claims in this league, in priority order — drag to reorder">
+                    {itemsOf(r).map((it, idx, arr) => {
+                      const dragging = drag?.lid === lid && drag.key === it.key;
+                      const common = {
+                        draggable: !running,
+                        onDragStart: (e: React.DragEvent) => {
+                          e.dataTransfer.effectAllowed = "move";
+                          setDrag({ lid, key: it.key });
+                        },
+                        onDragEnd: () => {
+                          setDrag(null);
+                          setOver(null);
+                        },
+                        onDragOver: (e: React.DragEvent) => {
+                          if (drag?.lid !== lid) return;
+                          e.preventDefault();
+                          if (over !== it.key) setOver(it.key);
+                        },
+                        onDrop: (e: React.DragEvent) => {
+                          e.preventDefault();
+                          if (drag?.lid === lid) moveItem(r, drag.key, it.key);
+                          setDrag(null);
+                          setOver(null);
+                        },
+                      };
+                      const cls = `fos-q ${dragging ? "dragging" : ""} ${over === it.key && !dragging ? "over" : ""}`;
+                      const handle = (
+                        <span className="fos-grip" aria-hidden title="Drag to reorder">
+                          <svg width="10" height="16" viewBox="0 0 10 16"><circle cx="2" cy="3" r="1.5" /><circle cx="8" cy="3" r="1.5" /><circle cx="2" cy="8" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="2" cy="13" r="1.5" /><circle cx="8" cy="13" r="1.5" /></svg>
+                        </span>
                       );
-                    })}
-                    {list.map((id, i0) => {
-                      const i = i0;
-                      const k = `${lid}:${id}`;
-                      const extra = spotClaims(lid) + i >= r.spots;
+                      const arrows = (
+                        <span className="fos-qctl">
+                          <button type="button" className="fos-icon" disabled={running || idx === 0} onClick={() => nudge(r, it.key, -1)} aria-label="Move up">↑</button>
+                          <button type="button" className="fos-icon" disabled={running || idx === arr.length - 1} onClick={() => nudge(r, it.key, 1)} aria-label="Move down">↓</button>
+                        </span>
+                      );
+                      if (it.kind === "placed") {
+                        const c = it.c;
+                        const id = c.addId ?? "";
+                        const cur = c.key in claimBid ? claimBid[c.key] : c.bid ?? 0;
+                        const msg = claimMsg[c.key];
+                        return (
+                          <li key={it.key} className={`${cls} placed ${bidChanged(c) ? "edited" : ""}`} {...common}>
+                            {handle}
+                            <span className="fos-qn">{idx + 1}</span>
+                            <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
+                            <span className="fos-qname">
+                              {id ? nameOf(id) : "Unknown player"} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
+                              <span className="fos-sub">
+                                on Sleeper{c.dropId ? ` · drops ${nameOf(c.dropId)}` : " · no drop"}
+                                {bidChanged(c) ? ` · bid ${c.bid ?? 0} → ${cur}, apply to save` : ""}
+                                {msg && <span style={{ color: msg.ok ? "var(--mint)" : "var(--red)" }}> — {msg.text}</span>}
+                              </span>
+                            </span>
+                            {isFaab(l) && (
+                              <label className="fos-bid">
+                                $
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={left ?? undefined}
+                                  value={cur}
+                                  disabled={running || claimBusy.has(c.key)}
+                                  onChange={(e) => setClaimBid((b) => ({ ...b, [c.key]: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
+                                  aria-label={`FAAB bid on the placed claim for ${id ? nameOf(id) : "this player"}`}
+                                />
+                              </label>
+                            )}
+                            {arrows}
+                            <button type="button" className="btn ghost sm" disabled={!token || running || claimBusy.has(c.key)} onClick={() => cancelClaim(c)}>
+                              {claimBusy.has(c.key) ? "Working…" : "Cancel claim"}
+                            </button>
+                            <StatusCell status={status[c.key]} />
+                          </li>
+                        );
+                      }
+                      const pid = it.id;
+                      const k = `${lid}:${pid}`;
+                      const extra = idx >= r.spots;
                       return (
-                        <li key={id} className={`fos-q ${extra ? "extra" : ""}`}>
-                          <span className="fos-qn">{placed.length + i + 1}</span>
-                          <PlayerAvatar playerId={id} pos={posOf(id)} size={26} />
+                        <li key={it.key} className={`${cls} ${extra ? "extra" : ""}`} {...common}>
+                          {handle}
+                          <span className="fos-qn">{idx + 1}</span>
+                          <PlayerAvatar playerId={pid} pos={posOf(pid)} size={26} />
                           <span className="fos-qname">
-                            {nameOf(id)} <span className="fos-dim">{posOf(id)} · {pmap?.[id]?.t}</span>
+                            {nameOf(pid)} <span className="fos-dim">{posOf(pid)} · {pmap?.[pid]?.t}</span>
                             <span className="fos-sub">{extra ? "not sent yet · extra claim — competes for the spot" : "not sent yet · fills an open spot · no drop"}</span>
                           </span>
                           {extra && (
@@ -718,7 +841,7 @@ export default function FillOpenSpots({
                               value={dropPick[k] ?? ""}
                               disabled={running}
                               onChange={(e) => setDropPick((d) => ({ ...d, [k]: e.target.value }))}
-                              aria-label={`Drop for ${nameOf(id)} (optional)`}
+                              aria-label={`Drop for ${nameOf(pid)} (optional)`}
                             >
                               <option value="">no drop</option>
                               {dropOptions(r).map((d) => (
@@ -735,23 +858,34 @@ export default function FillOpenSpots({
                                 type="number"
                                 min={bidMin(l)}
                                 max={left ?? undefined}
-                                value={bidFor(l, id)}
+                                value={bidFor(l, pid)}
                                 disabled={running}
                                 onChange={(e) => setBids((b) => ({ ...b, [k]: Math.max(0, Math.trunc(Number(e.target.value) || 0)) }))}
-                                aria-label={`FAAB bid for ${nameOf(id)}`}
+                                aria-label={`FAAB bid for ${nameOf(pid)}`}
                               />
                             </label>
                           )}
-                          <span className="fos-qctl">
-                            <button type="button" className="fos-icon" disabled={running || i === 0} onClick={() => movePick(r, id, -1)} aria-label="Move up">↑</button>
-                            <button type="button" className="fos-icon" disabled={running || i === list.length - 1} onClick={() => movePick(r, id, 1)} aria-label="Move down">↓</button>
-                            <button type="button" className="fos-icon" disabled={running} onClick={() => removePick(r, id)} aria-label={`Remove ${nameOf(id)}`}>✕</button>
-                          </span>
+                          {arrows}
+                          <button type="button" className="fos-icon" disabled={running} onClick={() => removePick(r, pid)} aria-label={`Remove ${nameOf(pid)}`}>✕</button>
                           <StatusCell status={status[k]} />
                         </li>
                       );
                     })}
                   </ol>
+                  {isDirty(r) && (
+                    <div className="fos-apply">
+                      <span className="fos-dim">{describeApply(r)}</span>
+                      {armed === lid ? (
+                        <>
+                          <button type="button" className="btn sm" disabled={!token || running} onClick={() => applyLeagues([r])}>Confirm — send to Sleeper</button>
+                          <button type="button" className="btn ghost sm" disabled={running} onClick={() => setArmed(null)}>Cancel</button>
+                        </>
+                      ) : (
+                        <button type="button" className="btn sm" disabled={!token || running} onClick={() => setArmed(lid)}>Apply this league</button>
+                      )}
+                    </div>
+                  )}
+                  </>
                 )}
 
                 <div className="fos-sugg">

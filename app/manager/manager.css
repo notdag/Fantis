@@ -589,3 +589,12 @@
 .fos-pl.incoming{font-weight:600}
 .fos-pl.incoming.claimed{color:var(--amber)}
 .fos-pl.incoming.queued{color:var(--mint)}
+/* drag to reorder claims + per-league Apply */
+.fos-q[draggable="true"]{cursor:grab}
+.fos-q.dragging{opacity:.45}
+.fos-q.over{box-shadow:inset 0 2px 0 var(--amber)}
+.fos-q.edited .fos-sub{color:var(--amber);font-weight:600}
+.fos-grip{flex:none;display:inline-flex;color:var(--dim);cursor:grab;padding:2px}
+.fos-grip svg{fill:currentColor}
+.fos-q:hover .fos-grip{color:var(--muted)}
+.fos-apply{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;font-size:12.5px}
