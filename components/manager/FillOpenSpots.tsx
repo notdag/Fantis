@@ -11,6 +11,7 @@ import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { LineupLeague } from "./LineupManager";
+import type { Claim } from "@/lib/inbox";
 import { PlayerAvatar } from "./Avatar";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
 import { useRefreshLeagues } from "./useRefreshLeagues";
@@ -56,13 +57,24 @@ export default function FillOpenSpots({
   leagues,
   pmap,
   token,
+  existingClaims,
   onSent,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
+  // Your pending waiver claims (null = not read yet / no Sleeper access). Claims already placed count toward a league's empty spots.
+  existingClaims?: Claim[] | null;
   onSent?: () => void;
 }) {
+  const pendingByLeague = useMemo(() => {
+    const m = new Map<string, Claim[]>();
+    for (const c of existingClaims ?? []) m.set(c.leagueId, [...(m.get(c.leagueId) ?? []), c]);
+    return m;
+  }, [existingClaims]);
+  const claimedIn = (lid: string) => pendingByLeague.get(lid) ?? [];
+  // Only claims with no drop take one of the empty spots; a claim that drops someone keeps the roster size the same.
+  const spotClaims = (lid: string) => claimedIn(lid).filter((c) => !c.dropId).length;
   const refresh = useRefreshLeagues();
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
@@ -171,7 +183,8 @@ export default function FillOpenSpots({
   const takenIn = (r: Row) => new Set(r.live?.allRostered ?? []);
   const suggestionsFor = (r: Row): Suggestion[] => {
     const taken = takenIn(r);
-    const free = (id: string) => OFFENSE.has(posOf(id)) && !!pmap?.[id]?.t && !taken.has(id) && !r.players.includes(id);
+    const claimedIds = new Set(claimedIn(r.league.league.id).map((c) => c.addId));
+    const free = (id: string) => OFFENSE.has(posOf(id)) && !!pmap?.[id]?.t && !taken.has(id) && !r.players.includes(id) && !claimedIds.has(id);
     let list: Suggestion[];
     if (source === "adds") list = trending.filter((t) => free(t.id)).map((t) => ({ ...t, note: `+${t.count.toLocaleString()} adds` }));
     else if (source === "drops") list = dropped.filter((t) => free(t.id)).map((t) => ({ ...t, note: `dropped ${t.count.toLocaleString()}×` }));
@@ -211,9 +224,10 @@ export default function FillOpenSpots({
     const next = { ...picks };
     for (const r of shown) {
       if (!r.live) continue; // without a live read we can't tell who's still free there
-      const cur = (next[r.league.league.id] ?? []).slice(0, r.spots);
+      const room = Math.max(0, r.spots - spotClaims(r.league.league.id));
+      const cur = (next[r.league.league.id] ?? []).slice(0, room);
       for (const s of suggestionsFor(r)) {
-        if (cur.length >= r.spots) break;
+        if (cur.length >= room) break;
         if (!cur.includes(s.id)) cur.push(s.id);
       }
       next[r.league.league.id] = cur;
@@ -265,7 +279,7 @@ export default function FillOpenSpots({
     : shownBySpots;
   const isOpen = (lid: string) => openMap[lid] ?? shown.length <= 3;
   const setAllOpen = (on: boolean) => setOpenMap(Object.fromEntries(shown.map((r) => [r.league.league.id, on])));
-  const unfilled = shown.filter((r) => pickList(r).length < r.spots);
+  const unfilled = shown.filter((r) => pickList(r).length + spotClaims(r.league.league.id) < r.spots);
   const queuedLeagues = new Set(queue.map((q) => q.row.league.league.id)).size;
   // Players that are free in several of the shown leagues — one tap queues him wherever he's free and you still have an empty spot.
   const across = (() => {
@@ -285,7 +299,7 @@ export default function FillOpenSpots({
     const next = { ...picks };
     for (const r of leaguesFree) {
       const cur = next[r.league.league.id] ?? [];
-      if (cur.includes(id) || cur.length >= r.spots) continue; // only into a still-empty spot — never an extra claim
+      if (cur.includes(id) || cur.length + spotClaims(r.league.league.id) >= r.spots) continue; // only into a still-empty spot — never an extra claim
       next[r.league.league.id] = [...cur, id];
       n++;
     }
@@ -452,7 +466,7 @@ export default function FillOpenSpots({
           </div>
           <div className="fos-sugg">
             {across.map(({ s, leagues: ls }) => {
-              const room = ls.filter((r) => pickList(r).length < r.spots && !pickList(r).includes(s.id)).length;
+              const room = ls.filter((r) => pickList(r).length + spotClaims(r.league.league.id) < r.spots && !pickList(r).includes(s.id)).length;
               return (
                 <button key={s.id} type="button" className="fos-card" disabled={running || room === 0} onClick={() => queueEverywhere(s.id, ls)} title={`Queue ${nameOf(s.id)} in ${room} league${room === 1 ? "" : "s"}`}>
                   <PlayerAvatar playerId={s.id} pos={posOf(s.id)} size={30} />
@@ -505,7 +519,7 @@ export default function FillOpenSpots({
                   <Link href={`/manager/${lid}`} className="fos-name">{l.league.name}</Link>
                   <span className="fos-spots" title={`${r.spots} empty roster spot${r.spots === 1 ? "" : "s"}`}>
                     {Array.from({ length: r.spots }, (_, i) => (
-                      <span key={i} className={`fos-dot ${i < Math.min(list.length, r.spots) ? "filled" : ""}`} />
+                      <span key={i} className={`fos-dot ${i < spotClaims(lid) ? "claimed" : i < Math.min(spotClaims(lid) + list.length, r.spots) ? "filled" : ""}`} />
                     ))}
                     <b>{r.spots} open</b>
                   </span>
@@ -515,6 +529,19 @@ export default function FillOpenSpots({
                     {!r.live ? " · not read live" : ""}
                   </span>
                 </header>
+                {claimedIn(lid).length > 0 && (
+                  <div className="fos-claimed">
+                    <span className="fos-label">Already claimed</span>
+                    {claimedIn(lid).map((c) => (
+                      <span key={c.key} className="fos-claimchip">
+                        {c.addId ? nameOf(c.addId) : "?"}
+                        {c.bid != null ? <b> ${c.bid}</b> : null}
+                        {c.dropId ? <span className="fos-dim"> · drop {nameOf(c.dropId).split(" ").slice(-1)[0]}</span> : null}
+                      </span>
+                    ))}
+                    <span className="fos-dim">edit or cancel in Your pending claims below</span>
+                  </div>
+                )}
                 {!isOpen(lid) && (
                   <button type="button" className="fos-compact" onClick={() => setOpenMap((m) => ({ ...m, [lid]: true }))}>
                     {needs.filter((n) => n.short).map((n) => (

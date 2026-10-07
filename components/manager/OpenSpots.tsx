@@ -12,6 +12,7 @@ import ConnectWriteAccess from "./ConnectWriteAccess";
 import BulkAdd from "./BulkAdd";
 import FillOpenSpots from "./FillOpenSpots";
 import PendingClaims from "./PendingClaims";
+import type { Claim } from "@/lib/inbox";
 import { useDropRank } from "./useDropRank";
 import type { LineupLeague } from "./LineupManager";
 
@@ -19,6 +20,7 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
   const { pmap } = usePlayerMap();
   const [token, setToken] = useState<string | null>(null);
   const [claimsReload, setClaimsReload] = useState(0);
+  const [pendingClaims, setPendingClaims] = useState<Claim[] | null>(null);
   const [prefs, setPrefs] = useState<PlayerPrefs>(EMPTY_PREFS);
   useEffect(() => {
     let cancelled = false;
@@ -124,13 +126,13 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
         {leagues.length === 0 ? (
           <p className="hint">No in-season leagues synced yet.</p>
         ) : (
-          <FillOpenSpots leagues={leagues} pmap={pmap} token={token} onSent={() => setClaimsReload((n) => n + 1)} />
+          <FillOpenSpots leagues={leagues} pmap={pmap} token={token} existingClaims={pendingClaims} onSent={() => setClaimsReload((n) => n + 1)} />
         )}
       </section>
 
       <section className="sec">
         <SectionHead title="Your pending claims" right="change a bid or cancel" />
-        <PendingClaims leagues={leagues} pmap={pmap} token={token} reloadSignal={claimsReload} />
+        <PendingClaims leagues={leagues} pmap={pmap} token={token} reloadSignal={claimsReload} onClaims={setPendingClaims} />
       </section>
 
       <section className="sec">

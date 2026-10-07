@@ -577,3 +577,9 @@
 .fos-compact:hover .fos-compact-q{color:var(--bone)}
 .fos-body{display:flex;flex-direction:column;gap:12px;padding-left:30px}
 @media (max-width:640px){.fos-body,.fos-compact{padding-left:0}.fos-bar{position:static}}
+/* claims already placed on Sleeper, shown on each league block */
+.fos-dot.claimed{background:var(--amber);border-color:var(--amber)}
+.fos-claimed{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;padding-left:30px;font-size:12px}
+.fos-claimchip{padding:3px 9px;border-radius:999px;background:var(--amber-soft);color:var(--bone);font-weight:600}
+.fos-claimchip b{color:var(--amber);font-weight:700}
+@media (max-width:640px){.fos-claimed{padding-left:0}}

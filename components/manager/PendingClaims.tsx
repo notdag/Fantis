@@ -24,11 +24,14 @@ export default function PendingClaims({
   pmap,
   token,
   reloadSignal,
+  onClaims,
 }: {
   leagues: LineupLeague[];
   pmap: PlayerMap | null;
   token: string | null;
   reloadSignal: number;
+  // Reports the current pending claims up, so the open-spot blocks above can show what's already claimed in each league.
+  onClaims?: (claims: Claim[]) => void;
 }) {
   const [claims, setClaims] = useState<Claim[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,6 +69,7 @@ export default function PendingClaims({
     if (res.stoppedForAuth) errs.unshift("Sleeper rejected the login token — reconnect above.");
     acc.sort((a, b) => (byId.get(a.leagueId)?.league.name ?? "").localeCompare(byId.get(b.leagueId)?.league.name ?? "") || (a.created ?? 0) - (b.created ?? 0));
     setClaims(acc);
+    onClaims?.(acc);
     setErrors(errs);
     setLoading(false);
     loadedOnce.current = true;
@@ -76,6 +80,13 @@ export default function PendingClaims({
     if (reloadSignal > 0 && loadedOnce.current) void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadSignal]);
+  // Read claims automatically as soon as Sleeper access is connected — the open-spot blocks need them to show what's already claimed.
+  useEffect(() => {
+    if (!token || loadedOnce.current) return;
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const setBusyKey = (k: string, on: boolean) =>
     setBusy((p) => {
@@ -90,7 +101,11 @@ export default function PendingClaims({
     setBusyKey(c.key, true);
     try {
       await cancelWaiverClaim(token, { leagueId: c.leagueId, transactionId: c.transactionId, leg: c.leg });
-      setClaims((cs) => (cs ?? []).filter((x) => x.key !== c.key));
+      setClaims((cs) => {
+        const next = (cs ?? []).filter((x) => x.key !== c.key);
+        onClaims?.(next);
+        return next;
+      });
     } catch (e) {
       setRowMsg((m) => ({ ...m, [c.key]: { ok: false, text: `Cancel failed: ${errorMessage(e)}` } }));
     } finally {
