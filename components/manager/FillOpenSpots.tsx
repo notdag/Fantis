@@ -15,6 +15,7 @@ import type { Claim } from "@/lib/inbox";
 import { PlayerAvatar } from "./Avatar";
 import { BulkConfirm, StatusCell } from "./BulkConfirm";
 import { useRefreshLeagues } from "./useRefreshLeagues";
+import { useCuratedRanks } from "./useCuratedRanks";
 
 const OFFENSE = new Set(["QB", "RB", "WR", "TE"]);
 const POS_ORDER = ["QB", "RB", "WR", "TE", "K", "DEF"];
@@ -105,6 +106,20 @@ export default function FillOpenSpots({
     }
   };
   const refresh = useRefreshLeagues();
+  const curated = useCuratedRanks();
+  // "Weak" = a player worth cutting first: no NFL team, or not on your /admin rankings and outside Sleeper's top 300 (or unranked),
+  // or bottom tier (G) on your rankings and outside Sleeper's top 250. Offense only. Always shown with the reason — never a guess.
+  const weakReason = (id: string): string | null => {
+    const e = pmap?.[id];
+    if (!e || !OFFENSE.has(e.p)) return null;
+    if (!e.t) return "no NFL team";
+    const rk = e.rk;
+    const rkText = rk != null ? `Sleeper #${rk}` : "unranked on Sleeper";
+    const c = curated?.get(id);
+    if (!c) return rk == null || rk > 300 ? `not on your rankings · ${rkText}` : null;
+    if (c.tier >= 8 && (rk == null || rk > 250)) return `bottom tier on your rankings · ${rkText}`;
+    return null;
+  };
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
   const [trending, setTrending] = useState<Suggestion[]>([]);
@@ -284,7 +299,9 @@ export default function FillOpenSpots({
     return Math.max(bidMin(l), Math.min(raw, left ?? raw));
   };
   const dropOptions = (r: Row) =>
-    r.players.filter((id) => !r.reserve.includes(id)).sort((a, b) => (pmap?.[b]?.rk ?? 1e9) - (pmap?.[a]?.rk ?? 1e9));
+    r.players
+      .filter((id) => !r.reserve.includes(id))
+      .sort((a, b) => Number(weakReason(b) !== null) - Number(weakReason(a) !== null) || (pmap?.[b]?.rk ?? 1e9) - (pmap?.[a]?.rk ?? 1e9));
 
   const queue = rows.flatMap((r) =>
     pickList(r).map((id, i) => {
@@ -297,9 +314,14 @@ export default function FillOpenSpots({
   // ---- multi-league helpers
   const needsByLeague = new Map(shownBySpots.map((r) => [r.league.league.id, needsOf(r)]));
   const needCounts = ["QB", "RB", "WR", "TE"].map((p) => [p, shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === p || (n.pos === "FLEX" && p !== "QB"))).length] as const);
-  const shown = needFilter
-    ? shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === needFilter || (n.pos === "FLEX" && needFilter !== "QB")))
-    : shownBySpots;
+  const weakIn = (r: Row) => r.players.filter((id) => !r.reserve.includes(id) && weakReason(id) !== null);
+  const weakLeagues = shownBySpots.filter((r) => weakIn(r).length > 0).length;
+  const shown =
+    needFilter === "WEAK"
+      ? shownBySpots.filter((r) => weakIn(r).length > 0)
+      : needFilter
+        ? shownBySpots.filter((r) => (needsByLeague.get(r.league.league.id) ?? []).some((n) => n.pos === needFilter || (n.pos === "FLEX" && needFilter !== "QB")))
+        : shownBySpots;
   const isOpen = (lid: string) => openMap[lid] ?? shown.length <= 3;
   const setAllOpen = (on: boolean) => setOpenMap(Object.fromEntries(shown.map((r) => [r.league.league.id, on])));
   const unfilled = shown.filter((r) => pickList(r).length + spotClaims(r.league.league.id) < r.spots);
@@ -531,6 +553,14 @@ export default function FillOpenSpots({
         </div>
         <div className="fos-filters" role="group" aria-label="Filter by what the league needs">
           <span className="fos-label">Needs</span>
+          <button
+            className={`chip-filter ${needFilter === "WEAK" ? "on" : ""}`}
+            disabled={weakLeagues === 0 && needFilter !== "WEAK"}
+            onClick={() => setNeedFilter((f) => (f === "WEAK" ? null : "WEAK"))}
+            title="Leagues with players worth cutting"
+          >
+            Weak players · {weakLeagues}
+          </button>
           {needCounts.map(([p, n]) => (
             <button key={p} className={`chip-filter ${needFilter === p ? "on" : ""}`} disabled={n === 0 && needFilter !== p} onClick={() => setNeedFilter((f) => (f === p ? null : p))}>
               {p} · {n}
@@ -678,6 +708,12 @@ export default function FillOpenSpots({
                     {needs.filter((n) => !n.short).map((n) => (
                       <span key={n.pos} className="fos-need">{n.pos} thin</span>
                     ))}
+                    {weakIn(r).length > 0 && (
+                      <span className="fos-need weakpill" title={weakIn(r).map((id) => `${nameOf(id)} — ${weakReason(id)}`).join("
+")}>
+                        {weakIn(r).length} weak
+                      </span>
+                    )}
                     {claimedIn(lid).filter((c) => !gone.has(c.key)).map((c) => (
                       <span key={c.key} className="fos-claimchip" title="Claim already placed on Sleeper">
                         claimed {c.addId ? nameOf(c.addId).split(" ").slice(-1)[0] : "?"}
@@ -704,8 +740,9 @@ export default function FillOpenSpots({
                         {(byPos.get(p) ?? []).map((id) => {
                           const inj = pmap?.[id]?.inj ?? "";
                           const starting = r.starters.includes(id);
+                          const weak = weakReason(id);
                           return (
-                            <span key={id} className={`fos-pl ${starting ? "start" : ""} ${isOut(id) ? "out" : ""}`} title={`${nameOf(id)}${starting ? " — starting" : ""}${inj ? ` — ${inj}` : ""}`}>
+                            <span key={id} className={`fos-pl ${starting ? "start" : ""} ${isOut(id) ? "out" : ""} ${weak ? "weak" : ""}`} title={`${nameOf(id)}${starting ? " — starting" : ""}${inj ? ` — ${inj}` : ""}${weak ? ` — weak: ${weak}` : ""}`}>
                               {nameOf(id).split(" ").slice(-1)[0]}
                               {inj && <sup>{INJ_SHORT[inj] ?? inj}</sup>}
                             </span>
@@ -743,6 +780,17 @@ export default function FillOpenSpots({
                     ))
                   )}
                 </div>
+                {weakIn(r).length > 0 && (
+                  <div className="fos-needs">
+                    <span className="fos-label">Cut first</span>
+                    {weakIn(r).map((id) => (
+                      <span key={id} className="fos-weak" title={weakReason(id) ?? ""}>
+                        {nameOf(id)} <span className="fos-dim">{posOf(id)} · {weakReason(id)}</span>
+                        {r.starters.includes(id) ? <b> · starting</b> : null}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {itemsOf(r).length > 0 && (
                   <>
@@ -846,7 +894,7 @@ export default function FillOpenSpots({
                               <option value="">no drop</option>
                               {dropOptions(r).map((d) => (
                                 <option key={d} value={d} disabled={Object.entries(dropPick).some(([kk, v]) => v === d && kk.startsWith(`${lid}:`) && kk !== k)}>
-                                  drop {nameOf(d)}{r.starters.includes(d) ? " (starting)" : ""}
+                                  drop {nameOf(d)}{r.starters.includes(d) ? " (starting)" : ""}{weakReason(d) ? " · weak" : ""}
                                 </option>
                               ))}
                             </select>
