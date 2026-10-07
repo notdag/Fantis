@@ -86,8 +86,8 @@ export const getTrendingAdds = (lookbackHours = 24, limit = 25) =>
 export const getTrendingDrops = (lookbackHours = 24, limit = 25) =>
   jget<TrendingPlayer[]>(`${S}/players/nfl/trending/drop?lookback_hours=${lookbackHours}&limit=${limit}`);
 
-const PLAYERS_CACHE_KEY = "fantis_players_nfl_v4";
-const PLAYERS_CACHE_KEY_OLD = "fantis_players_nfl_v3";
+const PLAYERS_CACHE_KEY = "fantis_players_nfl_v5";
+const PLAYERS_CACHE_KEY_OLD = "fantis_players_nfl_v4";
 
 // Sleeper's full player dump (names, teams, INJURY STATUS) is several MB. It used to be cached for the whole UTC
 // calendar day, which on a game day meant injury designations could be many hours old. It is now cached for an hour,
@@ -172,6 +172,8 @@ async function loadPlayers(force = false): Promise<PlayerMap> {
       practiceStatus: p.practice_participation,
       newsUpdated: p.news_updated,
       espnId: p.espn_id,
+      ...(p.team && typeof p.depth_chart_order === "number" ? { dc: p.depth_chart_order } : {}),
+      ...(typeof p.search_rank === "number" && p.search_rank < 5000 ? { rk: p.search_rank } : {}),
     };
   }
 

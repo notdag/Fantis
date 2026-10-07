@@ -71,6 +71,8 @@ export interface SleeperPlayerRaw {
   practice_participation?: string | null;
   news_updated?: number | null;
   espn_id?: number | null;
+  depth_chart_order?: number | null;
+  search_rank?: number | null;
 }
 
 export interface SleeperState {
@@ -148,6 +150,8 @@ export interface PlayerMapEntry {
   practiceStatus?: string | null; // practice_participation — "Full" | "Limited" | "Did Not Participate"
   newsUpdated?: number | null; // ms epoch — last time Sleeper's own player page updated
   espnId?: number | null; // ESPN's athlete id — used to match this player's real news articles
+  dc?: number; // Sleeper depth_chart_order (1 = starter, 2 = backup …), only for players on a team
+  rk?: number; // Sleeper search_rank — their own popularity rank (lower = more widely rostered/searched); only when < 5000
 }
 
 export type PlayerMap = Record<string, PlayerMapEntry>;

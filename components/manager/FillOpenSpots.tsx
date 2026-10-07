@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getTrendingAdds } from "@/lib/sleeper";
+import { getTrendingAdds, getTrendingDrops } from "@/lib/sleeper";
 import { fetchAllLive, preflightRosters, type LiveRoster } from "@/lib/liveRosters";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
@@ -36,6 +36,10 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
   const [trending, setTrending] = useState<{ id: string; count: number }[]>([]);
+  const [dropped, setDropped] = useState<{ id: string; count: number }[]>([]);
+  // Where the picker's choices come from. "best" = Sleeper's own popularity rank (search_rank) — the closest public signal to
+  // "most rostered" (Sleeper doesn't publish roster %); "handcuffs" = RB2s on Sleeper's depth chart, your own starters' backups first.
+  const [source, setSource] = useState<"adds" | "drops" | "best" | "handcuffs">("adds");
   const [faabStats, setFaabStats] = useState<FaabStats | null>(null);
   const [only, setOnly] = useState<0 | 1 | 2 | 3>(0); // 0 = all, 3 = 3+
   const [picks, setPicks] = useState<Record<string, string[]>>({}); // leagueId -> player ids, one per spot
@@ -57,6 +61,9 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
       .finally(() => alive && setLiveLoading(false));
     getTrendingAdds(24, 60)
       .then((t) => alive && setTrending(t.map((x) => ({ id: x.player_id, count: x.count }))))
+      .catch(() => {});
+    getTrendingDrops(24, 60)
+      .then((t) => alive && setDropped(t.map((x) => ({ id: x.player_id, count: x.count }))))
       .catch(() => {});
     fetch("/api/manager/faab-suggest")
       .then((r) => (r.ok ? r.json() : null))
@@ -84,9 +91,39 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
   const count = (n: 1 | 2 | 3) => rows.filter((r) => (n === 3 ? r.spots >= 3 : r.spots === n)).length;
 
   const takenIn = (r: Row) => new Set(r.live?.allRostered ?? []);
-  const available = (r: Row) => {
+  // Sleeper ranks for everyone on a team, best first — reused by "best available" and "handcuffs".
+  const ranked = useMemo(() => {
+    if (!pmap) return [] as string[];
+    return Object.entries(pmap)
+      .filter(([, e]) => OFFENSE.has(e.p) && !!e.t && e.rk != null)
+      .sort((a, b) => (a[1].rk ?? 1e9) - (b[1].rk ?? 1e9))
+      .map(([id]) => id);
+  }, [pmap]);
+  // Each team's RB1 on Sleeper's depth chart, so a handcuff can say whose backup he is.
+  const rb1ByTeam = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!pmap) return m;
+    for (const [id, e] of Object.entries(pmap)) if (e.p === "RB" && e.t && e.dc === 1 && !m.has(e.t)) m.set(e.t, id);
+    return m;
+  }, [pmap]);
+  const available = (r: Row): { id: string; count: number; note?: string }[] => {
     const taken = takenIn(r);
-    return trending.filter((t) => OFFENSE.has(pmap?.[t.id]?.p ?? "") && !taken.has(t.id)).slice(0, 30);
+    const free = (id: string) => OFFENSE.has(pmap?.[id]?.p ?? "") && !!pmap?.[id]?.t && !taken.has(id);
+    if (source === "adds") return trending.filter((t) => free(t.id)).slice(0, 30);
+    if (source === "drops") return dropped.filter((t) => free(t.id)).slice(0, 30).map((t) => ({ ...t, note: `dropped in ${t.count.toLocaleString()} leagues (24h)` }));
+    if (source === "best") return ranked.filter(free).slice(0, 30).map((id) => ({ id, count: 0, note: `Sleeper rank #${pmap?.[id]?.rk}` }));
+    // handcuffs: free RBs listed 2nd (or 3rd) on their team's depth chart; your own RB1s' backups first.
+    const mine = new Set(r.live?.players ?? r.league.roster?.players ?? []);
+    return ranked
+      .filter((id) => free(id) && pmap?.[id]?.p === "RB" && (pmap?.[id]?.dc === 2 || pmap?.[id]?.dc === 3))
+      .map((id) => {
+        const starter = rb1ByTeam.get(pmap![id].t);
+        const own = !!starter && mine.has(starter);
+        return { id, count: 0, own, note: starter ? `${own ? "YOUR " : ""}handcuff for ${pmap?.[starter]?.n ?? starter}` : "RB2" };
+      })
+      .sort((a, b) => Number(b.own) - Number(a.own))
+      .slice(0, 30)
+      .map(({ id, count, note }) => ({ id, count, note }));
   };
   const pickList = (r: Row) => picks[r.league.league.id] ?? [];
   const setPick = (r: Row, i: number, id: string) =>
@@ -202,9 +239,22 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
         <button className={`chip-filter ${only === 1 ? "on" : ""}`} onClick={() => setOnly(1)}>1 open ({count(1)})</button>
         <button className={`chip-filter ${only === 2 ? "on" : ""}`} onClick={() => setOnly(2)}>2 open ({count(2)})</button>
         <button className={`chip-filter ${only === 3 ? "on" : ""}`} onClick={() => setOnly(3)}>3+ open ({count(3)})</button>
+        <span className="portmeta" style={{ marginLeft: 8 }}>Choices:</span>
+        {(
+          [
+            ["adds", "Most added (24h)"],
+            ["drops", "Recently dropped"],
+            ["best", "Best available (Sleeper rank)"],
+            ["handcuffs", "RB handcuffs"],
+          ] as const
+        ).map(([k, lbl]) => (
+          <button key={k} className={`chip-filter ${source === k ? "on" : ""}`} onClick={() => setSource(k)}>
+            {lbl}
+          </button>
+        ))}
         <span style={{ flex: 1 }} />
-        <button className="chip-filter" disabled={running || liveLoading || trending.length === 0} onClick={autoFill} title="Fill every shown league's open spots with the most-added players still free there">
-          Fill shown with top adds
+        <button className="chip-filter" disabled={running || liveLoading} onClick={autoFill} title="Fill every shown league's open spots with the top choices still free there (current Choices list)">
+          Fill shown with top choices
         </button>
         {running ? (
           <button className="btn ghost" onClick={() => (abortRef.current.aborted = true)}>Abort</button>
@@ -215,8 +265,9 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
         )}
       </div>
       <p className="hint" style={{ margin: "0 0 10px" }}>
-        {liveLoading ? "Reading rosters live from Sleeper…" : "Open spots and who's still free are read live from Sleeper."} Choices come from Sleeper&rsquo;s most-added
-        players in the last 24h that are still free in that league — or search anyone. No drop is needed; a player on waivers becomes a claim.
+        {liveLoading ? "Reading rosters live from Sleeper…" : "Open spots and who's still free are read live from Sleeper."} Choices (pick a list above): Sleeper&rsquo;s most-added or
+        most-dropped players in the last 24h, the best available by Sleeper&rsquo;s own rank (their popularity rank — Sleeper doesn&rsquo;t publish roster %),
+        or RB handcuffs from Sleeper&rsquo;s depth chart (your own starters&rsquo; backups first) — always only players still free in that league. Or search anyone. No drop is needed; a player on waivers becomes a claim.
       </p>
       {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above to send.</p>}
       {confirming && (
@@ -267,10 +318,10 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
                         <span key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <select className="select sm" value={id} disabled={running} onChange={(e) => setPick(r, i, e.target.value)} style={{ minWidth: 260 }}>
                             <option value="">— spot {i + 1}: leave open —</option>
-                            {[...extra, ...opts].map((o) => (
+                            {([...extra, ...opts] as { id: string; count: number; note?: string }[]).map((o) => (
                               <option key={o.id} value={o.id} disabled={o.id !== id && list.includes(o.id)}>
                                 {nameOf(o.id)} · {pmap?.[o.id]?.p} {pmap?.[o.id]?.t}
-                                {o.count ? ` · +${o.count.toLocaleString()} adds` : ""}
+                                {o.note ? ` · ${o.note}` : o.count ? ` · +${o.count.toLocaleString()} adds` : ""}
                                 {pmap?.[o.id]?.inj ? ` (${pmap[o.id].inj})` : ""}
                               </option>
                             ))}
