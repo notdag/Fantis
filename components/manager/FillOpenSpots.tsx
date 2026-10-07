@@ -709,8 +709,7 @@ export default function FillOpenSpots({
                       <span key={n.pos} className="fos-need">{n.pos} thin</span>
                     ))}
                     {weakIn(r).length > 0 && (
-                      <span className="fos-need weakpill" title={weakIn(r).map((id) => `${nameOf(id)} — ${weakReason(id)}`).join("
-")}>
+                      <span className="fos-need weakpill" title={weakIn(r).map((id) => `${nameOf(id)} — ${weakReason(id)}`).join(", ")}>
                         {weakIn(r).length} weak
                       </span>
                     )}
