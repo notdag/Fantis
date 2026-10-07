@@ -47,7 +47,7 @@ const EXAMPLE_GROUPS: { label: string; examples: string[] }[] = [
   },
   { label: "Waivers & Adds", examples: ["Find my best waiver adds", "Find Antonio Williams everywhere"] },
   { label: "IR", examples: ["Move Michael Pittman off IR to my bench", "Find leagues where I have an injured player who could go on IR"] },
-  { label: "Standings & Record", examples: ["Where do I stand for the playoffs?", "How many leagues am I winning this week?", "What was my overall record for week 2?"] },
+  { label: "Standings & Record", examples: ["Where do I stand for the playoffs?", "How many leagues am I winning this week?", "What was my overall record for week 2?", "How many leagues am I 4-0?"] },
   { label: "Roster health", examples: ["Show me my weakest players", "Show me every league where I have a roster decision to make", "Drop Tank Bigsby everywhere"] },
   { label: "Weekly sweep", examples: ["Run my weekly sweep"] },
 ];

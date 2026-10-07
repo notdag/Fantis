@@ -2103,6 +2103,66 @@ export async function handleCommand(text: string, prev: Session, env: EngineEnv)
       break;
     }
 
+    case "record_count": {
+      let rows: StandingRow[];
+      const st = session.standings;
+      if (st && now() - st.at < 5 * 60_000) rows = st.rows;
+      else {
+        const { snaps, meta } = await scanAll(env, false, "Reading records");
+        session = { ...session, meta };
+        blocks.push({ t: "scanStatus", meta });
+        rows = snaps.filter((sn) => sn.status !== "FAILED" && sn.rosters).map((sn) => standingRow(env, sn));
+        session = { ...session, standings: { rows, at: now() } };
+      }
+      const parse = (r: string) => {
+        const [w, l, tie] = r.split("-").map((x) => Number(x) || 0);
+        return { w, l, t: tie ?? 0 };
+      };
+      const known = rows.filter((r) => /^\d+-\d+(-\d+)?$/.test(r.record));
+      // Distribution, best record first, ties written only when there are any.
+      const dist = new Map<string, number>();
+      for (const r of known) dist.set(r.record, (dist.get(r.record) ?? 0) + 1);
+      const distText = [...dist.entries()]
+        .sort((a, b) => parse(b[0]).w - parse(a[0]).w || parse(a[0]).l - parse(b[0]).l)
+        .map(([rec, n]) => `${rec}: ${n}`)
+        .join(" · ");
+      const want = intent.record;
+      let match: StandingRow[] = [];
+      let label = "";
+      if (want === "undefeated") {
+        match = known.filter((r) => parse(r.record).l === 0 && parse(r.record).w > 0);
+        label = "undefeated";
+      } else if (want === "winless") {
+        match = known.filter((r) => parse(r.record).w === 0 && parse(r.record).l > 0);
+        label = "winless";
+      } else if (want) {
+        const q = parse(want);
+        match = known.filter((r) => {
+          const p = parse(r.record);
+          return p.w === q.w && p.l === q.l && (want.split("-").length === 3 ? p.t === q.t : true);
+        });
+        label = want;
+      }
+      const missing = rows.length - known.length;
+      blocks.push({
+        t: "text",
+        tone: "good",
+        text:
+          (want
+            ? `You're ${label} in ${match.length} of ${known.length} leagues (real Sleeper records).`
+            : `Your records across ${known.length} leagues (real Sleeper records).`) +
+          (distText ? ` Breakdown — ${distText}.` : "") +
+          (missing > 0 ? ` ${missing} league${missing === 1 ? "" : "s"} had no record on file and aren't counted.` : ""),
+      });
+      if (want && match.length) {
+        const counts: Record<PlayoffStatus, number> = { IN: 0, BUBBLE: 0, OUT: 0, UNKNOWN: 0 };
+        for (const r of match) counts[r.status]++;
+        blocks.push({ t: "standings", title: `Leagues where you're ${label} (${match.length})`, counts, fc: { top3: 0, bottomHalf: 0, scored: 0 }, rows: match.slice(0, ROW_CAP), truncated: Math.max(0, match.length - ROW_CAP) });
+      }
+      recs.push(want ? `${label}: ${match.length} leagues` : "record breakdown");
+      break;
+    }
+
     case "week_record": {
       const week = intent.week ?? (env.week != null ? (intent.relative === "last" ? env.week - 1 : env.week) : null);
       if (week == null) {
@@ -2670,6 +2730,7 @@ const CHAINABLE_KINDS = new Set([
   "lineup_improvements",
   "set_weeks",
   "questionable",
+  "record_count",
   "weekly_sweep",
   "ir_opps",
   "waiver_opps",

@@ -775,6 +775,15 @@ async function main() {
     const out = await handleCommand("Where do I stand for the playoffs?", newSession(), env);
     const sb = out.blocks.find((b): b is Extract<Block, { t: "standings" }> => b.t === "standings")!;
     ok(!!sb, "standings block produced");
+    // Records across leagues: "how many leagues am I 4-0"
+    const r21 = await handleCommand("how many leagues am I 2-1?", newSession(), env);
+    ok(r21.audit.intent === "record_count" && /2-1 in 2 of 4 leagues/.test(textOf(r21.blocks)), "'how many leagues am I 2-1' counts real records", textOf(r21.blocks).slice(0, 200));
+    const und = await handleCommand("which leagues am I undefeated in", newSession(), env);
+    ok(/undefeated in 1 of 4/.test(textOf(und.blocks)), "undefeated = no losses", textOf(und.blocks).slice(0, 200));
+    const r03 = await handleCommand("how many leagues am i 0-3", newSession(), env);
+    ok(/0-3 in 0 of 4/.test(textOf(r03.blocks)), "a record you don't have → 0, not a guess", textOf(r03.blocks).slice(0, 200));
+    const bd = await handleCommand("record breakdown", newSession(), env);
+    ok(/3-0: 1/.test(textOf(bd.blocks)) && /2-1: 2/.test(textOf(bd.blocks)) && /1-2: 1/.test(textOf(bd.blocks)), "breakdown lists every record", textOf(bd.blocks).slice(0, 200));
     const by = Object.fromEntries((sb?.rows ?? []).map((r) => [r.leagueName, r]));
     ok(by["A comfortably in"]?.status === "IN" && by["A comfortably in"]?.rank === 1 && by["A comfortably in"]?.record === "3-0", "A: in a playoff spot", JSON.stringify(by["A comfortably in"]));
     ok((by["A comfortably in"]?.gamesFromLine ?? 0) >= 1, "A: games ahead of the line is positive");

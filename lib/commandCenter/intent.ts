@@ -31,6 +31,9 @@ export type Intent =
   // Sunday in true slots / late Sunday + Monday in FLEX. Drafts only, like every chat command.
   | { kind: "set_weeks"; from?: number; to?: number; rankMode?: RankMode }
   | { kind: "questionable" }
+  // "How many leagues am I 4-0?" / "which leagues am I undefeated / winless / 2-2 in?" / "record breakdown". record = "W-L"
+  // (ties ignored unless written "W-L-T"); omitted = show the whole distribution.
+  | { kind: "record_count"; record?: string }
   // "Drop X everywhere" / "release X and Y from all my leagues" — a real per-league release draft (DROP), bench/IR only unless
   // "including starters"; Priority-list players are never released.
   | { kind: "mass_drop"; mentions: Mention[]; includeStarters: boolean }
@@ -130,6 +133,16 @@ export function parseIntent(raw: string, index: PlayerIndex, ctx: { hasScan: boo
   if (/^(show )?(all|everything)$|^(clear|remove|reset) (the )?filters?$|^show all( leagues)?$/.test(t)) return { kind: "clear_filter" };
 
   const mentions = findMentions(text, index);
+
+  // Records across leagues: "how many leagues am I 4-0", "undefeated", "winless", "record breakdown".
+  if (mentions.length === 0) {
+    const rec = t.match(/\b(\d{1,2})\s*-\s*(\d{1,2})(?:\s*-\s*(\d{1,2}))?\b/);
+    const recordWord = /\b(leagues?|record|am i|i'?m|i am|teams?)\b/.test(t) && !/\bweeks?\s*\d/.test(t);
+    if (rec && recordWord) return { kind: "record_count", record: rec[3] ? `${rec[1]}-${rec[2]}-${rec[3]}` : `${rec[1]}-${rec[2]}` };
+    if (/\b(undefeated|unbeaten|perfect record)\b/.test(t)) return { kind: "record_count", record: "undefeated" };
+    if (/\b(winless|haven'?t won|no wins|0 wins)\b/.test(t)) return { kind: "record_count", record: "winless" };
+    if (/\brecords? (breakdown|distribution|split|summary)\b|\bbreak ?down (of )?my records?\b/.test(t)) return { kind: "record_count" };
+  }
 
   // Playoff position + roster strength. With a result on screen, "only the ones I'm out of" filters it.
   const standingsWord = /\b(where (do )?i stand|standings?|playoff (picture|outlook|position|chances|spot|race|line)|in (a )?playoff (spot|position)|make (the )?playoffs|power rankings?|team strength|how (strong|good) (are|is) my (teams?|rosters?)|roster strength|bubble)\b/.test(t);
