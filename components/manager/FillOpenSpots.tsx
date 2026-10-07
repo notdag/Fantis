@@ -31,7 +31,20 @@ interface Row {
 // Every league with open roster spots, how many, and a picker per spot: Sleeper's most-added players right now that are
 // actually still free in THAT league (read live), or anyone you search. Adds need no drop; a player still on waivers becomes a
 // claim (FAAB bid suggested from the league's own past claims). Nothing is sent until you confirm.
-export default function FillOpenSpots({ leagues, pmap, token }: { leagues: LineupLeague[]; pmap: PlayerMap | null; token: string | null }) {
+export default function FillOpenSpots({
+  leagues,
+  pmap,
+  token,
+  onSent,
+}: {
+  leagues: LineupLeague[];
+  pmap: PlayerMap | null;
+  token: string | null;
+  onSent?: () => void;
+}) {
+  // Extra claims beyond the open spots: each needs a drop (chosen per row), so you can line up several claims in one league.
+  const [extraSlots, setExtraSlots] = useState<Record<string, number>>({});
+  const [dropPick, setDropPick] = useState<Record<string, string>>({}); // "leagueId:slotIndex" -> player to drop
   const refresh = useRefreshLeagues();
   const [live, setLive] = useState<Record<string, LiveRoster>>({});
   const [liveLoading, setLiveLoading] = useState(true);
@@ -166,12 +179,33 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
     return Math.max(bidMin(l), Math.min(raw, left ?? raw));
   };
 
-  const queue = rows.flatMap((r) =>
-    pickList(r)
-      .filter((id, i, arr) => !!id && arr.indexOf(id) === i)
-      .slice(0, r.spots)
-      .map((id) => ({ key: `${r.league.league.id}:${id}`, row: r, id }))
-  );
+  const slotsOf = (r: Row) => r.spots + (extraSlots[r.league.league.id] ?? 0);
+  // Players you could drop for an extra claim: active (non-IR) players, weakest Sleeper rank first.
+  const dropOptions = (r: Row) => {
+    const players = r.live?.players ?? r.league.roster?.players ?? [];
+    const reserve = new Set(r.live?.reserve ?? r.league.roster?.reserve ?? []);
+    return players.filter((id) => !reserve.has(id)).sort((a, b) => (pmap?.[b]?.rk ?? 1e9) - (pmap?.[a]?.rk ?? 1e9));
+  };
+  const queue = rows.flatMap((r) => {
+    const lid = r.league.league.id;
+    const list = pickList(r);
+    const seen = new Set<string>();
+    const out: { key: string; row: Row; id: string; drop?: string }[] = [];
+    for (let i = 0; i < slotsOf(r); i++) {
+      const id = list[i];
+      if (!id || seen.has(id)) continue;
+      const drop = i >= r.spots ? dropPick[`${lid}:${i}`] : undefined;
+      if (i >= r.spots && !drop) continue; // an extra claim without a drop can't be placed
+      seen.add(id);
+      out.push({ key: `${lid}:${id}`, row: r, id, drop });
+    }
+    return out;
+  });
+  const missingDrops = rows.reduce((n, r) => {
+    let c = 0;
+    for (let i = r.spots; i < slotsOf(r); i++) if (pickList(r)[i] && !dropPick[`${r.league.league.id}:${i}`]) c++;
+    return n + c;
+  }, 0);
   const pending = queue.filter((q) => status[q.key]?.kind !== "done");
   const nameOf = (id: string) => pmap?.[id]?.n ?? id;
 
@@ -199,10 +233,11 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
         const p = pre[l.league.id];
         if (p?.blocked) throw new Error(p.blocked);
         if (p?.fresh?.allRostered?.includes(q.id)) throw new Error(`${nameOf(q.id)} was just taken in this league — nothing sent.`);
-        const base = { leagueId: l.league.id, rosterId: l.roster!.rosterId, addPlayerId: q.id };
+        if (q.drop && p?.fresh && !p.fresh.players.includes(q.drop)) throw new Error(`${nameOf(q.drop)} is no longer on this roster — nothing sent.`);
+        const base = { leagueId: l.league.id, rosterId: l.roster!.rosterId, addPlayerId: q.id, ...(q.drop ? { dropPlayerId: q.drop } : {}) };
         try {
           await addDropFreeAgent(token, base);
-          return "added";
+          return q.drop ? `added (dropped ${nameOf(q.drop)})` : "added";
         } catch (e) {
           if (e instanceof Error && /waiver/i.test(e.message)) {
             const bid = isFaab(l) ? bidFor(l, q.id) : 0;
@@ -222,6 +257,7 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
       },
     });
     setRunning(false);
+    if (result.done > 0) onSent?.();
     const refreshed = result.done > 0 ? await refresh([...new Set(doneKeys.map((k) => k.split(":")[0]))]) : null;
     const tone = bulkResultTone(result);
     setSummaryColor(tone.color);
@@ -270,12 +306,18 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
         or RB handcuffs from Sleeper&rsquo;s depth chart (your own starters&rsquo; backups first) — always only players still free in that league. Or search anyone. No drop is needed; a player on waivers becomes a claim.
       </p>
       {!token && <p className="hint" style={{ color: "var(--red)" }}>Connect write access above to send.</p>}
+      {missingDrops > 0 && (
+        <p className="hint" style={{ color: "var(--amber)" }}>
+          {missingDrops} extra claim{missingDrops === 1 ? " needs" : "s need"} a player to drop before {missingDrops === 1 ? "it" : "they"} can be sent.
+        </p>
+      )}
       {confirming && (
         <BulkConfirm
           title={`Add ${pending.length} player${pending.length === 1 ? "" : "s"} across ${new Set(pending.map((q) => q.row.league.league.id)).size} leagues (no drops)`}
           lines={pending.map((q) => (
             <span key={q.key}>
               {q.row.league.league.name}: add {nameOf(q.id)}
+              {q.drop ? `, drop ${nameOf(q.drop)}` : ""}
               {isFaab(q.row.league) ? ` (bid $${bidFor(q.row.league, q.id)} if on waivers)` : ""}
             </span>
           ))}
@@ -310,14 +352,14 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
                     </span>
                   </span>
                   <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-                    {Array.from({ length: r.spots }, (_, i) => {
+                    {Array.from({ length: slotsOf(r) }, (_, i) => {
                       const id = list[i] ?? "";
                       const k = `${l.league.id}:${id}`;
                       const extra = id && !opts.some((o) => o.id === id) ? [{ id, count: 0 }] : [];
                       return (
                         <span key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                           <select className="select sm" value={id} disabled={running} onChange={(e) => setPick(r, i, e.target.value)} style={{ minWidth: 260 }}>
-                            <option value="">— spot {i + 1}: leave open —</option>
+                            <option value="">{i < r.spots ? `— spot ${i + 1}: leave open —` : `— extra claim ${i - r.spots + 1}: pick a player —`}</option>
                             {([...extra, ...opts] as { id: string; count: number; note?: string }[]).map((o) => (
                               <option key={o.id} value={o.id} disabled={o.id !== id && list.includes(o.id)}>
                                 {nameOf(o.id)} · {pmap?.[o.id]?.p} {pmap?.[o.id]?.t}
@@ -342,11 +384,60 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
                               />
                             </label>
                           )}
+                          {i >= r.spots && (
+                            <select
+                              className="select sm"
+                              value={dropPick[`${l.league.id}:${i}`] ?? ""}
+                              disabled={running}
+                              onChange={(e) => setDropPick((d) => ({ ...d, [`${l.league.id}:${i}`]: e.target.value }))}
+                              style={{ minWidth: 200, borderColor: id && !dropPick[`${l.league.id}:${i}`] ? "var(--amber)" : undefined }}
+                              aria-label="Player to drop for this claim"
+                            >
+                              <option value="">— drop who? —</option>
+                              {dropOptions(r).map((d) => {
+                                const usedElsewhere = Object.entries(dropPick).some(([kk, v]) => v === d && kk.startsWith(`${l.league.id}:`) && kk !== `${l.league.id}:${i}`);
+                                const starting = (r.live?.starters ?? l.roster?.starters ?? []).includes(d);
+                                return (
+                                  <option key={d} value={d} disabled={usedElsewhere}>
+                                    drop {nameOf(d)} · {pmap?.[d]?.p}{starting ? " (starting)" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          )}
+                          {i >= r.spots && i === slotsOf(r) - 1 && (
+                            <button
+                              type="button"
+                              className="chip-filter"
+                              disabled={running}
+                              title="Remove this extra claim"
+                              onClick={() => {
+                                setExtraSlots((x) => ({ ...x, [l.league.id]: Math.max(0, (x[l.league.id] ?? 0) - 1) }));
+                                setPicks((p) => ({ ...p, [l.league.id]: (p[l.league.id] ?? []).slice(0, i) }));
+                                setDropPick((d) => {
+                                  const n = { ...d };
+                                  delete n[`${l.league.id}:${i}`];
+                                  return n;
+                                });
+                              }}
+                            >
+                              ✕
+                            </button>
+                          )}
                           {id && <StatusCell status={status[k]} />}
                         </span>
                       );
                     })}
                     <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        className="chip-filter"
+                        disabled={running}
+                        onClick={() => setExtraSlots((x) => ({ ...x, [l.league.id]: (x[l.league.id] ?? 0) + 1 }))}
+                        title="Add another claim in this league — it needs a player to drop"
+                      >
+                        + another claim (with a drop)
+                      </button>
                       <input
                         className="input"
                         style={{ maxWidth: 220 }}
@@ -361,8 +452,8 @@ export default function FillOpenSpots({ leagues, pmap, token }: { leagues: Lineu
                           type="button"
                           className="chip-filter"
                           onClick={() => {
-                            const free = Array.from({ length: r.spots }, (_, i) => list[i] ?? "").findIndex((x) => !x);
-                            setPick(r, free < 0 ? r.spots - 1 : free, id);
+                            const free = Array.from({ length: slotsOf(r) }, (_, i) => list[i] ?? "").findIndex((x) => !x);
+                            setPick(r, free < 0 ? slotsOf(r) - 1 : free, id);
                             setSearch((s) => ({ ...s, [l.league.id]: "" }));
                           }}
                         >
