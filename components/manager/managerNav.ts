@@ -19,11 +19,11 @@ export const NAV_ENTRIES: NavEntry[] = [
     label: "My Leagues",
     links: [
       { href: "/manager/teams", label: "My Leagues" },
+      { href: "/manager/open-spots", label: "Empty Roster Spots" },
       { href: "/manager/record", label: "Weekly Record" },
       { href: "/manager/matchups", label: "Matchups" },
       { href: "/manager/byes", label: "Byes" },
       { href: "/manager/injuries", label: "Injuries" },
-      { href: "/manager/open-spots", label: "Open Spots" },
     ],
   },
   {
