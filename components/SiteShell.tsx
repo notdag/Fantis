@@ -64,7 +64,8 @@ export function useSite(): SiteState {
 }
 
 function activeTab(pathname: string): SiteTarget | null {
-  if (pathname === "/" || pathname.startsWith("/leagues")) return "leagues";
+  if (pathname === "/") return null; // the landing page
+  if (pathname.startsWith("/leagues")) return "leagues";
   for (const [k, p] of Object.entries(SITE_PATHS) as [SiteTarget, string][]) {
     if (pathname === p || pathname.startsWith(p + "/")) return k;
   }

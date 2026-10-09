@@ -736,3 +736,6 @@ a.link:hover{text-decoration:underline}
 
 /* Player card: marker on game-log rows that are Sleeper projections (weeks not yet played). */
 .projtag{margin-left:5px;padding:0 4px;border:1px dashed var(--muted);border-radius:4px;font-size:9px;font-style:normal;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);vertical-align:middle}
+
+/* Phones: the public site nav scrolls sideways instead of widening the page (it pushed every public page off-screen). */
+@media (max-width:640px){.nav{gap:12px;min-width:0}.nav .tabs{min-width:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.nav .tabs::-webkit-scrollbar{display:none}.nav .tab{flex:none;white-space:nowrap}}
