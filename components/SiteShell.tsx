@@ -186,7 +186,7 @@ export default function SiteShell({ children }: { children: ReactNode }) {
               <b>Fantis</b>
             </Link>
             <div className="tabs">
-              {(pathname === "/" ? NAV.filter(([k]) => k === "rankings") : NAV).map(([k, label]) => (
+              {NAV.filter(([k]) => k === "rankings").map(([k, label]) => (
                 <Link
                   key={k}
                   href={SITE_PATHS[k]}
@@ -197,21 +197,19 @@ export default function SiteShell({ children }: { children: ReactNode }) {
                   {label}
                 </Link>
               ))}
-              {/* The landing page's menu is just Rankings + the Manager (owner sign-in at /manager). */}
-              {pathname === "/" && (
-                <Link href="/manager" className="tab tab-cta" style={{ textDecoration: "none" }}>
-                  Manager
-                </Link>
-              )}
+              {/* The public menu is just Rankings + the Manager (owner sign-in at /manager). Leagues, Trade, Start/Sit and
+                  Portfolio still work at their own URLs but are no longer linked. */}
+              <Link href="/manager" className="tab tab-cta" style={{ textDecoration: "none" }}>
+                Manager
+              </Link>
             </div>
           </nav>
 
           {children}
 
           <footer className="footer">
-            Fantis MVP · league data via the Sleeper public API · rankings & values
-            are an editable starter set, not investment advice. Swap them for your
-            own feed anytime. Not affiliated with Sleeper, ESPN, or Yahoo.
+            Fantis · player data via the Sleeper public API · rankings are Fantis&rsquo;s own tiers, not betting or
+            investment advice. Not affiliated with Sleeper, ESPN, or Yahoo.
           </footer>
         </div>
       </div>
