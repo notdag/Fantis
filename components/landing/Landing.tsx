@@ -117,10 +117,10 @@ export default function Landing() {
             manage — with the math shown, and nothing sent to Sleeper until you confirm it.
           </p>
           <div className="ld-ctas">
-            <Link className="ld-btn" href="/leagues">Sync your Sleeper league</Link>
+            <Link className="ld-btn" href="/manager">Open the manager</Link>
             <Link className="ld-link" href="/rankings">Browse the rankings →</Link>
           </div>
-          <p className="ld-fine">Read-only sync with your Sleeper username. No password, about 60 seconds.</p>
+          <p className="ld-fine">The manager is invite-only; the rankings are free for everyone.</p>
         </div>
 
         <div className="ld-stage">
@@ -173,11 +173,11 @@ export default function Landing() {
       <BuiltSection />
 
       <section className="ld-final" data-reveal>
-        <h2>Bring your league. See your week.</h2>
-        <p>Sync a Sleeper username to see every roster, standing and the rankings — free, read-only, no password.</p>
+        <h2>Every league. One command center.</h2>
+        <p>Open the manager to run your week, or browse the rankings — updated by hand, tier by tier, with expert ranks alongside.</p>
         <div className="ld-ctas center">
-          <Link className="ld-btn" href="/leagues">Sync your Sleeper league</Link>
-          <Link className="ld-link" href="/trade">Try the trade calculator →</Link>
+          <Link className="ld-btn" href="/manager">Open the manager</Link>
+          <Link className="ld-link" href="/rankings">Browse the rankings →</Link>
         </div>
       </section>
     </div>

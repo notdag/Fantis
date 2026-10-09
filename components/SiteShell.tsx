@@ -186,7 +186,7 @@ export default function SiteShell({ children }: { children: ReactNode }) {
               <b>Fantis</b>
             </Link>
             <div className="tabs">
-              {NAV.map(([k, label]) => (
+              {(pathname === "/" ? NAV.filter(([k]) => k === "rankings") : NAV).map(([k, label]) => (
                 <Link
                   key={k}
                   href={SITE_PATHS[k]}
@@ -197,6 +197,12 @@ export default function SiteShell({ children }: { children: ReactNode }) {
                   {label}
                 </Link>
               ))}
+              {/* The landing page's menu is just Rankings + the Manager (owner sign-in at /manager). */}
+              {pathname === "/" && (
+                <Link href="/manager" className="tab tab-cta" style={{ textDecoration: "none" }}>
+                  Manager
+                </Link>
+              )}
             </div>
           </nav>
 

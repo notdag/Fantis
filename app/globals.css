@@ -739,3 +739,8 @@ a.link:hover{text-decoration:underline}
 
 /* Phones: the public site nav scrolls sideways instead of widening the page (it pushed every public page off-screen). */
 @media (max-width:640px){.nav{gap:12px;min-width:0}.nav .tabs{min-width:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}.nav .tabs::-webkit-scrollbar{display:none}.nav .tab{flex:none;white-space:nowrap}}
+
+/* Landing-page menu: the Manager link is a button (amber outline). */
+.nav .tab-cta{color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 55%,transparent);border-radius:9px;padding:7px 14px;font-weight:700}
+.nav .tab-cta:hover{background:color-mix(in srgb,var(--amber) 12%,transparent)}
+.nav .tabs{align-items:center}
