@@ -1,5 +1,6 @@
 "use client";
 
+import { ScopeBanner, useSelectionScope } from "./SelectionScope";
 import { useEffect, useMemo, useState } from "react";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { usePlayerMap } from "@/lib/usePlayerMap";
@@ -237,7 +238,7 @@ function LeagueRow({
 }
 
 export default function LineupManager({
-  leagues: allLeagues,
+  leagues: everyLeague,
   currentWeek: serverWeek,
   season,
 }: {
@@ -270,6 +271,12 @@ export default function LineupManager({
     };
   }, []);
   const currentWeek = Math.max(serverWeek, liveWeek);
+  // Opened from the League Manager with "Lineups for these": only the selected leagues.
+  const scope = useSelectionScope();
+  const allLeagues = useMemo(
+    () => (scope.on ? everyLeague.filter((l) => scope.selection.has(l.league.id)) : everyLeague),
+    [everyLeague, scope.on, scope.selection]
+  );
   // Best ball leagues set their own lineups, so they're hidden from every
   // tab here by default (one toggle brings them back).
   const [hideBestBall, setHideBestBall] = useState(true);
@@ -344,6 +351,7 @@ export default function LineupManager({
   return (
     <>
       <section className="sec">
+        {scope.on && <ScopeBanner shown={allLeagues.length} total={everyLeague.length} />}
         <SectionHead
           title="Lineups"
           right="set starters, IR and adds across every league, in one place"

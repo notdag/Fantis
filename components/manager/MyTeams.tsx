@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { addAll, filterState, prune, removeAll, selectionCounts, toggle as toggleSel, useLeagueSelection, writeSelection } from "@/lib/leagueSelection";
 import { statusChipStyle, statusLabel } from "@/lib/manager";
 import { useSeasonTotals } from "@/lib/useDropCandidates";
 import { computeLeagueRank, type LeagueRosterRow } from "@/lib/leagueRank";
@@ -28,6 +30,20 @@ export interface MyTeamRow {
   faabUsed: number | null;
   rosterId: number | null;
   leagueRosters: LeagueRosterRow[];
+  lastSyncedAt: string | null;
+  bestBall: boolean;
+}
+
+type StatusFilter = "all" | "active" | "attention" | "bestball" | "stale" | "other";
+const PAGE = 60;
+const STALE_MS = 24 * 3600_000;
+
+function syncAge(iso: string | null, now: number): { text: string; stale: boolean } {
+  if (!iso) return { text: "never synced", stale: true };
+  const ms = now - new Date(iso).getTime();
+  const h = Math.floor(ms / 3600_000);
+  const text = h < 1 ? "synced <1h ago" : h < 48 ? `synced ${h}h ago` : `synced ${Math.floor(h / 24)}d ago`;
+  return { text, stale: ms > STALE_MS };
 }
 
 type SortKey = "name" | "record" | "week" | "alerts" | "rank";
@@ -39,11 +55,34 @@ function winPct(t: MyTeamRow): number {
 }
 
 export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
-  const [query, setQuery] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("alerts");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [groupFilter, setGroupFilter] = useState<string | null>(null);
-  const [pinnedOnly, setPinnedOnly] = useState(false);
+  // Search, filters and sort live in the URL, so opening a league and pressing Back returns to exactly this view.
+  const router = useRouter();
+  const pathname = usePathname();
+  const sp = useSearchParams();
+  const [query, setQuery] = useState(sp.get("q") ?? "");
+  const [sortBy, setSortBy] = useState<SortKey>((sp.get("sort") as SortKey) || "alerts");
+  const [sortDir, setSortDir] = useState<SortDir>(sp.get("dir") === "asc" ? "asc" : "desc");
+  const [groupFilter, setGroupFilter] = useState<string | null>(sp.get("group"));
+  const [pinnedOnly, setPinnedOnly] = useState(sp.get("pinned") === "1");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>((sp.get("show") as StatusFilter) || "all");
+  const [selOnly, setSelOnly] = useState(false);
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => {
+    const p = new URLSearchParams();
+    if (query.trim()) p.set("q", query.trim());
+    if (sortBy !== "alerts") p.set("sort", sortBy);
+    if (sortDir !== "desc") p.set("dir", sortDir);
+    if (groupFilter) p.set("group", groupFilter);
+    if (pinnedOnly) p.set("pinned", "1");
+    if (statusFilter !== "all") p.set("show", statusFilter);
+    const qs = p.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [query, sortBy, sortDir, groupFilter, pinnedOnly, statusFilter, router, pathname]);
+
+  // Selection (lib/leagueSelection.ts): independent of the filter, kept across pages and reloads.
+  const storedSel = useLeagueSelection();
+  const selection = useMemo(() => prune(storedSel, teams.map((t) => t.leagueId)), [storedSel, teams]);
+  const [now] = useState(() => Date.now());
   const { favorites, isFavorite, toggle: toggleFavorite } = useLeagueFavorites();
 
   // Real, owner-set labels (League Info tab) — already collected per
@@ -87,9 +126,31 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
       (t) =>
         (!q || t.leagueName.toLowerCase().includes(q)) &&
         (!groupFilter || t.group?.trim() === groupFilter) &&
-        (!pinnedOnly || favorites.has(t.leagueId))
+        (!pinnedOnly || favorites.has(t.leagueId)) &&
+        (!selOnly || selection.has(t.leagueId)) &&
+        (statusFilter === "all" ||
+          (statusFilter === "active" && t.status === "in_season" && !t.bestBall) ||
+          (statusFilter === "attention" && t.alertCount > 0) ||
+          (statusFilter === "bestball" && t.bestBall) ||
+          (statusFilter === "stale" && t.status === "in_season" && syncAge(t.lastSyncedAt, now).stale) ||
+          (statusFilter === "other" && t.status !== "in_season"))
     );
-  }, [teams, query, groupFilter, pinnedOnly, favorites]);
+  }, [teams, query, groupFilter, pinnedOnly, favorites, statusFilter, selOnly, selection, now]);
+  const filteredIds = useMemo(() => filtered.map((t) => t.leagueId), [filtered]);
+  const headState = filterState(selection, filteredIds);
+  const counts = selectionCounts(selection, filteredIds);
+  const statusCounts = useMemo(() => {
+    const c: Record<StatusFilter, number> = { all: teams.length, active: 0, attention: 0, bestball: 0, stale: 0, other: 0 };
+    for (const t of teams) {
+      if (t.status === "in_season" && !t.bestBall) c.active++;
+      if (t.alertCount > 0) c.attention++;
+      if (t.bestBall) c.bestball++;
+      if (t.status === "in_season" && syncAge(t.lastSyncedAt, now).stale) c.stale++;
+      if (t.status !== "in_season") c.other++;
+    }
+    return c;
+  }, [teams, now]);
+  const scoped = (path: string) => `${path}${path.includes("?") ? "&" : "?"}scope=selection`;
 
   const sorted = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -188,10 +249,54 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
             className="input"
             placeholder="Search leagues…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setLimit(PAGE);
+            }}
             style={{ maxWidth: 280 }}
           />
         </div>
+        <div className="field" style={{ marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
+          {(
+            [
+              ["all", "All"],
+              ["active", "Active"],
+              ["attention", "Needs attention"],
+              ["stale", "Sync stale"],
+              ["bestball", "Best ball"],
+              ["other", "Not in season"],
+            ] as [StatusFilter, string][]
+          ).map(([k, label]) =>
+            k !== "all" && statusCounts[k] === 0 ? null : (
+              <button
+                key={k}
+                className={`chip-filter ${statusFilter === k ? "on" : ""}`}
+                onClick={() => {
+                  setStatusFilter(k);
+                  setLimit(PAGE);
+                }}
+              >
+                {label} ({statusCounts[k]})
+              </button>
+            )
+          )}
+          {selection.size > 0 && (
+            <button className={`chip-filter ${selOnly ? "on" : ""}`} onClick={() => setSelOnly((v) => !v)}>
+              Selected only ({selection.size})
+            </button>
+          )}
+        </div>
+        {selection.size > 0 && (
+          <div className="lmselbar">
+            <span>
+              <b>{counts.total}</b> selected{counts.hidden > 0 ? ` (${counts.hidden} hidden by the filter)` : ""}
+            </span>
+            <Link className="btn sm" href={scoped("/manager/lineups")}>Lineups for these</Link>
+            <Link className="btn ghost sm" href={scoped("/manager/waiver")}>Waivers for these</Link>
+            <Link className="btn ghost sm" href={scoped("/manager/open-spots")}>Empty spots for these</Link>
+            <button type="button" className="linklike" onClick={() => writeSelection([])}>Clear selection</button>
+          </div>
+        )}
         {favorites.size > 0 && (
           <div className="field" style={{ marginBottom: 8, gap: 8 }}>
             <button
@@ -224,6 +329,16 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           className="field"
           style={{ marginBottom: 0, gap: 12, position: "sticky", top: 0, zIndex: 1, background: "var(--ink)", padding: "8px 0" }}
         >
+          <input
+            type="checkbox"
+            aria-label={headState === "all" ? "Deselect every filtered league" : `Select all ${filteredIds.length} filtered leagues`}
+            title={headState === "all" ? "Deselect every filtered league" : `Select all ${filteredIds.length} filtered leagues (not just the ones shown)`}
+            checked={headState === "all"}
+            ref={(el) => {
+              if (el) el.indeterminate = headState === "some";
+            }}
+            onChange={() => writeSelection(headState === "all" ? removeAll(selection, filteredIds) : addAll(selection, filteredIds))}
+          />
           {(["name", "record", "rank", "week", "alerts"] as SortKey[]).map((k) => (
             <button key={k} className={`sorth ${sortBy === k ? "on" : ""}`} onClick={() => toggleSort(k)}>
               {k === "name"
@@ -241,12 +356,22 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
         </div>
 
         <DataTable>
-          {sorted.map((t) => {
+          {sorted.slice(0, limit).map((t) => {
             const hasRecord = t.wins != null;
+            const age = syncAge(t.lastSyncedAt, now);
+            const isSel = selection.has(t.leagueId);
             const hasMatchup = t.myPoints != null;
             const rank = rankByLeague.get(t.leagueId);
             return (
-              <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.leagueId}>
+              <TableRow as="link" href={`/manager/${t.leagueId}`} key={t.leagueId} highlight={isSel}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${t.leagueName}`}
+                  checked={isSel}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => writeSelection(toggleSel(selection, t.leagueId))}
+                  style={{ flex: "none" }}
+                />
                 <button
                   type="button"
                   aria-label={isFavorite(t.leagueId) ? "Unpin league" : "Pin league to the top"}
@@ -259,7 +384,13 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
                 >
                   <IconStar width={16} height={16} fill={isFavorite(t.leagueId) ? "currentColor" : "none"} />
                 </button>
-                <span className="tname" style={{ flex: 1 }}>{t.leagueName}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span className="tname" style={{ display: "block" }}>{t.leagueName}</span>
+                  <span className="portmeta" style={{ display: "block", fontWeight: 400, color: age.stale && t.status === "in_season" ? "var(--red)" : undefined }}>
+                    {age.text}
+                    {t.bestBall ? " · best ball" : ""}
+                  </span>
+                </span>
                 <span className="portmeta" style={{ minWidth: 60 }}>
                   {hasRecord ? `${t.wins}-${t.losses}${(t.ties ?? 0) > 0 ? `-${t.ties}` : ""}` : "—"}
                 </span>
@@ -308,9 +439,17 @@ export default function MyTeams({ teams }: { teams: MyTeamRow[] }) {
           )}
         </DataTable>
         {sorted.length > 0 && (
-          <div className="hint" style={{ marginTop: 8 }}>
-            {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
-            {sorted.length !== teams.length ? ` of ${teams.length}` : ""}
+          <div className="hint" style={{ marginTop: 8, display: "flex", gap: 12, alignItems: "center" }}>
+            <span>
+              {Math.min(limit, sorted.length)} of {sorted.length} league{sorted.length === 1 ? "" : "s"} shown
+              {sorted.length !== teams.length ? ` (${teams.length} total)` : ""}
+            </span>
+            {sorted.length > limit && (
+              <>
+                <button type="button" className="linklike" onClick={() => setLimit((l) => l + PAGE)}>Show {Math.min(PAGE, sorted.length - limit)} more</button>
+                <button type="button" className="linklike" onClick={() => setLimit(sorted.length)}>Show all</button>
+              </>
+            )}
           </div>
         )}
       </section>

@@ -33,6 +33,9 @@ const PORTFOLIO_SLUGS = new Set([
   "transactions",
   "commissioner",
   "history",
+  "review",
+  "activity",
+  "leaguemates",
 ]);
 
 export interface LeagueRouteContext {

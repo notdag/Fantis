@@ -1,5 +1,7 @@
 "use client";
 
+import WaiverBoard from "./WaiverBoard";
+import { ScopeBanner, useSelectionScope } from "./SelectionScope";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
@@ -109,9 +111,9 @@ export default function WaiverAssistant({
   // in-progress state (search targets, bid edits, a scan already run)
   // survives switching tabs. A ?leagueId= deep link starts on Mass Add —
   // the actual "execute a waiver" tool — instead of the default landing tab.
-  type WaiverTab = "trending" | "claims" | "add" | "lookup" | "history";
-  const [tab, setTab] = useState<WaiverTab>(soloLeagueId ? "add" : "trending");
-  const [visited, setVisited] = useState<Set<WaiverTab>>(new Set<WaiverTab>([soloLeagueId ? "add" : "trending"]));
+  type WaiverTab = "board" | "trending" | "claims" | "add" | "lookup" | "history";
+  const [tab, setTab] = useState<WaiverTab>(soloLeagueId ? "add" : "board");
+  const [visited, setVisited] = useState<Set<WaiverTab>>(new Set<WaiverTab>([soloLeagueId ? "add" : "board"]));
   const go = (t: WaiverTab) => {
     setTab(t);
     setVisited((prev) => (prev.has(t) ? prev : new Set(prev).add(t)));
@@ -121,18 +123,21 @@ export default function WaiverAssistant({
     for (const lg of allLeagues) if (lg.group && lg.group.trim()) set.add(lg.group.trim());
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [allLeagues]);
+  // "Waivers for these" from the League Manager narrows the page to the selected leagues (a single-league link still wins).
+  const scope = useSelectionScope();
   const leagues = useMemo(() => {
     if (soloLeagueId) return allLeagues.filter((lg) => lg.leagueId === soloLeagueId);
-    return groupFilter ? allLeagues.filter((lg) => lg.group?.trim() === groupFilter) : allLeagues;
-  }, [allLeagues, groupFilter, soloLeagueId]);
+    const base = scope.on ? allLeagues.filter((lg) => scope.selection.has(lg.leagueId)) : allLeagues;
+    return groupFilter ? base.filter((lg) => lg.group?.trim() === groupFilter) : base;
+  }, [allLeagues, groupFilter, soloLeagueId, scope.on, scope.selection]);
   const groupLeagueIds = useMemo(() => new Set(leagues.map((l) => l.leagueId)), [leagues]);
   const multiAddLeagues = useMemo(
-    () => (soloLeagueId || groupFilter ? allMultiAddLeagues.filter((l) => groupLeagueIds.has(l.league.id)) : allMultiAddLeagues),
-    [allMultiAddLeagues, groupFilter, soloLeagueId, groupLeagueIds]
+    () => (soloLeagueId || groupFilter || scope.on ? allMultiAddLeagues.filter((l) => groupLeagueIds.has(l.league.id)) : allMultiAddLeagues),
+    [allMultiAddLeagues, groupFilter, soloLeagueId, groupLeagueIds, scope.on]
   );
   const faabLeagues = useMemo(
-    () => (soloLeagueId || groupFilter ? allFaabLeagues.filter((l) => groupLeagueIds.has(l.leagueId)) : allFaabLeagues),
-    [allFaabLeagues, groupFilter, soloLeagueId, groupLeagueIds]
+    () => (soloLeagueId || groupFilter || scope.on ? allFaabLeagues.filter((l) => groupLeagueIds.has(l.leagueId)) : allFaabLeagues),
+    [allFaabLeagues, groupFilter, soloLeagueId, groupLeagueIds, scope.on]
   );
   const [syncingHistory, setSyncingHistory] = useState(false);
   const [historyError, setHistoryError] = useState("");
@@ -550,6 +555,7 @@ export default function WaiverAssistant({
           </p>
         )}
 
+        {!soloLeagueId && scope.on && <ScopeBanner shown={new Set(leagues.map((l) => l.leagueId)).size} total={allLeagues.length} />}
         {!soloLeagueId && groups.length > 0 && (
           <div className="field" style={{ marginBottom: 12, gap: 8 }}>
             <button className={`chip-filter ${groupFilter === null ? "on" : ""}`} onClick={() => setGroupFilter(null)}>
@@ -603,6 +609,9 @@ export default function WaiverAssistant({
 
       <section className="sec" style={{ paddingBottom: 0 }}>
         <div className="field" style={{ marginBottom: 0 }}>
+          <button className={`chip-filter ${tab === "board" ? "on" : ""}`} onClick={() => go("board")}>
+            Best available
+          </button>
           <button className={`chip-filter ${tab === "trending" ? "on" : ""}`} onClick={() => go("trending")}>
             Trending
           </button>
@@ -620,6 +629,12 @@ export default function WaiverAssistant({
           </button>
         </div>
       </section>
+
+      {visited.has("board") && (
+        <div hidden={tab !== "board"}>
+          <WaiverBoard leagues={leagues} faab={faabLeagues} pmap={pmap} />
+        </div>
+      )}
 
       {visited.has("claims") && (
       <div hidden={tab !== "claims"}>

@@ -6,6 +6,7 @@ import { getTrendingAdds, getTrendingDrops } from "@/lib/sleeper";
 import { fetchAllLive, preflightRosters, type LiveRoster } from "@/lib/liveRosters";
 import { addDropFreeAgent, cancelWaiverClaim, claimWaiver } from "@/lib/sleeperWrite";
 import { bulkResultTone, errorMessage, type TaskStatus } from "@/lib/bulkRun";
+import { classifyError, logActivity, newBatchId, recentlySent, type LogEntry } from "@/lib/bulkOps";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { posChipStyle } from "@/lib/players";
@@ -446,9 +447,17 @@ export default function FillOpenSpots({
   };
 
   // Apply one league: optionally cancel the placed claims (when their order/bids changed), then place everything in the order shown.
-  const applyLeague = async (r: Row): Promise<{ done: number; failed: number; auth: boolean }> => {
+  // Shared bulk framework hooks (this page keeps its own ordered send, since claim order matters): a duplicate guard for new
+  // picks across reloads, honest "uncertain" outcomes on timeouts, and every outcome written to the activity log.
+  const opKeyOf = (lid: string, id: string, drop?: string) => `fill_spots:${lid}:add:${id}:drop:${drop ?? "-"}`;
+  const applyLeague = async (
+    r: Row,
+    ctx: { sentBefore: Set<string> | null; log: LogEntry[]; batchId: string }
+  ): Promise<{ done: number; failed: number; auth: boolean }> => {
     const l = r.league;
     const lid = l.league.id;
+    const entry = (playerId: string, action: string, status: LogEntry["status"], message: string | null, opKey: string | null, kind = "execute") =>
+      ctx.log.push({ kind, tool: "fill_spots", status, leagueId: lid, leagueName: l.league.name, playerId, playerName: nameOf(playerId), action, message, batchId: ctx.batchId, opKey });
     const items = itemsOf(r);
     const rebuild = rebuildNeeded(r);
     const set = (k: string, s: TaskStatus) => setStatus((prev) => ({ ...prev, [k]: s }));
@@ -468,7 +477,9 @@ export default function FillOpenSpots({
         try {
           set(i.c.key, { kind: "running" });
           await cancelWaiverClaim(token!, { leagueId: lid, transactionId: i.c.transactionId, leg: i.c.leg });
+          if (i.c.addId) entry(i.c.addId, `cancel claim for ${nameOf(i.c.addId)} (to re-place)`, "ok", null, null);
         } catch (e) {
+          if (i.c.addId) entry(i.c.addId, `cancel claim for ${nameOf(i.c.addId)} (to re-place)`, classifyError(e), errorMessage(e), null);
           set(i.c.key, { kind: "failed", message: `Couldn't cancel to re-order — nothing else changed in this league: ${errorMessage(e)}` });
           return { done, failed: failed + 1, auth: isAuth(e) };
         }
@@ -482,8 +493,10 @@ export default function FillOpenSpots({
         try {
           await claimWaiver(token!, { leagueId: lid, rosterId: l.roster!.rosterId, addPlayerId: c.addId!, dropPlayerId: c.dropId ?? undefined, bid });
           set(c.key, { kind: "done", note: `re-placed${isFaab(l) ? ` $${bid}` : ""}` });
+          entry(c.addId!, `re-place claim for ${nameOf(c.addId!)}${isFaab(l) ? ` ($${bid})` : ""}`, "submitted", null, null);
           done++;
         } catch (e) {
+          entry(c.addId!, `re-place claim for ${nameOf(c.addId!)}`, classifyError(e), errorMessage(e), null);
           set(c.key, { kind: "failed", message: `Cancelled but couldn't place again: ${errorMessage(e)} — queue him again.` });
           failed++;
           if (isAuth(e)) return { done, failed, auth: true };
@@ -504,20 +517,32 @@ export default function FillOpenSpots({
         continue;
       }
       const base = { leagueId: lid, rosterId: l.roster!.rosterId, addPlayerId: i.id, ...(drop ? { dropPlayerId: drop } : {}) };
+      const opKey = opKeyOf(lid, i.id, drop);
+      const action = `add ${nameOf(i.id)}${drop ? `, drop ${nameOf(drop)}` : ""}`;
+      if (ctx.sentBefore?.has(opKey)) {
+        set(k, { kind: "failed", message: "Already sent in the last 30 minutes — not sent again. Check Sleeper." });
+        entry(i.id, action, "skipped", "already sent in the last 30 min (duplicate guard)", opKey, "skip");
+        failed++;
+        continue;
+      }
       set(k, { kind: "running" });
       try {
         try {
           await addDropFreeAgent(token!, base);
           set(k, { kind: "done", note: drop ? `added (dropped ${nameOf(drop)})` : "added" });
+          entry(i.id, action, "ok", null, opKey);
         } catch (e) {
           if (!(e instanceof Error && /waiver/i.test(e.message))) throw e;
           const bid = isFaab(l) ? bidFor(l, i.id) : 0;
           await claimWaiver(token!, { ...base, bid });
           set(k, { kind: "done", note: isFaab(l) ? `claim placed ($${bid})` : "claim placed" });
+          entry(i.id, `claim ${nameOf(i.id)}${isFaab(l) ? ` ($${bid})` : ""}${drop ? `, drop ${nameOf(drop)}` : ""}`, "submitted", null, opKey);
         }
         done++;
       } catch (e) {
-        set(k, { kind: "failed", message: errorMessage(e) });
+        const how = isAuth(e) ? "failed" : classifyError(e);
+        set(k, { kind: "failed", message: how === "uncertain" ? `Outcome unknown (${errorMessage(e)}) — check Sleeper before trying again.` : errorMessage(e) });
+        entry(i.id, action, how, errorMessage(e), opKey);
         failed++;
         if (isAuth(e)) return { done, failed, auth: true };
       }
@@ -538,9 +563,14 @@ export default function FillOpenSpots({
     let failed = 0;
     let auth = false;
     const touched: string[] = [];
+    const keys = list.flatMap((r) => {
+      const lid = r.league.league.id;
+      return itemsOf(r).flatMap((i, idx) => (i.kind === "placed" ? [] : [opKeyOf(lid, i.id, idx >= r.spots ? dropPick[`${lid}:${i.id}`] || undefined : undefined)]));
+    });
+    const ctx = { sentBefore: await recentlySent(keys), log: [] as LogEntry[], batchId: newBatchId() };
     for (const r of list) {
       if (abortRef.current.aborted || auth) break;
-      const res = await applyLeague(r);
+      const res = await applyLeague(r, ctx);
       done += res.done;
       failed += res.failed;
       auth = res.auth;
@@ -552,6 +582,7 @@ export default function FillOpenSpots({
       });
     }
     setClaimBid((b) => Object.fromEntries(Object.entries(b).filter(([k]) => !touched.some((lid) => k.startsWith(`${lid}:`)))));
+    const logged = await logActivity(ctx.log);
     setRunning(false);
     if (done > 0) {
       onSent?.();
@@ -563,7 +594,9 @@ export default function FillOpenSpots({
     setSummary(
       `${tone.prefix}${done} change${done === 1 ? "" : "s"} applied in ${touched.length} league${touched.length === 1 ? "" : "s"}${failed ? `, ${failed} failed` : ""}.` +
         (auth ? " Stopped — Sleeper rejected the login token; reconnect above." : "") +
-        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : "")
+        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : "") +
+        (ctx.sentBefore === null ? " ⚠ Couldn't check the activity log for recent duplicates." : "") +
+        (logged ? "" : " ⚠ Couldn't write to the activity log.")
     );
   };
   const dirtyRows = rows.filter(isDirty);

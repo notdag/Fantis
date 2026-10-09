@@ -5,7 +5,7 @@
 // lived in MgrTabs.tsx, which this replaces); every href here is a real,
 // working route with real data — nothing added for pages that don't
 // exist yet (Standings/Draft Results/Settings).
-export type IconKey = "home" | "users" | "wrench" | "shield";
+export type IconKey = "home" | "users" | "wrench" | "shield" | "search" | "check" | "flag";
 
 export type NavEntry =
   | { kind: "link"; icon: IconKey; label: string; href: string }
@@ -13,30 +13,53 @@ export type NavEntry =
 
 export const NAV_ENTRIES: NavEntry[] = [
   { kind: "link", icon: "home", label: "Command Center", href: "/manager" },
+  // Command Center 2.0 grouping: League Manager (work across leagues), Player Operations (work on one player
+  // everywhere), Review Queue (everything waiting for you), Intelligence (read-only analysis). Every previous
+  // destination is still here — nothing was removed, only regrouped.
   {
     kind: "group",
     icon: "users",
-    label: "My Leagues",
+    label: "League Manager",
     links: [
-      { href: "/manager/teams", label: "My Leagues" },
-      { href: "/manager/open-spots", label: "Empty Roster Spots" },
-      { href: "/manager/record", label: "Weekly Record" },
+      { href: "/manager/teams", label: "All leagues" },
+      { href: "/manager/lineups", label: "Lineups & weekly planner" },
+      { href: "/manager/open-spots", label: "Empty roster spots" },
       { href: "/manager/matchups", label: "Matchups" },
-      { href: "/manager/byes", label: "Byes" },
-      { href: "/manager/injuries", label: "Injuries" },
+      
+      
+      
+      
     ],
   },
   {
     kind: "group",
-    icon: "wrench",
-    label: "Tools",
+    icon: "search",
+    label: "Player Operations",
     links: [
-      { href: "/manager/lineups", label: "Lineups" },
-      { href: "/manager/inbox", label: "Trades & Claims" },
+      { href: "/manager/player", label: "Find a player" },
+      { href: "/manager/waiver", label: "Waivers & adds" },
+    ],
+  },
+  {
+    kind: "group",
+    icon: "check",
+    label: "Review Queue",
+    links: [
+      { href: "/manager/review", label: "Review queue" },
+      { href: "/manager/inbox", label: "Trades & claims" },
+      { href: "/manager/actions", label: "Alerts" },
+    ],
+  },
+  {
+    kind: "group",
+    icon: "flag",
+    label: "Intelligence",
+    links: [
+      { href: "/manager/record", label: "Weekly record" },
+      { href: "/manager/leaguemates", label: "LeagueMates" },
       { href: "/manager/transactions", label: "Transactions" },
-      { href: "/manager/actions", label: "Action Queue" },
-      { href: "/manager/waiver", label: "Waiver Assistant" },
-      { href: "/manager/player", label: "Player search" },
+      { href: "/manager/history", label: "History" },
+      { href: "/manager/activity", label: "Activity log" },
     ],
   },
 ];

@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import ManagerDashboard from "@/components/manager/ManagerDashboard";
+import WeekCommand from "@/components/manager/WeekCommand";
+import { loadProtoData } from "@/lib/protoData";
 import { db } from "@/lib/db";
 import { currentProjectionWeek } from "@/lib/sleeper";
 import { getStateCached } from "@/lib/stateCache";
@@ -140,7 +142,12 @@ export default async function ManagerPage() {
   const state = await getStateCached();
   const currentWeek = state ? currentProjectionWeek(state) : 1;
 
+  const weekData = await loadProtoData();
+
   return (
+    <WeekCommand
+      data={weekData}
+      portfolioExtra={
     <ManagerDashboard
       accounts={accounts}
       leagues={leagues}
@@ -150,6 +157,8 @@ export default async function ManagerPage() {
       rosters={rosterRows}
       leagueRostersByLeague={leagueRostersByLeague}
       currentWeek={currentWeek}
+    />
+      }
     />
   );
 }

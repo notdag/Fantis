@@ -600,3 +600,27 @@ model FantasyCalcFetch {
   count     Int      @default(0)
   error     String?
 }
+
+// Activity log for every scan, plan, approval and execution across the manager tools (Command Center 2.0). One row per
+// event. `opKey` identifies one concrete change (e.g. "mass_add:<league>:add:<player>:drop:<player>") so the same change
+// can't be sent twice by accident across page reloads; `batchId` groups one run.
+model OperationLog {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  kind       String // scan | plan | approve | reject | execute | verify | skip | conflict
+  tool       String // optimize | mass_ir | mass_add | mass_drop | open_spots | waiver | inbox | chat | proposals | sync
+  status     String // ok | failed | skipped | uncertain | unverified | submitted | started
+  leagueId   String?
+  leagueName String?
+  playerId   String?
+  playerName String?
+  action     String // human description of the change
+  message    String?
+  batchId    String?
+  opKey      String?
+
+  @@index([at])
+  @@index([leagueId])
+  @@index([batchId])
+  @@index([opKey])
+}

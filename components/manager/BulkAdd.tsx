@@ -6,9 +6,10 @@ import type { Claim } from "@/lib/inbox";
 import { buildMultiAddPlan, type LeagueBudgetWarning, type MultiAddRow } from "@/lib/multiAddPlan";
 import { suggestBid, type FaabStats } from "@/lib/faabHistory";
 import { getTrendingAdds } from "@/lib/sleeper";
-import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
-import { preflightRosters } from "@/lib/liveRosters";
+import { preflightRosters, fetchLiveLeague } from "@/lib/liveRosters";
+import { runBulkOps, opsSummaryExtra } from "@/lib/bulkOps";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
 import type { PlayerPrefs } from "@/lib/playerPrefs";
@@ -364,13 +365,37 @@ export default function BulkAdd({
     }));
 
     const doneKeys: string[] = [];
-    const result = await runBulk(tasks, {
-      signal: abortRef.current,
-      onStatus: (key, s) => {
-        if (s.kind === "done") doneKeys.push(key);
-        setStatus((prev) => ({ ...prev, [key]: s }));
-      },
-    });
+    const rowOf = new Map(selectedRows.map((r) => [r.key, r]));
+    // Shared bulk framework: duplicate guard across reloads, honest uncertain/unverified outcomes, activity log.
+    const result = await runBulkOps(
+      tasks.map((t) => {
+        const r = rowOf.get(t.key)!;
+        const drop = r.full ? dropFor(r) ?? undefined : undefined;
+        return {
+          opKey: `mass_add:${r.leagueId}:add:${r.targetId}:drop:${drop ?? "-"}`,
+          statusKey: t.key,
+          tool: "mass_add",
+          leagueId: r.leagueId,
+          leagueName: r.leagueName,
+          playerId: r.targetId,
+          playerName: nameOf(pmap, r.targetId),
+          action: `add ${nameOf(pmap, r.targetId)}${drop ? `, drop ${nameOf(pmap, drop)}` : ""}`,
+          exec: t.run,
+          // Re-read: he should now be on my roster (a waiver claim is only "submitted" and isn't checked).
+          check: async () => {
+            const f = await fetchLiveLeague(r.leagueId, r.rosterId);
+            return f ? f.players.includes(r.targetId) : null;
+          },
+        };
+      }),
+      {
+        signal: abortRef.current,
+        onStatus: (key, s) => {
+          if (s.kind === "done") doneKeys.push(key);
+          setStatus((prev) => ({ ...prev, [key]: s }));
+        },
+      }
+    );
     setRunning(false);
     // Re-sync just the leagues that changed so the Action Queue, banners and
     // rosters reflect it right away (keys are "leagueId:playerId").
@@ -381,7 +406,8 @@ export default function BulkAdd({
       `${tone.prefix}${result.done} succeeded${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
-        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
+        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).") +
+        opsSummaryExtra(result)
     );
   };
 

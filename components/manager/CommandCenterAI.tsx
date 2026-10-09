@@ -13,6 +13,7 @@ import { useFantasyCalcValues, fantasyCalcValue } from "@/lib/fantasyCalc";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
 import { loadNotes, type PlayerNotes } from "@/lib/playerNotes";
 import { useCuratedRanks } from "./useCuratedRanks";
+import { PREFILL_EVENT, takeChatPrefill } from "./ccStore";
 import { createReadOnlyTools, type RawMatchup, type WeekRecordRow } from "@/lib/commandCenter/tools";
 import type { FaabStats } from "@/lib/faabHistory";
 import {
@@ -182,7 +183,16 @@ export default function CommandCenterAI({ leagues, permission, onProposalsSaved 
   }, [pmap, tradeValues, fc, curated, prefs, leagueFc, notes]);
 
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => takeChatPrefill() ?? "");
+  // A question handed over from the command bar while this panel is already open: typed in, not sent.
+  useEffect(() => {
+    const onPrefill = () => {
+      const t = takeChatPrefill();
+      if (t) setInput(t);
+    };
+    window.addEventListener(PREFILL_EVENT, onPrefill);
+    return () => window.removeEventListener(PREFILL_EVENT, onPrefill);
+  }, []);
   const [exampleGroup, setExampleGroup] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);

@@ -48,7 +48,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 // is null for a tie or an unresolved pairing (bye, odd roster count), never
 // guessed. Shared by both the current-week sync and the incremental
 // backfill below so the win/loss logic isn't duplicated.
-async function persistWeeklyResults(leagueId: string, week: number, matchupRows: SleeperMatchupRow[]) {
+export async function persistWeeklyResults(leagueId: string, week: number, matchupRows: SleeperMatchupRow[]) {
   const byMatchupId = new Map<number, SleeperMatchupRow[]>();
   for (const row of matchupRows) {
     if (row.matchup_id == null) continue;
@@ -422,7 +422,11 @@ export async function syncAccount(
               // "already synced" and was never revisited) — treated the
               // same as genuinely missing so it self-heals on the next sync
               // instead of staying wrong forever.
-              if (!pts || pts.length === 0 || pts.every((p) => p === 0)) missing.push(w);
+              // The two most recently finished weeks are always re-read: a sync that ran mid-week stored partial scores
+              // (and wrong/blank winners) that "some row exists" alone would never refresh. Verified against
+              // Sleeper's live matchups (2026-10, week 4: stored 37.2 pts / undecided vs real final results). Two weeks,
+              // not one, so a week is re-read at least once after its Monday game has finished.
+              if (!pts || pts.length === 0 || pts.every((p) => p === 0) || w >= week - 2) missing.push(w);
             }
             // Independent weeks — fetch/persist concurrently rather than
             // one round trip at a time.

@@ -4,7 +4,10 @@ import AdminLogin from "@/components/AdminLogin";
 import ManagerShell from "@/components/manager/ManagerShell";
 import FloatingCommandCenter from "@/components/manager/FloatingCommandCenter";
 import { db } from "@/lib/db";
+import { Manrope } from "next/font/google";
 import "./manager.css";
+
+const manrope = Manrope({ subsets: ["latin"], weight: ["500", "600", "700", "800"], variable: "--font-cb" });
 
 // Shared shell for every /manager/* page — auth gate, plus (once authed) the
 // sidebar nav shell. Unauthed case keeps the plain centered-card layout
@@ -36,7 +39,6 @@ export default async function ManagerLayout({ children }: { children: React.Reac
     );
   }
 
-  const initialCollapsed = store.get("fantis_mgr_sidebar")?.value === "1";
 
   // Fetched once here (not per-page) so the header's league switcher and
   // the sidebar's CurrentLeagueNavGroup work identically on every route,
@@ -47,9 +49,8 @@ export default async function ManagerLayout({ children }: { children: React.Reac
   ]);
 
   return (
-    <div className="fantis">
+    <div className={`fantis cbs-theme ${manrope.variable}`}>
       <ManagerShell
-        initialCollapsed={initialCollapsed}
         leagues={leagueRows}
         lastSyncedAt={lastRun?.finishedAt?.toISOString() ?? null}
       >

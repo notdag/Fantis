@@ -31,7 +31,7 @@ function LeagueSwitcher({
   section,
 }: {
   leagues: { id: string; name: string }[];
-  currentLeagueId: string;
+  currentLeagueId: string | null;
   section: string;
 }) {
   const pathname = usePathname();
@@ -60,15 +60,20 @@ function LeagueSwitcher({
       .slice(0, 20);
   }, [leagues, currentLeagueId, query]);
 
-  const currentName = leagues.find((lg) => lg.id === currentLeagueId)?.name ?? "League";
+  const current = leagues.find((lg) => lg.id === currentLeagueId);
+  const tag = current ? (current.name.match(/#\s?(\d{1,4})/)?.[1] ? `#${current.name.match(/#\s?(\d{1,4})/)![1]}` : current.name.slice(0, 2).toUpperCase()) : null;
 
   return (
-    <div style={{ position: "relative", display: "inline-flex" }} ref={ref}>
-      <button className="btn ghost sm" onClick={() => setOpen((v) => !v)}>
-        {currentName} {open ? "▲" : "▼"}
+    <div className="cbs-switch" ref={ref}>
+      <button className="cbs-league" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-haspopup="listbox">
+        <span className="cbs-dot">{tag ?? leagues.length}</span>
+        <span className="cbs-league-nm">{current ? current.name : "Jump to a league"}</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
       </button>
       {open && (
-        <div className="mgrtabmenu">
+        <div className="cbs-pop">
           <input
             className="input"
             style={{ padding: "6px 8px", fontSize: 12.5, width: "100%", marginBottom: 4 }}
@@ -96,12 +101,42 @@ function LeagueSwitcher({
   );
 }
 
+// The page's own title row (breadcrumb inside a league). The Command Center home draws its own header.
+export function PageTitle({ leagues }: { leagues: { id: string; name: string }[] }) {
+  const pathname = usePathname();
+  if (pathname === "/manager") return null;
+  const leagueCtx = extractLeagueContext(pathname);
+  const currentLeague = leagueCtx ? leagues.find((lg) => lg.id === leagueCtx.leagueId) : null;
+  const sectionLabel = leagueCtx ? (LEAGUE_SUB_ROUTES.find((r) => r.slug === leagueCtx.section)?.label ?? "Overview") : null;
+  return (
+    <header className="cbs-pagehead">
+      {leagueCtx && currentLeague ? (
+        <>
+          <nav className="cbs-crumbs" aria-label="Breadcrumb">
+            <Link href="/manager/teams">All leagues</Link>
+            <span aria-hidden>/</span>
+            <Link href={leagueSubHref(leagueCtx.leagueId, "overview")}>{currentLeague.name}</Link>
+          </nav>
+          <h1>{sectionLabel}</h1>
+        </>
+      ) : (
+        <h1>{portfolioPageLabel(pathname)}</h1>
+      )}
+    </header>
+  );
+}
+
+// Top bar (Command Center look): brand, a global league switcher, search, and sync with its status.
 export default function ManagerHeader({
   leagues,
   lastSyncedAt,
+  onSearch,
+  onMenu,
 }: {
   leagues: { id: string; name: string }[];
   lastSyncedAt: string | null;
+  onSearch: () => void;
+  onMenu: () => void;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -159,56 +194,59 @@ export default function ManagerHeader({
     }
   };
 
+  // The command bar's "Sync all leagues now" action triggers the same sync as the Refresh button.
+  const syncRef = useRef(syncNow);
+  useEffect(() => {
+    syncRef.current = syncNow;
+  });
+  useEffect(() => {
+    const go = () => void syncRef.current();
+    window.addEventListener("fantis:sync-now", go);
+    return () => window.removeEventListener("fantis:sync-now", go);
+  }, []);
+
   const leagueCtx = extractLeagueContext(pathname);
-  const currentLeague = leagueCtx ? leagues.find((lg) => lg.id === leagueCtx.leagueId) : null;
-  const sectionLabel = leagueCtx
-    ? (LEAGUE_SUB_ROUTES.find((r) => r.slug === leagueCtx.section)?.label ?? "Overview")
-    : null;
 
   return (
-    <header className="mgrheader">
-      <div className="mgrheaderleft">
-        {leagueCtx && currentLeague ? (
-          <div className="mgrbreadcrumb">
-            <Link href="/manager/teams" className="mgrbreadcrumblink">
-              My Leagues
-            </Link>
-            <span className="mgrbreadcrumbsep">/</span>
-            <span className="mgrbreadcrumbcurrent">{currentLeague.name}</span>
-            <span className="mgrbreadcrumbsep">/</span>
-            <h1 className="mgrpagetitle">{sectionLabel}</h1>
-          </div>
-        ) : (
-          <div className="mgrbreadcrumb">
-            <h1 className="mgrpagetitle">{portfolioPageLabel(pathname)}</h1>
-          </div>
-        )}
-      </div>
-      <div className="mgrheaderright">
-        {leagueCtx && (
-          <LeagueSwitcher leagues={leagues} currentLeagueId={leagueCtx.leagueId} section={leagueCtx.section} />
-        )}
-        <span className="hint" style={{ margin: 0 }}>
-          {mounted ? `synced ${formatRelative(lastSyncedAt)}` : ""}
+    <div className="cbs-top">
+      <button type="button" className="cbs-icon cbs-burger" onClick={onMenu} aria-label="Open menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden>
+          <path d="M4 7h16M4 12h16M4 17h16" />
+        </svg>
+      </button>
+      <Link href="/manager" className="cbs-brand">
+        <span className="cbs-mark">F</span>
+        <span>
+          <b>Fantis</b>
+          <em>Command</em>
         </span>
-        {syncMsg && (
-          <span
-            className="hint"
-            role="status"
-            style={{ margin: 0, color: syncMsg.tone === "ok" ? "var(--mint)" : syncMsg.tone === "warn" ? "var(--amber)" : "var(--red)" }}
-          >
-            {syncMsg.text}
-          </span>
+      </Link>
+      <LeagueSwitcher leagues={leagues} currentLeagueId={leagueCtx?.leagueId ?? null} section={leagueCtx?.section ?? "overview"} />
+      <div className="cbs-right">
+        <button type="button" className="cbs-search" onClick={onSearch} aria-label="Search leagues and players">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden>
+            <path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM21 21l-4.3-4.3" />
+          </svg>
+          <span>Search</span>
+          <kbd>⌘K</kbd>
+        </button>
+        {syncMsg ? (
+          <span className={`cbs-status ${syncMsg.tone}`} role="status">{syncMsg.text}</span>
+        ) : (
+          <span className="cbs-synced">{mounted ? `Synced ${formatRelative(lastSyncedAt)}` : ""}</span>
         )}
         <button
-          className="btn ghost sm"
+          className="cbs-sync"
           onClick={syncNow}
           disabled={syncing}
           title="Re-reads every league from Sleeper (about a minute). The Lineups tools already read rosters live, so you only need this for the other pages."
         >
-          {syncing ? `Syncing… ${elapsed}s` : "Refresh"}
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden className={syncing ? "spin" : ""}>
+            <path d="M21 12a9 9 0 0 1-15.5 6.3L3 16M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M3 21v-5h5" />
+          </svg>
+          {syncing ? `Syncing… ${elapsed}s` : "Sync all"}
         </button>
       </div>
-    </header>
+    </div>
   );
 }

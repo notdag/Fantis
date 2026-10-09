@@ -1,8 +1,9 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { runBulk, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
-import { preflightRosters } from "@/lib/liveRosters";
+import { bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { runBulkOps, opsSummaryExtra } from "@/lib/bulkOps";
+import { fetchLiveLeague, preflightRosters } from "@/lib/liveRosters";
 import { addDropFreeAgent, claimWaiver } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
@@ -185,7 +186,33 @@ export default function BulkDrop({
       },
     }));
     const doneKeys: string[] = [];
-    const result = await runBulk(tasks, {
+    const rowOf = new Map(batch.map((r) => [r.key, r]));
+    const result = await runBulkOps(
+      tasks.map((t) => {
+        const r = rowOf.get(t.key)!;
+        const viaClaim = !!replaceWith && claimOnly;
+        return {
+          opKey: `mass_drop:${r.leagueId}:drop:${r.playerId}:add:${replaceWith ?? "-"}:${viaClaim ? "claim" : "now"}`,
+          statusKey: t.key,
+          tool: "mass_drop",
+          leagueId: r.leagueId,
+          leagueName: r.leagueName,
+          playerId: r.playerId,
+          playerName: nameOf(r.playerId),
+          action: replaceWith
+            ? `${viaClaim ? "claim" : "add"} ${nameOf(replaceWith)}, drop ${nameOf(r.playerId)}${viaClaim ? " if it wins" : ""}`
+            : `drop ${nameOf(r.playerId)} now`,
+          exec: t.run,
+          // An immediate drop/swap is confirmed by re-reading the roster; a queued claim can't be (it waits for waivers).
+          check: viaClaim
+            ? undefined
+            : async () => {
+                const f = await fetchLiveLeague(r.leagueId, r.rosterId);
+                return f ? !f.players.includes(r.playerId) : null;
+              },
+        };
+      }),
+      {
       signal: abortRef.current,
       onStatus: (key, s) => {
         if (s.kind === "done") doneKeys.push(key);
@@ -198,7 +225,7 @@ export default function BulkDrop({
     const tone = bulkResultTone(result);
     setSummaryColor(tone.color);
     setSummary(
-      `${tone.prefix}${result.done} released${result.failed ? `, ${result.failed} failed` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}.` +
+      `${tone.prefix}${result.done} released${result.failed ? `, ${result.failed} failed` : ""}${result.skipped ? `, ${result.skipped} skipped` : ""}.` + opsSummaryExtra(result) +
         (result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : "") +
         (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
     );

@@ -5,7 +5,7 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { NAV_ENTRIES, isActive, type IconKey, type NavEntry } from "./managerNav";
 import { LEAGUE_SUB_ROUTES, extractLeagueContext, leagueSubHref } from "./leagueSubRoutes";
-import ManagerHeader from "./ManagerHeader";
+import ManagerHeader, { PageTitle } from "./ManagerHeader";
 import LeagueSubNavigation from "./LeagueSubNavigation";
 import BottomNavBar from "./BottomNavBar";
 import CommandPalette from "./CommandPalette";
@@ -14,20 +14,20 @@ import {
   IconUsers,
   IconWrench,
   IconShield,
-  IconChevronLeft,
-  IconChevronRight,
-  IconMenu,
+  IconCheck,
+  IconFlag,
   IconX,
   IconSearch,
 } from "./MgrIcons";
-
-const COOKIE = "fantis_mgr_sidebar";
 
 const ICONS: Record<IconKey, typeof IconHome> = {
   home: IconHome,
   users: IconUsers,
   wrench: IconWrench,
   shield: IconShield,
+  search: IconSearch,
+  check: IconCheck,
+  flag: IconFlag,
 };
 
 // Every /manager/* page is a real, uncached DB round-trip (the cookie auth
@@ -192,23 +192,74 @@ function NavList({
   );
 }
 
+// Command Center shell (prototype G, applied to every page): one horizontal menu where each group opens a dropdown.
+// Hover or click opens it; it closes on navigation, Escape or an outside click.
+function TopNav({ pathname }: { pathname: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(null);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <nav className="cbs-nav" ref={ref} aria-label="Main" onMouseLeave={() => setOpen(null)}>
+      {NAV_ENTRIES.map((e) => {
+        if (e.kind === "link") {
+          return (
+            <Link key={e.href} href={e.href} className={`cbs-navbtn ${isActive(pathname, e.href) ? "on" : ""}`}>
+              <NavLabel label={e.label} />
+            </Link>
+          );
+        }
+        const active = e.links.some((l) => isActive(pathname, l.href));
+        return (
+          <div key={e.label} className="cbs-navitem" onMouseEnter={() => setOpen(e.label)}>
+            <button
+              type="button"
+              className={`cbs-navbtn ${active ? "on" : ""}`}
+              aria-expanded={open === e.label}
+              onClick={() => setOpen((o) => (o === e.label ? null : e.label))}
+            >
+              {e.label}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} aria-hidden>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {open === e.label && (
+              <div className="cbs-menu">
+                {e.links.map((l) => (
+                  <Link key={l.href} href={l.href} className={isActive(pathname, l.href) ? "on" : ""} onClick={() => setOpen(null)}>
+                    <NavLabel label={l.label} />
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function ManagerShell({
   children,
-  initialCollapsed,
   leagues,
   lastSyncedAt,
 }: {
   children: React.ReactNode;
-  initialCollapsed: boolean;
   leagues: { id: string; name: string }[];
   lastSyncedAt: string | null;
 }) {
   const pathname = usePathname();
-  // Matches SSR exactly (initialCollapsed comes from the same cookie the
-  // browser sends with the request) — no mounted-gate hydration hack needed
-  // here, unlike most Date.now()/localStorage-dependent state elsewhere in
-  // this codebase.
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -226,21 +277,6 @@ export default function ManagerShell({
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
-  // Tablet tier (2026-08b, 769-1100px): the rail-vs-expanded choice for
-  // NavGroup/CurrentLeagueNavGroup is a real branch in the component tree
-  // (the collapsed rail's icon button vs. the expanded label list — sub-
-  // links in the expanded branch have no icon to fall back to), so it has
-  // to be driven by an actual width check, not just CSS hiding labels.
-  // Independent of the manual `collapsed` cookie preference below.
-  const [autoCollapsed, setAutoCollapsed] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 1100px)");
-    const update = () => setAutoCollapsed(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  const railMode = collapsed || autoCollapsed;
 
   useEffect(() => {
     setDrawerOpen(false);
@@ -255,61 +291,10 @@ export default function ManagerShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
-  function toggleCollapsed() {
-    setCollapsed((prev) => {
-      const next = !prev;
-      document.cookie = `${COOKIE}=${next ? "1" : "0"}; path=/manager; max-age=31536000; SameSite=Lax`;
-      return next;
-    });
-  }
-
   return (
-    <div className={`mgrshell ${railMode ? "mgrcollapsed" : ""}`}>
-      <aside className="mgrsidebar">
-        <div className="mgrsidebarbrand">
-          <div className="mark">F</div>
-          <b>Fantis</b>
-        </div>
-        <button
-          type="button"
-          className="mgrnavlink"
-          style={{ marginBottom: 10 }}
-          onClick={() => setPaletteOpen(true)}
-          aria-label={railMode ? "Search leagues and players" : undefined}
-        >
-          <IconSearch />
-          <span className="mgrnavlabel">Search</span>
-          <span className="cmdpalkbd">⌘K</span>
-        </button>
-        <NavList pathname={pathname} collapsed={railMode} leagues={leagues} />
-        <button
-          type="button"
-          className="mgrcollapsebtn"
-          onClick={toggleCollapsed}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {collapsed ? <IconChevronRight /> : <IconChevronLeft />}
-        </button>
-      </aside>
-
-      <div className="mgrtopbar">
-        <button type="button" className="mgrhamburger" onClick={() => setDrawerOpen(true)} aria-label="Open menu">
-          <IconMenu />
-        </button>
-        <div className="mgrsidebarbrand">
-          <div className="mark">F</div>
-          <b>Fantis</b>
-        </div>
-        <button
-          type="button"
-          className="mgrhamburger"
-          style={{ marginLeft: "auto" }}
-          onClick={() => setPaletteOpen(true)}
-          aria-label="Search leagues and players"
-        >
-          <IconSearch />
-        </button>
-      </div>
+    <div className="cbs">
+      <ManagerHeader leagues={leagues} lastSyncedAt={lastSyncedAt} onSearch={() => setPaletteOpen(true)} onMenu={() => setDrawerOpen(true)} />
+      <TopNav pathname={pathname} />
 
       <div
         className={`mgrdrawerbackdrop ${drawerOpen ? "mgropen" : ""}`}
@@ -334,12 +319,10 @@ export default function ManagerShell({
         <NavList pathname={pathname} collapsed={false} leagues={leagues} />
       </div>
 
-      <div className="mgrmain">
-        <ManagerHeader leagues={leagues} lastSyncedAt={lastSyncedAt} />
-        <div className="wrap">
-          <LeagueSubNavigation />
-          {children}
-        </div>
+      <div className="cbs-main">
+        <PageTitle leagues={leagues} />
+        <LeagueSubNavigation />
+        {children}
       </div>
       <BottomNavBar onOpenMore={() => setDrawerOpen(true)} />
       {paletteOpen && <CommandPalette leagues={leagues} onClose={() => setPaletteOpen(false)} />}

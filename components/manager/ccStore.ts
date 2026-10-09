@@ -49,3 +49,17 @@ export const writePermission = permissionStore.write;
 const bulkStore = createStore<boolean>("fantis_cc_bulk_v1", false, (v) => v === true);
 export const useBulkEnabled = bulkStore.use;
 export const writeBulkEnabled = bulkStore.write;
+
+// ---- Command bar → chat hand-off (Command Center 2.0). The command bar can open the chat panel with a question typed in
+// (never sent automatically — the person presses Enter). Kept in memory; the chat may not be mounted yet when it's set.
+let pendingPrefill: string | null = null;
+export const PREFILL_EVENT = "fantis:cc-prefill";
+export function requestChatPrefill(text: string) {
+  pendingPrefill = text;
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(PREFILL_EVENT));
+}
+export function takeChatPrefill(): string | null {
+  const t = pendingPrefill;
+  pendingPrefill = null;
+  return t;
+}

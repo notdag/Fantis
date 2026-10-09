@@ -2,8 +2,9 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import { buildIrPlan, type IrRow, type PlanLeague } from "@/lib/bulkPlan";
-import { runBulk, errorMessage, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
-import { preflightRosters } from "@/lib/liveRosters";
+import { errorMessage, bulkResultTone, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { preflightRosters, fetchLiveLeague } from "@/lib/liveRosters";
+import { runBulkOps, opsSummaryExtra } from "@/lib/bulkOps";
 import { activateFromIR, addDropFreeAgent, moveToIR, setStarters } from "@/lib/sleeperWrite";
 import { posChipStyle } from "@/lib/players";
 import type { PlayerMap } from "@/lib/types";
@@ -250,13 +251,38 @@ export default function BulkIR({
     }));
 
     const doneKeys: string[] = [];
-    const result = await runBulk(tasks, {
-      signal: abortRef.current,
-      onStatus: (key, s) => {
-        if (s.kind === "done") doneKeys.push(key);
-        setStatus((prev) => ({ ...prev, [key]: s }));
-      },
-    });
+    const rowOf = new Map(selectedRows.map((r) => [r.key, r]));
+    // Shared bulk framework: duplicate guard across reloads, honest uncertain/unverified outcomes, activity log.
+    const result = await runBulkOps(
+      tasks.map((t) => {
+        const r = rowOf.get(t.key)!;
+        const out = r.needsDrop ? dropFor(r) : null;
+        const how = out ? (isBenchSwap(r) ? "bench" : "drop") : "-";
+        return {
+          opKey: `mass_ir:${r.leagueId}:ir:${r.playerId}:out:${out ?? "-"}:${how}`,
+          statusKey: t.key,
+          tool: "mass_ir",
+          leagueId: r.leagueId,
+          leagueName: r.leagueName,
+          playerId: r.playerId,
+          playerName: nameOf(pmap, r.playerId),
+          action: `${nameOf(pmap, r.playerId)} → IR${out ? (how === "bench" ? `, ${nameOf(pmap, out)} → bench` : `, drop ${nameOf(pmap, out)}`) : ""}`,
+          exec: t.run,
+          // Re-read: he should now be in this roster's IR.
+          check: async () => {
+            const f = await fetchLiveLeague(r.leagueId, r.rosterId);
+            return f ? f.reserve.includes(r.playerId) : null;
+          },
+        };
+      }),
+      {
+        signal: abortRef.current,
+        onStatus: (key, s) => {
+          if (s.kind === "done") doneKeys.push(key);
+          setStatus((prev) => ({ ...prev, [key]: s }));
+        },
+      }
+    );
     setRunning(false);
     // Re-sync just the leagues that changed so the Action Queue, banners and
     // rosters reflect it right away (keys are "leagueId" or "leagueId:playerId").
@@ -267,7 +293,8 @@ export default function BulkIR({
       `${tone.prefix}${result.done} moved${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
-        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
+        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).") +
+        opsSummaryExtra(result)
     );
   };
 

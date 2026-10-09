@@ -1,5 +1,6 @@
 "use client";
 
+import PlayerOps from "./PlayerOps";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { posChipStyle } from "@/lib/players";
@@ -302,6 +303,8 @@ export default function PlayerLeagues({
               <StatCard icon={IconUsers} color="var(--dim)" label="Not rostered" value={notRostered.length} />
             </StatCardGrid>
           </section>
+
+          <PlayerOps key={selectedId} playerId={selectedId} name={selected?.n ?? selectedId} />
 
           {startingAttention.length > 0 && (
             <section className="sec">

@@ -9,9 +9,10 @@ import { buildStartingSlots, eligiblePositions } from "@/lib/rosterSlots";
 import { optimizeLineup, type OptimizeResult } from "@/lib/lineupOptimizer";
 import { applyPick, diffLineups, slotLocked, slotOptions, type EditCtx } from "@/lib/lineupEdit";
 import { TIER_LABELS } from "@/lib/players";
-import { runBulk, type BulkTask, type TaskStatus } from "@/lib/bulkRun";
+import { type BulkTask, type TaskStatus } from "@/lib/bulkRun";
 import { setStarters } from "@/lib/sleeperWrite";
-import { preflightRosters } from "@/lib/liveRosters";
+import { preflightRosters, fetchLiveLeague } from "@/lib/liveRosters";
+import { runBulkOps, opsSummaryExtra } from "@/lib/bulkOps";
 import { kickoffSlot, kickoffSlotLabel } from "@/lib/kickoffSlot";
 import type { PlayerMap, ProjectionMap } from "@/lib/types";
 import { scoringKey } from "@/lib/scoringKey";
@@ -561,6 +562,34 @@ export default function BulkOptimize({
   const finished = (r: Row) => status[r.key]?.kind === "done";
   const selectedRows = rows.filter((r) => !deselected.has(r.key) && !finished(r) && view(r).changes.length > 0);
   const totalGain = rows.reduce((s, r) => s + view(r).gain, 0);
+  const swapCount = rows.reduce((s, r) => s + view(r).changes.length, 0);
+  // Current lineups (as set on Sleeper right now) with a starter who can't score this week.
+  const lineupIssues = (() => {
+    const out = { leagues: 0, out: 0, bye: 0, empty: 0 };
+    if (!pmap) return out;
+    for (const l of leagues) {
+      if (!l.roster) continue;
+      let hit = false;
+      for (const id of l.roster.starters) {
+        if (!id || id === "0") {
+          out.empty++;
+          hit = true;
+          continue;
+        }
+        const p = pmap[id];
+        if (p && BYE_WEEKS_2026[p.t] === currentWeek) {
+          out.bye++;
+          hit = true;
+        } else if (p?.inj && /^(out|ir|pup|sus|doubtful)/i.test(p.inj)) {
+          out.out++;
+          hit = true;
+        }
+      }
+      if (hit) out.leagues++;
+    }
+    return out;
+  })();
+  const questionableStarting = doubtBoard.filter((d) => pmap?.[d.id]?.inj === "Questionable").reduce((s, d) => s + d.starting, 0);
   // The one-click flow opens the confirm by itself as soon as the lineups are ready.
   const aheadReady = !allWeeksLoading && !ranksPending;
   // The one-click flow waits for your answers to any close / same-tier picks before it opens the confirm; the button still works anytime.
@@ -681,13 +710,42 @@ export default function BulkOptimize({
       },
     }));
     const doneKeys: string[] = [];
-    const result = await runBulk(tasks, {
-      signal: abortRef.current,
-      onStatus: (key, s) => {
-        if (s.kind === "done") doneKeys.push(key);
-        setStatus((prev) => ({ ...prev, [key]: s }));
-      },
-    });
+    const rowOf = new Map(selectedRows.map((r) => [r.key, r]));
+    const norm = (a: string[]) => a.map((id) => id || "0").join(",");
+    // Shared bulk framework: duplicate guard across reloads, honest uncertain/unverified outcomes, activity log.
+    // The current week is re-read to confirm the lineup stuck; later weeks aren't re-read (Sleeper has no roster for a
+    // future week until it starts — checking would only add a request per league-week and report nothing useful).
+    const result = await runBulkOps(
+      tasks.map((t) => {
+        const r = rowOf.get(t.key)!;
+        const sent = view(r).starters;
+        return {
+          opKey: `lineup:${r.leagueId}:w${r.week}:${norm(sent)}`,
+          statusKey: t.key,
+          tool: "optimize",
+          leagueId: r.leagueId,
+          leagueName: r.leagueName,
+          action: `set week ${r.week} lineup (${view(r).changes.length} change${view(r).changes.length === 1 ? "" : "s"})`,
+          exec: t.run,
+          check:
+            r.week === currentWeek
+              ? async () => {
+                  const f = await fetchLiveLeague(r.leagueId, r.rosterId);
+                  if (!f) return null;
+                  const want = sent.filter((id) => id && id !== "0");
+                  return want.every((id) => f.starters.includes(id));
+                }
+              : undefined,
+        };
+      }),
+      {
+        signal: abortRef.current,
+        onStatus: (key, s) => {
+          if (s.kind === "done") doneKeys.push(key);
+          setStatus((prev) => ({ ...prev, [key]: s }));
+        },
+      }
+    );
     setRunning(false);
     if (result.done > 0) onSent?.();
     // Re-sync just the leagues that changed so the Action Queue, banners and
@@ -697,7 +755,8 @@ export default function BulkOptimize({
       `${result.done} lineups set${result.failed ? `, ${result.failed} failed` : ""}${
         result.skipped ? `, ${result.skipped} skipped` : ""
       }.${result.stoppedForAuth ? " Stopped early — Sleeper rejected the login token; reconnect above." : ""}` +
-        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).")
+        (refreshed === null ? "" : refreshed ? " Fantis's data was refreshed for those leagues." : " Couldn't auto-refresh Fantis's data — press Refresh (top right).") +
+        opsSummaryExtra(result)
     );
   };
 
@@ -920,16 +979,38 @@ export default function BulkOptimize({
         <p className="hint">Loading {weekLabel}&rsquo;s projections…</p>
       ) : (
         <>
+          {/* Lineup Command summary (StatChasers-style): what's wrong now, what the optimizer would change, and one
+              button that opens the same reviewed confirm as "Set N lineups" below — nothing sends without it. */}
           <StatCardGrid variant="grid">
-            <StatCard label="Lineups to improve" value={rows.length} />
             <StatCard
-              label="Net projected points"
+              label="Lineup issues"
+              value={lineupIssues.leagues}
+              valueColor={lineupIssues.leagues ? "var(--red)" : "var(--mint)"}
+              sub={lineupIssues.leagues ? `${lineupIssues.out} out/IR · ${lineupIssues.bye} bye · ${lineupIssues.empty} empty` : "no starter out, on bye or empty"}
+            />
+            <StatCard label="Swaps available" value={swapCount} sub={`in ${rows.length} lineup${rows.length === 1 ? "" : "s"}`} />
+            <StatCard
+              label="Points gain"
               value={`${totalGain >= 0 ? "+" : ""}${totalGain.toFixed(1)}`}
               valueColor={totalGain > 0 ? "var(--mint)" : totalGain < 0 ? "var(--amber)" : undefined}
-              sub={prefs.priority.length + prefs.avoid.length > 0 ? "after your player preferences" : undefined}
+              sub={prefs.priority.length + prefs.avoid.length > 0 ? "projected, after your preferences" : "projected"}
             />
-            <StatCard label="Locked / out / bye" value={`${lockedCount} / ${unavailableCount}`} sub="started games · injured or on bye" />
+            <StatCard label="Questionable starters" value={questionableStarting} valueColor={questionableStarting ? "var(--amber)" : undefined} sub={`locked ${lockedCount} · out/bye ${unavailableCount}`} />
           </StatCardGrid>
+          <div className="field" style={{ margin: "10px 0 0", alignItems: "center", gap: 10 }}>
+            <button
+              className="btn"
+              disabled={!token || running || rows.filter((r) => !finished(r) && view(r).changes.length > 0).length === 0}
+              onClick={() => {
+                setDeselected(new Set());
+                setConfirming(true);
+              }}
+              title={token ? "Selects every lineup with a change and opens the confirm" : "Connect write access first"}
+            >
+              Optimize all {rows.filter((r) => !finished(r) && view(r).changes.length > 0).length}
+            </button>
+            <span className="portmeta">Opens a review of every change first — nothing is sent until you confirm.</span>
+          </div>
           <p className="hint" style={{ margin: "8px 0 12px" }}>
             {mode === "rankings"
               ? "Starts your highest-ranked healthy players (your exact /admin order); anyone you haven't ranked is ordered by Sleeper's projection and sits below ranked players."

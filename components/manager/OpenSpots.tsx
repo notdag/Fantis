@@ -1,5 +1,6 @@
 "use client";
 
+import { ScopeBanner, useSelectionScope } from "./SelectionScope";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePlayerMap } from "@/lib/usePlayerMap";
 import { EMPTY_PREFS, loadPrefs, type PlayerPrefs } from "@/lib/playerPrefs";
@@ -16,7 +17,12 @@ import type { Claim } from "@/lib/inbox";
 import { useDropRank } from "./useDropRank";
 import type { LineupLeague } from "./LineupManager";
 
-export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
+export default function OpenSpots({ leagues: allLeagues }: { leagues: LineupLeague[] }) {
+  const scope = useSelectionScope();
+  const leagues = useMemo(
+    () => (scope.on ? allLeagues.filter((l) => scope.selection.has(l.league.id)) : allLeagues),
+    [allLeagues, scope.on, scope.selection]
+  );
   const { pmap } = usePlayerMap();
   const [token, setToken] = useState<string | null>(null);
   const [claimsReload, setClaimsReload] = useState(0);
@@ -99,6 +105,7 @@ export default function OpenSpots({ leagues }: { leagues: LineupLeague[] }) {
   return (
     <>
       <section className="sec" style={{ paddingBottom: 0 }}>
+        {scope.on && <ScopeBanner shown={leagues.length} total={allLeagues.length} />}
         <PageHead
           description={
             <>

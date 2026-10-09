@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import WeeklyRecord from "@/components/manager/WeeklyRecord";
 import { db } from "@/lib/db";
 import { isBestBall } from "@/lib/manager";
+import { getStateCached } from "@/lib/stateCache";
 import type { WeeklyRecordLeague } from "@/components/manager/WeeklyRecord";
 
 export const metadata: Metadata = {
@@ -33,19 +34,27 @@ export default async function RecordPage() {
   const [leagueRows, weeklyRows, matchupRows] = await Promise.all([
     db.league.findMany({ where: { id: { in: leagueIds }, status: "in_season" }, select: { id: true, name: true, settings: true, group: true }, orderBy: { name: "asc" } }),
     db.weeklyResult.findMany({ where: { leagueId: { in: leagueIds } }, select: { leagueId: true, week: true, rosterId: true, points: true, won: true } }),
-    db.matchup.findMany({ where: { leagueId: { in: leagueIds } }, select: { leagueId: true, week: true, opponentTeamName: true, opponentPoints: true } }),
+    db.matchup.findMany({ where: { leagueId: { in: leagueIds } }, select: { leagueId: true, week: true, opponentTeamName: true, opponentPoints: true, opponentRosterId: true } }),
   ]);
 
+  // Only finished weeks count: Sleeper's current week (still being played) holds live, partial scores that would
+  // read as wins/losses. It joins the page once Sleeper rolls over to the next week (Tuesday).
+  const state = await getStateCached();
+  const currentWeek = state?.week ?? null;
   const matchupByKey = new Map(matchupRows.map((m) => [`${m.leagueId}:${m.week}`, m]));
+  // The opponent's FINAL score comes from WeeklyResult (re-read after the week ends); Matchup rows can hold a
+  // mid-week snapshot.
+  const pointsByRoster = new Map(weeklyRows.map((w) => [`${w.leagueId}:${w.week}:${w.rosterId}`, w.points]));
 
   const leagues: WeeklyRecordLeague[] = leagueRows
     .map((lg) => {
       const myRosterId = myRosterByLeague.get(lg.id);
       const weeks = weeklyRows
-        .filter((w) => w.leagueId === lg.id && w.rosterId === myRosterId)
+        .filter((w) => w.leagueId === lg.id && w.rosterId === myRosterId && (currentWeek == null || w.week < currentWeek))
         .map((w) => {
           const m = matchupByKey.get(`${lg.id}:${w.week}`);
-          return { week: w.week, points: w.points, won: w.won, opponentTeamName: m?.opponentTeamName ?? null, opponentPoints: m?.opponentPoints ?? null };
+          const oppFinal = m?.opponentRosterId != null ? pointsByRoster.get(`${lg.id}:${w.week}:${m.opponentRosterId}`) : undefined;
+          return { week: w.week, points: w.points, won: w.won, opponentTeamName: m?.opponentTeamName ?? null, opponentPoints: oppFinal ?? m?.opponentPoints ?? null };
         })
         // A completed past week where BOTH sides show exactly 0 points is
         // never a real result — confirmed directly against Sleeper's own

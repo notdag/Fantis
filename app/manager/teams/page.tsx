@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import MyTeams from "@/components/manager/MyTeams";
 import { db } from "@/lib/db";
 import type { MyTeamRow } from "@/components/manager/MyTeams";
+import { isBestBall } from "@/lib/manager";
 import type { LeagueRosterRow } from "@/lib/leagueRank";
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export default async function TeamsPage() {
   }
 
   const [leagueRows, rosterRows, matchupRows, alertRows, leagueRosterRows] = await Promise.all([
-    db.league.findMany({ select: { id: true, name: true, status: true, group: true }, orderBy: { name: "asc" } }),
+    db.league.findMany({ select: { id: true, name: true, status: true, group: true, settings: true, lastSyncedAt: true }, orderBy: { name: "asc" } }),
     db.roster.findMany({
       select: {
         leagueId: true,
@@ -94,6 +95,8 @@ export default async function TeamsPage() {
       faabUsed: roster?.faabUsed ?? null,
       rosterId: roster?.rosterId ?? null,
       leagueRosters: leagueRostersByLeague.get(lg.id) ?? [],
+      lastSyncedAt: lg.lastSyncedAt?.toISOString() ?? null,
+      bestBall: isBestBall(lg.settings),
     };
   });
 

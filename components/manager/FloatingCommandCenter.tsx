@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import CommandCenterAI from "./CommandCenterAI";
 import ProposalsPanel from "./ProposalsPanel";
 import PermissionBar from "./PermissionBar";
-import { usePermission } from "./ccStore";
+import { PREFILL_EVENT, usePermission } from "./ccStore";
 import { PERMISSION_LABEL } from "@/lib/commandCenter/proposals";
 import type { CcLeague } from "@/lib/commandCenter/types";
 
@@ -29,6 +29,17 @@ const readOpen = () => {
 // /manager page. Once opened, the panel stays mounted when collapsed so a scan
 // in progress, the conversation and the 5-minute league cache all survive
 // collapsing it or navigating between manager pages.
+// Open the panel from elsewhere (the command bar). Optional text is typed into the chat box, not sent.
+export function openCommandCenter() {
+  mem = true;
+  try {
+    window.localStorage.setItem(KEY, "1");
+  } catch {
+    // ignore
+  }
+  listeners.forEach((cb) => cb());
+}
+
 export default function FloatingCommandCenter() {
   // Persisted open/closed flag; the server render is always "collapsed" so
   // hydration matches, then the real value takes over on the client.
@@ -40,6 +51,15 @@ export default function FloatingCommandCenter() {
   const permission = usePermission();
   const [tab, setTab] = useState<"chat" | "proposals">("chat");
   const [version, setVersion] = useState(0); // bumps when chat saves proposals so the Proposals tab reloads
+  // Opened from the command bar: make sure the panel mounts and shows the chat tab.
+  useEffect(() => {
+    const onPrefill = () => {
+      setEverOpened(true);
+      setTab("chat");
+    };
+    window.addEventListener(PREFILL_EVENT, onPrefill);
+    return () => window.removeEventListener(PREFILL_EVENT, onPrefill);
+  }, []);
 
   useEffect(() => {
     if (!mounted || leagues) return;

@@ -12,6 +12,16 @@ import { KIND_LABEL, canSend, describeProposal, type Proposal, type ProposalStat
 import type { CcLeague } from "@/lib/commandCenter/types";
 import { executeProposal, type ExecDeps, type ExecMode, type ExecResult, type ExecWriters } from "@/lib/commandCenterExec";
 import { useRefreshLeagues } from "./useRefreshLeagues";
+import { logActivity, type OpStatus } from "@/lib/bulkOps";
+
+// Proposal outcome → activity-log status (the proposal itself keeps its full event history on the server).
+const LOG_STATUS: Partial<Record<ProposalStatus, OpStatus>> = {
+  executed: "ok",
+  submitted: "submitted",
+  failed: "failed",
+  verify_failed: "unverified",
+  expired: "skipped",
+};
 import { readPermission, useBulkEnabled, usePermission, writeBulkEnabled } from "./ccStore";
 
 const BULK_CAP = 200;
@@ -172,6 +182,18 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
       const endErr = await patch(p.id, { status: endStatus, message: result.message });
       if (endErr) result = { ...result, message: `${result.message} (couldn't record this on the server: ${endErr})` };
       if (result.sent) void refresh([p.leagueId]);
+      void logActivity([
+        {
+          kind: endStatus === "expired" ? "skip" : "execute",
+          tool: "review_queue",
+          status: LOG_STATUS[endStatus] ?? "failed",
+          leagueId: p.leagueId,
+          leagueName: p.leagueName,
+          action: describeProposal(p),
+          message: result.message,
+          opKey: `proposal:${p.id}`,
+        },
+      ]);
       return result;
     },
     [makeDeps, refresh]
@@ -188,7 +210,31 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
   const act = async (p: Proposal, status: ProposalStatus, message: string) => {
     setBusyFor(p.id, true);
     const err = await patch(p.id, { status, message });
+    if (!err && status === "rejected") {
+      void logActivity([{ kind: "reject", tool: "review_queue", status: "ok", leagueId: p.leagueId, leagueName: p.leagueName, action: describeProposal(p), message, opKey: `proposal:${p.id}` }]);
+    }
     if (err) setNotes((n) => ({ ...n, [p.id]: err }));
+    setBusyFor(p.id, false);
+    await load();
+  };
+
+  // Retry: a failed / expired / unconfirmed proposal is terminal, so "queue again" saves the same change as a NEW proposal —
+  // it starts as "proposed" and still needs its own Send (and the executor re-validates it against a fresh read first).
+  const requeue = async (p: Proposal) => {
+    setBusyFor(p.id, true);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { id, status, createdAt, updatedAt, events, ...draft } = p;
+    try {
+      const res = await fetch("/api/manager/proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drafts: [{ ...draft, origin: "chat", command: `retry of ${describeProposal(p)}` }] }),
+      });
+      const b = await res.json().catch(() => ({}));
+      setNotes((n) => ({ ...n, [p.id]: res.ok ? (b.duplicates ? "Already waiting in To send." : "Queued again — it's in To send.") : b.error || "Couldn't queue it again." }));
+    } catch {
+      setNotes((n) => ({ ...n, [p.id]: "Couldn't queue it again." }));
+    }
     setBusyFor(p.id, false);
     await load();
   };
@@ -260,6 +306,10 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
   const hasToken = typeof window !== "undefined" && !!getStoredToken();
   const sendable = review.filter((p) => p.status === "proposed" || p.status === "approved");
   const selectedList = sendable.filter((p) => selected.has(p.id));
+  // Group approve: select every shown proposal of one kind (e.g. all IR moves) in one click.
+  const kindGroups = [...shown.filter((p) => p.status === "proposed" || p.status === "approved").reduce((m, p) => m.set(p.kind, [...(m.get(p.kind) ?? []), p.id]), new Map<string, string[]>())];
+  // Exclude a league: drop every selected proposal in that league from the batch.
+  const selectedLeagues = [...selectedList.reduce((m, p) => m.set(p.leagueId, [p.leagueId, p.leagueName, (m.get(p.leagueId)?.[2] ?? 0) + 1]), new Map<string, [string, string, number]>()).values()].sort((a, b) => a[1].localeCompare(b[1]));
   // A real, computed breakdown — never a guess — so a big batch (70-200
   // leagues) can be reviewed as one line instead of forcing a scroll
   // through every proposal before sending. `selectedList` is already
@@ -327,6 +377,29 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
                 Select all{listFilter ? " shown" : ""} (up to {BULK_CAP})
               </button>
               <button className="ccexample" onClick={() => setSelected(new Set())}>Deselect all</button>
+              {kindGroups.length > 1 &&
+                kindGroups.map(([kind, ids]) => (
+                  <button key={kind} className="ccexample" title={`Select only the ${KIND_LABEL[kind as keyof typeof KIND_LABEL] ?? kind} proposals shown`} onClick={() => setSelected(new Set(ids.slice(0, BULK_CAP)))}>
+                    Only {KIND_LABEL[kind as keyof typeof KIND_LABEL] ?? kind} ({ids.length})
+                  </button>
+                ))}
+              {selectedLeagues.length > 1 && (
+                <select
+                  className="input"
+                  style={{ maxWidth: 220 }}
+                  value=""
+                  aria-label="Exclude a league from the selection"
+                  onChange={(e) => {
+                    const lid = e.target.value;
+                    if (lid) setSelected((prev) => new Set([...prev].filter((pid) => sendable.find((p) => p.id === pid)?.leagueId !== lid)));
+                  }}
+                >
+                  <option value="">Exclude a league…</option>
+                  {selectedLeagues.map(([lid, name, n]) => (
+                    <option key={lid} value={lid}>{name} ({n})</option>
+                  ))}
+                </select>
+              )}
               <span style={{ flex: 1 }} />
               {bulkRunning ? (
                 <button className="btn ghost sm" onClick={() => (bulkAbort.current.aborted = true)}>Abort</button>
@@ -396,6 +469,12 @@ export default function ProposalsPanel({ leagues, version }: { leagues: CcLeague
               <div className="field ccindent" style={{ alignItems: "center" }}>
                 <span className="portmeta" style={{ color: "var(--amber)" }}>This has been running for a while — the page may have closed mid-run. Check Sleeper before doing anything else.</span>
                 <button className="btn ghost sm" onClick={() => act(p, "verify_failed", "Marked unverified by you: the run didn't finish (page closed?). Check Sleeper.")}>Mark as unverified</button>
+              </div>
+            )}
+            {["failed", "expired", "verify_failed"].includes(p.status) && (
+              <div className="field ccindent" style={{ alignItems: "center" }}>
+                <button className="btn ghost sm" disabled={isBusy} onClick={() => void requeue(p)}>Queue again</button>
+                <span className="portmeta">Saves the same change as a new proposal to review and send — nothing is sent now.</span>
               </div>
             )}
             {isBusy && <div className="portmeta ccindent">Working…</div>}

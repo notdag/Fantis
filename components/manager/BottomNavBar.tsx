@@ -4,19 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { isActive } from "./managerNav";
 import { extractLeagueContext, leagueSubHref } from "./leagueSubRoutes";
-import { IconHome, IconUsers, IconCalendar, IconMenu } from "./MgrIcons";
+import { IconHome, IconUsers, IconCalendar, IconCheck, IconMenu } from "./MgrIcons";
 
 // Mobile-only bottom bar (<768px, see manager.css) for the 4 most-reached
 // destinations — the drawer (opened via "More") still has everything else,
 // this is just faster thumb-reach for the common cases. Third slot is
 // context-sensitive: current league's Overview when inside a league,
-// otherwise Drafts (a real, frequently-checked portfolio page).
+// otherwise the Review Queue (Command Center 2.0: plans waiting to send).
 export default function BottomNavBar({ onOpenMore }: { onOpenMore: () => void }) {
   const pathname = usePathname();
   const ctx = extractLeagueContext(pathname);
   const thirdItem = ctx
     ? { href: leagueSubHref(ctx.leagueId, "overview"), label: "League", active: true }
-    : { href: "/manager/drafts", label: "Drafts", active: isActive(pathname, "/manager/drafts") };
+    : { href: "/manager/review", label: "Review", active: isActive(pathname, "/manager/review") };
 
   return (
     <nav className="mgrbottomnav" aria-label="Primary">
@@ -29,7 +29,7 @@ export default function BottomNavBar({ onOpenMore }: { onOpenMore: () => void })
         <span>Leagues</span>
       </Link>
       <Link href={thirdItem.href} className={`mgrbottomnavitem ${thirdItem.active ? "on" : ""}`}>
-        <IconCalendar width={20} height={20} />
+        {ctx ? <IconCalendar width={20} height={20} /> : <IconCheck width={20} height={20} />}
         <span>{thirdItem.label}</span>
       </Link>
       <button type="button" className="mgrbottomnavitem" onClick={onOpenMore}>

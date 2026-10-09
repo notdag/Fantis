@@ -1,5 +1,6 @@
 "use client";
 
+import SeasonOutlook from "./SeasonOutlook";
 import { useEffect, useState } from "react";
 import { formatRelative, type ManagedLeague, type ManagedRoster } from "@/lib/manager";
 import { posChipStyle } from "@/lib/players";
@@ -123,6 +124,7 @@ export default function LeagueTeam({
   return (
     <>
       <LeagueIdentityBar league={league} myTeamName={myTeamName} />
+      <SeasonOutlook league={league} roster={roster} leagueRosters={leagueRosters ?? []} rosterPositions={rosterPositions} />
       {roster ? (
         <section className="sec">
           <SectionHead
